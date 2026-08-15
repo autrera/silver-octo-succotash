@@ -90,7 +90,7 @@ main :: proc() {
 
 initialize_game :: proc() {
 	unit_count = 2
-	units[0] = Unit{kind = .MINING, state = .TRANSIT, position = {3.8, 0.4, 0}, home_planet = 0, affiliation = 0, target_planet = 1}
+	units[0] = Unit{kind = .MINING, state = .TRANSIT, position = {3.8, 0.4, 0}, home_planet = 0, affiliation = 1, target_planet = 1}
 	units[1] = Unit{kind = .COMBAT, state = .GUARDING, position = {0, 3.8, 0}, home_planet = 0, affiliation = 0, target_planet = 0, orbit_angle = 0.5}
 }
 
@@ -174,7 +174,7 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 	}
 	row_y := production_orders_y() + 102
 	for i := 0; i < unit_count; i += 1 {
-		if units[i].affiliation != selected_planet || units[i].kind != .MINING { continue }
+		if units[i].target_planet != selected_planet || units[i].kind != .MINING { continue }
 		if rl.CheckCollisionPointRec(mouse, {panel_x + 18, f32(row_y), 294, 27}) {
 			if !ctrl_down() { clear_selection(); selected_units[i] = true } else { selected_units[i] = !selected_units[i] }
 			return
@@ -254,7 +254,9 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 	state := Unit_State.TRANSIT
 	target_planet := 1
 	if kind == .COMBAT { state = .GUARDING; target_planet = planet }
-	units[unit_count] = Unit{kind = kind, state = state, position = pos, home_planet = planet, affiliation = planet, target_planet = target_planet, orbit_angle = angle}
+	affiliation := planet
+	if kind == .MINING { affiliation = target_planet }
+	units[unit_count] = Unit{kind = kind, state = state, position = pos, home_planet = planet, affiliation = affiliation, target_planet = target_planet, orbit_angle = angle}
 	unit_count += 1
 }
 
@@ -442,7 +444,7 @@ draw_inspector :: proc() {
 	rl.DrawText("MINING DRONES", c.int(x + 18), c.int(orders_y + 82), 13, rl.ORANGE)
 	y := orders_y + 102
 	for i := 0; i < unit_count; i += 1 {
-		if units[i].affiliation == selected_planet && units[i].kind == .MINING {
+		if units[i].target_planet == selected_planet && units[i].kind == .MINING {
 			draw_unit_row(i, y, x)
 			y += 30
 		}
