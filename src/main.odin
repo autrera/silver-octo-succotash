@@ -7,7 +7,7 @@ import rl "vendor:raylib"
 SCREEN_PANEL_WIDTH :: 330
 MAX_BASES :: 5
 MAX_UNITS :: 64
-PLANET_COUNT :: 3
+PLANET_COUNT :: 2
 
 Unit_Type :: enum {MINING, COMBAT}
 Unit_State :: enum {IDLE, TRANSIT, MINING, RETURNING, DEPOSITING, GUARDING}
@@ -40,7 +40,6 @@ Unit :: struct {
 planets := [PLANET_COUNT]Planet{
 	{name = "EARTH", position = {0, 0, 0}, radius = 3.0, color = rl.Color{45, 125, 220, 255}, minerals = 0},
 	{name = "MARS", position = {15, 1, -5}, radius = 2.2, color = rl.Color{215, 80, 55, 255}, minerals = 80},
-	{name = "LUNA", position = {-11, -1, -7}, radius = 1.25, color = rl.Color{150, 160, 175, 255}, minerals = 40},
 }
 
 units: [MAX_UNITS]Unit
@@ -48,12 +47,12 @@ unit_count: int
 selected_units: [MAX_UNITS]bool
 selected_planet := 0
 minerals := 350
-base_counts := [PLANET_COUNT]int{1, 0, 0}
+base_counts := [PLANET_COUNT]int{1, 1}
 production: [PLANET_COUNT][MAX_BASES]Production
 base_build_progress: f32
 base_build_planet := -1
 camera: rl.Camera3D
-camera_target := rl.Vector3{0, 0, 0}
+camera_target := rl.Vector3{7.5, 0, -2.5}
 
 main :: proc() {
 	rl.SetConfigFlags({.VSYNC_HINT, .WINDOW_HIGHDPI, .WINDOW_RESIZABLE})
@@ -63,7 +62,7 @@ main :: proc() {
 
 	initialize_game()
 	camera = rl.Camera3D{
-		position = {18, 19, 22},
+		position = {22.3, 19, 14.6},
 		target = camera_target,
 		up = {0, 1, 0},
 		fovy = 45,
@@ -99,10 +98,13 @@ update_camera :: proc(dt: f32) {
 	if rl.IsKeyDown(.D) || rl.IsKeyDown(.RIGHT) { direction.x += 1 }
 	mouse := rl.GetMousePosition()
 	sw := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
-	if mouse.x < 18 { direction.x -= 1 }
-	if mouse.x > sw - 18 { direction.x += 1 }
-	if mouse.y < 18 { direction.z -= 1 }
-	if mouse.y > f32(rl.GetScreenHeight()) - 18 { direction.z += 1 }
+	// Edge scrolling belongs to the world viewport only; never pan while over the sidebar.
+	if mouse.x < sw {
+		if mouse.x < 18 { direction.x -= 1 }
+		if mouse.x > sw - 18 && mouse.x < sw { direction.x += 1 }
+		if mouse.y < 18 { direction.z -= 1 }
+		if mouse.y > f32(rl.GetScreenHeight()) - 18 { direction.z += 1 }
+	}
 	if rl.Vector3Length(direction) > 0 {
 		direction = rl.Vector3Normalize(direction)
 		camera_target.x += direction.x * dt * 15
@@ -125,6 +127,7 @@ update_input :: proc() {
 	panel_x := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
 	if rl.IsMouseButtonPressed(.LEFT) {
 		if mouse.x >= panel_x {
+			// Sidebar clicks are consumed here and never reach world selection.
 			handle_inspector_click(mouse, panel_x)
 		} else {
 			if planet := pick_planet(mouse); planet >= 0 {
