@@ -26,6 +26,8 @@ Production :: struct {
 	active: bool,
 }
 
+MAX_PENDING :: 32
+
 Unit :: struct {
 	kind: Unit_Type,
 	state: Unit_State,
@@ -49,6 +51,8 @@ selected_planet := 0
 minerals := 350
 base_counts := [PLANET_COUNT]int{1, 1}
 production: [PLANET_COUNT][MAX_BASES]Production
+pending: [PLANET_COUNT][MAX_PENDING]Unit_Type
+pending_count: [PLANET_COUNT]int
 base_build_progress: f32
 base_build_planet := -1
 camera: rl.Camera3D
@@ -86,7 +90,7 @@ main :: proc() {
 
 initialize_game :: proc() {
 	unit_count = 2
-	units[0] = Unit{kind = .MINING, state = .IDLE, position = {3.8, 0.4, 0}, home_planet = 0, affiliation = 0, target_planet = 0}
+	units[0] = Unit{kind = .MINING, state = .TRANSIT, position = {3.8, 0.4, 0}, home_planet = 0, affiliation = 0, target_planet = 1}
 	units[1] = Unit{kind = .COMBAT, state = .GUARDING, position = {0, 3.8, 0}, home_planet = 0, affiliation = 0, target_planet = 0, orbit_angle = 0.5}
 }
 
@@ -160,11 +164,11 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 		return
 	}
 	orders_y := f32(production_orders_y())
-	if rl.CheckCollisionPointRec(mouse, {panel_x + 18, orders_y, 294, 30}) {
+	if rl.CheckCollisionPointRec(mouse, {panel_x + 18, orders_y, 48, 48}) {
 		queue_unit(.MINING)
 		return
 	}
-	if rl.CheckCollisionPointRec(mouse, {panel_x + 18, orders_y + 34, 294, 30}) {
+	if rl.CheckCollisionPointRec(mouse, {panel_x + 72, orders_y, 48, 48}) {
 		queue_unit(.COMBAT)
 		return
 	}
@@ -199,13 +203,16 @@ queue_unit :: proc(kind: Unit_Type) {
 	cost := 50
 	if kind == .COMBAT { cost = 125 }
 	if minerals < cost { return }
+	if minerals < cost || pending_count[selected_planet] >= MAX_PENDING { return }
+	minerals -= cost
 	for i := 0; i < base_counts[selected_planet]; i += 1 {
 		if !production[selected_planet][i].active {
-			minerals -= cost
 			production[selected_planet][i] = Production{kind = kind, active = true, progress = 0}
 			return
 		}
 	}
+	pending[selected_planet][pending_count[selected_planet]] = kind
+	pending_count[selected_planet] += 1
 }
 
 update_production :: proc(dt: f32) {
@@ -226,8 +233,12 @@ update_production :: proc(dt: f32) {
 			line.progress += dt
 			if line.progress >= build_time {
 				spawn_unit(line.kind, p)
-				line.active = false
 				line.progress = 0
+				if pending_count[p] > 0 {
+					line.kind = pending[p][0]
+					for q := 1; q < pending_count[p]; q += 1 { pending[p][q-1] = pending[p][q] }
+					pending_count[p] -= 1
+				} else { line.active = false }
 			}
 		}
 	}
@@ -240,9 +251,10 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 	pos.x += math.cos(angle) * (planets[planet].radius + 1.2)
 	pos.y += 0.5
 	pos.z += math.sin(angle) * (planets[planet].radius + 1.2)
-	state := Unit_State.IDLE
-	if kind == .COMBAT { state = .GUARDING }
-	units[unit_count] = Unit{kind = kind, state = state, position = pos, home_planet = planet, affiliation = planet, target_planet = planet, orbit_angle = angle}
+	state := Unit_State.TRANSIT
+	target_planet := 1
+	if kind == .COMBAT { state = .GUARDING; target_planet = planet }
+	units[unit_count] = Unit{kind = kind, state = state, position = pos, home_planet = planet, affiliation = planet, target_planet = target_planet, orbit_angle = angle}
 	unit_count += 1
 }
 
@@ -349,7 +361,10 @@ draw_world :: proc() {
 		planet := planets[p]
 		rl.DrawSphere(planet.position, planet.radius, planet.color)
 		rl.DrawSphereWires(planet.position, planet.radius + 0.04, 12, 16, rl.Color{220, 230, 245, 180})
-		if p == selected_planet { rl.DrawCircle3D(planet.position, planet.radius + 0.35, {0, 1, 0}, 90, rl.GOLD) }
+		if p == selected_planet {
+			rl.DrawCircle3D(planet.position, planet.radius + 0.35, {0, 1, 0}, 90, rl.GOLD)
+			rl.DrawCircle3D(planet.position, planet.radius + 0.55, {0, 1, 0}, 90, rl.SKYBLUE)
+		}
 	}
 	for i := 0; i < unit_count; i += 1 {
 		u := units[i]
@@ -370,10 +385,13 @@ draw_world :: proc() {
 	for p in 0..<PLANET_COUNT {
 		pos := rl.GetWorldToScreen(planets[p].position, camera)
 		if pos.x < f32(viewport_w) && pos.x > 0 && pos.y > 0 && pos.y < f32(rl.GetScreenHeight()) {
-			rl.DrawText(planets[p].name, c.int(pos.x - 28), c.int(pos.y - planets[p].radius * 5 - 14), 14, rl.WHITE)
+			if p == selected_planet { rl.DrawRectangle(c.int(pos.x - 42), c.int(pos.y - planets[p].radius * 5 - 18), 84, 22, rl.Color{110, 85, 25, 230}) }
+			rl.DrawText(planets[p].name, c.int(pos.x - 28), c.int(pos.y - planets[p].radius * 5 - 14), 14, p == selected_planet ? rl.GOLD : rl.WHITE)
 		}
 	}
 	status := rl.TextFormat("FPS %d   RIGHT CLICK: GROUP ORDER   CTRL+CLICK: MULTI-SELECT", rl.GetFPS())
+	rl.DrawRectangle(12, 12, 230, 34, rl.Color{20, 32, 45, 235})
+	rl.DrawText(rl.TextFormat("◆ MINERALS: %d", minerals), 22, 20, 18, rl.GOLD)
 	rl.DrawText(status, 18, rl.GetScreenHeight() - 28, 14, rl.Color{155, 170, 195, 255})
 }
 
@@ -414,8 +432,12 @@ draw_inspector :: proc() {
 
 	orders_y := production_orders_y()
 	rl.DrawText("PRODUCTION ORDERS", c.int(x + 18), c.int(orders_y - 16), 13, rl.Color{130, 150, 175, 255})
-	draw_button({x + 18, f32(orders_y), 294, 30}, "Build Mining Drone (50 / 3s)", rl.Color{38, 72, 75, 255})
-	draw_button({x + 18, f32(orders_y + 34), 294, 30}, "Build Combat Drone (125 / 5s)", rl.Color{78, 48, 55, 255})
+	draw_button({x + 18, f32(orders_y), 48, 48}, "[M]", rl.Color{38, 72, 75, 255})
+	draw_button({x + 72, f32(orders_y), 48, 48}, "[C]", rl.Color{78, 48, 55, 255})
+	rl.DrawText("50 / 3s", c.int(x + 20), c.int(orders_y + 51), 11, rl.GOLD)
+	rl.DrawText("125 / 5s", c.int(x + 72), c.int(orders_y + 51), 11, rl.GOLD)
+	rl.DrawText("QUEUE", c.int(x + 150), c.int(orders_y + 16), 11, rl.Color{130, 150, 175, 255})
+	for q := 0; q < pending_count[selected_planet]; q += 1 { symbol: cstring = "[M]"; if pending[selected_planet][q] == .COMBAT { symbol = "[C]" }; rl.DrawText(symbol, c.int(x + 150 + f32(q * 25)), c.int(orders_y + 30), 11, rl.GOLD) }
 
 	rl.DrawText("MINING DRONES", c.int(x + 18), c.int(orders_y + 82), 13, rl.ORANGE)
 	y := orders_y + 102
