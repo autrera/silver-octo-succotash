@@ -113,13 +113,13 @@ update_camera :: proc(dt: f32) {
 	zoom := rl.GetMouseWheelMove()
 	if rl.IsKeyDown(.Q) || rl.IsKeyDown(.MINUS) { zoom -= dt * 3 }
 	if rl.IsKeyDown(.E) || rl.IsKeyDown(.EQUAL) { zoom += dt * 3 }
-	camera.position.y -= zoom * 2.2
-	camera.position.x -= zoom * 1.4
-	camera.position.z -= zoom * 1.4
-	camera.position.y = clamp_f32(camera.position.y, 8, 45)
-	camera.position.x = camera_target.x + camera.position.y * 0.78
-	camera.position.z = camera_target.z + camera.position.y * 0.9
+	zoom_y := camera.position.y - zoom * 2.2
+	zoom_y = clamp_f32(zoom_y, 10, 45)
+	camera.position.x = camera_target.x
+	camera.position.y = zoom_y
+	camera.position.z = camera_target.z + camera.position.y * 1.0
 	camera.target = camera_target
+	camera.up = {0, 1, 0}
 }
 
 update_input :: proc() {
