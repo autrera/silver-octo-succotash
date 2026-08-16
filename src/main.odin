@@ -69,7 +69,7 @@ main :: proc() {
 
 	initialize_game()
 	camera = rl.Camera3D{
-		position = {22.3, 19, 14.6},
+		position = {camera_target.x, 100, camera_target.z + 100},
 		target = camera_target,
 		up = {0, 1, 0},
 		fovy = 45,
@@ -121,7 +121,7 @@ update_camera :: proc(dt: f32) {
 	if rl.IsKeyDown(.Q) || rl.IsKeyDown(.MINUS) { zoom -= dt * 3 }
 	if rl.IsKeyDown(.E) || rl.IsKeyDown(.EQUAL) { zoom += dt * 3 }
 	zoom_y := camera.position.y - zoom * 2.2
-	zoom_y = clamp_f32(zoom_y, 10, 45)
+	zoom_y = clamp_f32(zoom_y, 15, 200)
 	camera.position.x = camera_target.x
 	camera.position.y = zoom_y
 	camera.position.z = camera_target.z + camera.position.y * 1.0
@@ -179,6 +179,7 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 		return
 	}
 	if click_unit_tiles(mouse, panel_x, .MINING) || click_unit_tiles(mouse, panel_x, .COMBAT) { return }
+	if !ctrl_down() { clear_selection() }
 }
 
 click_unit_tiles :: proc(mouse: rl.Vector2, panel_x: f32, kind: Unit_Type) -> bool {
@@ -406,7 +407,14 @@ draw_inspector :: proc() {
 	rl.DrawText("PLANET INSPECTOR", c.int(x + 18), 18, 20, rl.WHITE)
 	planet := &planets[selected_planet]
 	rl.DrawText(rl.TextFormat("%s  //  MINERALS %03d", planet.name, planet.minerals), c.int(x + 18), 48, 15, rl.SKYBLUE)
-	rl.DrawText(rl.TextFormat("BASES: %d / 5", base_counts[selected_planet]), c.int(x + 18), 76, 16, rl.WHITE)
+	rl.DrawText("BASES", c.int(x + 18), 76, 14, rl.WHITE)
+	for pip := 0; pip < MAX_BASES; pip += 1 {
+		pip_color := rl.Color{43, 51, 64, 255}
+		if pip < base_counts[selected_planet] { pip_color = rl.Color{55, 190, 105, 255} }
+		pip_rect := rl.Rectangle{x + 76 + f32(pip * 22), 75, 18, 18}
+		rl.DrawRectangleRec(pip_rect, pip_color)
+		rl.DrawRectangleLinesEx(pip_rect, 1, rl.Color{90, 105, 125, 255})
+	}
 
 	base_button := rl.Rectangle{x + 18, 106, 294, 32}
 	rl.DrawRectangleRec(base_button, rl.Color{35, 56, 78, 255})
@@ -439,13 +447,17 @@ draw_inspector :: proc() {
 	draw_button({x + 171, f32(orders_y), 141, 34}, "[C] COMBAT (125)", rl.Color{78, 48, 55, 255})
 
 	queue_y := orders_y + 45
+	queue_capacity := base_counts[selected_planet] * MAX_BASES
 	queue_total := queued_count(selected_planet)
-	rl.DrawText(rl.TextFormat("BUILD QUEUE  (%d/%d)", queue_total, base_counts[selected_planet] * 5), c.int(x + 18), c.int(queue_y), 12, rl.Color{130, 150, 175, 255})
-	for q := 0; q < queue_total; q += 1 {
-		symbol: cstring = "[M]"
-		if queue_kind_at(selected_planet, q) == .COMBAT { symbol = "[C]" }
-		rl.DrawRectangle(c.int(x + 18 + f32(q * 29)), c.int(queue_y + 17), 24, 22, rl.Color{45, 56, 78, 255})
-		rl.DrawText(symbol, c.int(x + 21 + f32(q * 29)), c.int(queue_y + 22), 10, rl.GOLD)
+	rl.DrawText(rl.TextFormat("BUILD QUEUE  (%d/%d)", queue_total, queue_capacity), c.int(x + 18), c.int(queue_y), 12, rl.Color{130, 150, 175, 255})
+	for slot := 0; slot < queue_capacity; slot += 1 {
+		row := slot / MAX_BASES
+		column := slot % MAX_BASES
+		rect := rl.Rectangle{x + 18 + f32(column * 22), f32(queue_y + 17 + row * 22), 18, 18}
+		queued := slot < queue_total
+		kind := Unit_Type.MINING
+		if queued { kind = queue_kind_at(selected_planet, slot) }
+		draw_queue_slot(rect, queued, kind)
 	}
 
 	rl.DrawText("MINING DRONES", c.int(x + 18), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
@@ -544,6 +556,22 @@ draw_button :: proc(rect: rl.Rectangle, label: cstring, color: rl.Color) {
 	if rl.CheckCollisionPointRec(rl.GetMousePosition(), rect) { border = rl.GOLD }
 	rl.DrawRectangleLinesEx(rect, 1, border)
 	rl.DrawText(label, c.int(rect.x + 9), c.int(rect.y + 8), 11, rl.WHITE)
+}
+
+draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type) {
+	color := rl.Color{39, 47, 60, 255}
+	border := rl.Color{80, 95, 115, 255}
+	symbol: cstring = ""
+	if queued {
+		color = rl.Color{42, 135, 88, 255}
+		if kind == .COMBAT { color = rl.Color{155, 108, 35, 255} }
+		border = rl.Color{190, 205, 180, 255}
+		symbol = "⛏"
+		if kind == .COMBAT { symbol = "⚔" }
+	}
+	rl.DrawRectangleRec(rect, color)
+	rl.DrawRectangleLinesEx(rect, 1, border)
+	if queued { rl.DrawText(symbol, c.int(rect.x + 3), c.int(rect.y + 1), 13, rl.WHITE) }
 }
 
 draw_progress :: proc(rect: rl.Rectangle, value: f32, color: rl.Color) {
