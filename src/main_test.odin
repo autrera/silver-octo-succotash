@@ -22,6 +22,11 @@ reset_world :: proc() {
 	enemy_wave_timer = 0
 	wave_started = false
 	selected_planet = 0
+	production = {}
+	pending_count = {}
+	last_known_intel = {}
+	intel_recorded = {}
+	laser_anim_time = 0
 	rl.SetRandomSeed(7)
 }
 
@@ -480,9 +485,9 @@ enemy_fighters_guard_and_orbit_after_arriving :: proc(t: ^testing.T) {
 pause_toggle_cycles :: proc(t: ^testing.T) {
 	game_paused = false
 	toggle_pause()
-	testing.expect(t, game_paused, "ESC should pause the game")
+	testing.expect(t, game_paused, "P/F10 should pause the game")
 	toggle_pause()
-	testing.expect(t, !game_paused, "ESC again should resume the game")
+	testing.expect(t, !game_paused, "P/F10 again should resume the game")
 	game_paused = false
 }
 
@@ -861,4 +866,176 @@ unit_tiles_are_compact_and_hitboxes_match_layout :: proc(t: ^testing.T) {
 	// Hitbox covers the tile and stays inside it.
 	testing.expect(t, rl.CheckCollisionPointRec({r0.x + 1, r0.y + 1}, r0), "hitbox covers the tile")
 	testing.expect(t, !rl.CheckCollisionPointRec({r0.x - 1, r0.y - 1}, r0), "hitbox stays inside the tile")
+}
+
+// ---- Queue cancel (click slot / ESC) ------------------------------------
+
+@(test)
+cancelling_queue_slot_refunds_and_shifts :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = 0
+	minerals = 1000
+	// Queue head: active MINING line, then pending [COMBAT, MINING].
+	queue_unit(.MINING)
+	queue_unit(.COMBAT)
+	queue_unit(.MINING)
+	testing.expect(t, queued_count(0) == 3, "3 queued")
+	// Queue head: MINING line (950), COMBAT pending (825), MINING pending (775).
+	// Cancel pending slot 2 (the last MINING): refund 50, pending shifts left.
+	testing.expect(t, cancel_queued_at(0, 2), "cancel pending tail")
+	testing.expect(t, queued_count(0) == 2 && minerals == 825, "50 refunded, queue shrinks")
+	testing.expect(t, pending[0][0] == .COMBAT && pending_count[0] == 1, "pending shifted left")
+	// Cancel pending slot 1 (COMBAT): refund 125.
+	testing.expect(t, cancel_queued_at(0, 1), "cancel pending head")
+	testing.expect(t, pending_count[0] == 0 && minerals == 950, "125 refunded, pending empty")
+	// Cancel slot 0 (the active line): refund 50, line deactivated.
+	testing.expect(t, cancel_queued_at(0, 0), "cancel active line")
+	testing.expect(t, !production[0][0].active && minerals == 1000, "line cancelled, full refund")
+	// Out-of-range slot: no-op.
+	testing.expect(t, !cancel_queued_at(0, 0), "empty queue slot is a no-op")
+}
+
+@(test)
+cancelling_active_line_promotes_pending :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = 0
+	minerals = 1000
+	// Active MINING line + pending COMBAT: cancelling the line promotes the
+	// pending item into the freed line.
+	queue_unit(.MINING)
+	queue_unit(.COMBAT)
+	testing.expect(t, cancel_queued_at(0, 0), "cancel active line")
+	testing.expect(t, production[0][0].active && production[0][0].kind == .COMBAT, "pending promoted into the freed line")
+	testing.expect(t, pending_count[0] == 0, "pending consumed")
+	testing.expect(t, minerals == 875, "only the line's 50 refunded; the promoted unit stays paid-for")
+}
+
+@(test)
+clicking_queue_slot_cancels_unit :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = 0
+	minerals = 1000
+	// Active COMBAT line + pending MINING.
+	queue_unit(.COMBAT)
+	queue_unit(.MINING)
+	// panel_x = 0: slot 0 rect is the active line. Clicking it cancels the line
+	// and promotes the pending MINING into it.
+	rect := queue_slot_rect(0, 0)
+	handle_inspector_click({rect.x + 1, rect.y + 1}, 0)
+	testing.expect(t, queued_count(0) == 1, "queue shrinks by one")
+	testing.expect(t, production[0][0].active && production[0][0].kind == .MINING, "pending promoted into the freed line")
+	testing.expect(t, minerals == 950, "125 refunded for the cancelled COMBAT line")
+}
+
+@(test)
+esc_cancels_most_recent_queued_unit :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = 0
+	minerals = 1000
+	// Queue head: MINING line, then pending [COMBAT, MINING].
+	queue_unit(.MINING)
+	queue_unit(.COMBAT)
+	queue_unit(.MINING)
+	// ESC unwinds the tail first: the newest pending MINING (775 -> 825).
+	testing.expect(t, cancel_last_queued(), "ESC cancels the newest pending item")
+	testing.expect(t, queued_count(0) == 2 && minerals == 825, "50 refunded for the tail MINING")
+	testing.expect(t, pending_count[0] == 1 && pending[0][0] == .COMBAT, "pending tail removed, COMBAT stays queued")
+	// ESC again unwinds the pending COMBAT (825 -> 950).
+	testing.expect(t, cancel_last_queued(), "ESC cancels the next pending item")
+	testing.expect(t, queued_count(0) == 1 && minerals == 950, "125 refunded for the pending COMBAT")
+	// ESC finally unwinds the active production line (950 -> 1000).
+	testing.expect(t, cancel_last_queued(), "ESC cancels the active line")
+	testing.expect(t, queued_count(0) == 0 && minerals == 1000 && !production[0][0].active, "line cancelled, full refund")
+	// ESC on an empty queue does nothing.
+	testing.expect(t, !cancel_last_queued(), "ESC with an empty queue is a no-op")
+}
+
+// ---- Pause keybind (P / F10) --------------------------------------------
+
+@(test)
+pause_keybind_is_p_or_f10 :: proc(t: ^testing.T) {
+	// Headless: no key events, so the P/F10 predicate reads false and never
+	// pauses the game; the binding lives in pause_key_pressed, and the actual
+	// toggle still cycles through toggle_pause.
+	game_paused = false
+	testing.expect(t, !pause_key_pressed(), "no key events headless")
+	if pause_key_pressed() { toggle_pause() }
+	testing.expect(t, !game_paused, "idle keys never pause the game")
+	toggle_pause()
+	testing.expect(t, game_paused, "toggle still cycles on P/F10")
+	game_paused = false
+}
+
+// ---- Scout survival & transit-safe miners ------------------------------
+
+@(test)
+transiting_miners_survive_garrison_fire :: proc(t: ^testing.T) {
+	reset_world()
+	// Enemy garrison at Jupiter; a player miner en route (far away, in transit).
+	add_guarding_fighter(2, true)
+	units[unit_count] = Unit{kind = .MINING, state = .TRANSIT, position = planets[0].position, home_planet = 0, affiliation = 2, target_planet = 2}
+	unit_count += 1
+	// Many combat ticks: the miner in transit is never a garrison target.
+	update_enemy_waves(10.0)
+	testing.expect(t, unit_count == 2, "miner in transit survives garrison fire")
+}
+
+@(test)
+scout_miner_survives_grace_window :: proc(t: ^testing.T) {
+	reset_world()
+	// Occupied Jupiter: garrison fighters pin the arriving scout miner.
+	for i in 0..<2 { add_guarding_fighter(2, true) }
+	units[unit_count] = Unit{kind = .MINING, state = .IDLE, position = planets[2].position, home_planet = 0, affiliation = 2, target_planet = 2, progress = 0}
+	unit_count += 1
+	testing.expect(t, has_vision(2), "scout on site lifts the fog")
+	// Per-second steps: the scout survives the full SCOUT_SURVIVAL window.
+	for s in 0..<3 { step_simulation(1.0) }
+	testing.expect(t, unit_count == 3, "scout survives at least 3s of garrison fire")
+	testing.expect(t, has_vision(2), "scout still alive keeps Jupiter lit")
+	// Grace expires on the next kill tick: the garrison destroys the scout.
+	step_simulation(1.0)
+	testing.expect(t, unit_count == 2, "scout destroyed once the grace window expires")
+	testing.expect(t, !has_vision(2), "Jupiter goes dark once the scout is lost")
+}
+
+// ---- Last-known intel memory -------------------------------------------
+
+@(test)
+last_known_intel_survives_fog :: proc(t: ^testing.T) {
+	reset_world()
+	spawn_garrison(2, 5, 3)
+	testing.expect(t, !has_vision(2) && !intel_recorded[2], "Jupiter starts dark and unscouted")
+	update_intel()
+	testing.expect(t, !intel_recorded[2], "no intel recorded without vision")
+	// Scout miner pinned at the garrison: vision lifts and intel snapshots.
+	units[unit_count] = Unit{kind = .MINING, state = .IDLE, position = planets[2].position, home_planet = 0, affiliation = 2, target_planet = 2}
+	unit_count += 1
+	update_intel()
+	testing.expect(t, intel_recorded[2], "scout on site records intel")
+	_, fighters := planet_combatants(2)
+	testing.expect(t, last_known_intel[2].fighters == fighters && fighters == 5, "enemy fighters recorded")
+	testing.expect(t, last_known_intel[2].miners == 3, "enemy miners recorded")
+	testing.expect(t, last_known_intel[2].base_hp == JUPITER_BASE_HP, "base HP recorded")
+	// While lit, intel tracks losses: one garrison fighter falls.
+	remove_unit_at(0)
+	update_intel()
+	testing.expect(t, last_known_intel[2].fighters == 4, "intel updates while the planet stays lit")
+	// Scout leaves (destroyed): the planet goes dark but the last snapshot
+	// is retained for the outpost inspector.
+	scout_index := unit_count - 1
+	remove_unit_at(scout_index)
+	testing.expect(t, !has_vision(2), "Jupiter goes dark without the scout")
+	testing.expect(t, intel_recorded[2], "last-known intel retained after going dark")
+	testing.expect(t, last_known_intel[2].fighters == 4 && last_known_intel[2].miners == 3 && last_known_intel[2].base_hp == JUPITER_BASE_HP, "stale snapshot preserved")
+}
+
+@(test)
+unscouted_planet_has_no_intel :: proc(t: ^testing.T) {
+	reset_world()
+	spawn_garrison(2, 5, 3)
+	// Never scouted: intel_recorded stays false (the inspector shows UNSCOUTED).
+	testing.expect(t, !intel_recorded[2], "never-scouted planet records no intel")
+	testing.expect(t, !has_vision(2), "no player presence at Jupiter")
+	update_intel()
+	testing.expect(t, !intel_recorded[2], "still no intel without vision")
 }

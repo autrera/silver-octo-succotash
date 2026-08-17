@@ -32,6 +32,13 @@ MINING_TRANSIT_SPEED :: 1.75
 // Mining drone cycle timing (shared by the simulation and the MPS forecast).
 MINING_DURATION :: 3.0
 DEPOSIT_DURATION :: 0.5
+// Scout survival: garrison defenses hold fire this long against a miner
+// freshly pinned at an occupied planet (.IDLE progress doubles as the clock).
+SCOUT_SURVIVAL :: 3.5
+// Flying laser bolts: flight speed along the shooter->target ray and the
+// visible bolt length.
+LASER_BOLT_SPEED :: 14.0
+LASER_BOLT_LEN :: 0.65
 
 Unit_Type :: enum {MINING, COMBAT}
 Unit_State :: enum {IDLE, TRANSIT, MINING, RETURNING, DEPOSITING, GUARDING, CONSTRUCTING}
@@ -48,6 +55,14 @@ Production :: struct {
 	kind: Unit_Type,
 	progress: f32,
 	active: bool,
+}
+
+// Last-known intel snapshot, recorded while a planet is lit; shown under fog
+// once the planet has been scouted at least once.
+Intel :: struct {
+	fighters: int,
+	miners: int,
+	base_hp: int,
 }
 
 MAX_PENDING :: 25
@@ -106,13 +121,18 @@ base_timer: [PLANET_COUNT]f32
 game_paused := false
 quit_requested := false
 earth_rally := 0
+// Fog-of-war intel memory: per-planet snapshot plus a scouted-at-least-once bit.
+last_known_intel: [PLANET_COUNT]Intel
+intel_recorded: [PLANET_COUNT]bool
+// Game-clock accumulator driving laser bolt flight; frozen while paused.
+laser_anim_time: f32
 
 main :: proc() {
 	rl.SetConfigFlags({.VSYNC_HINT, .WINDOW_HIGHDPI, .WINDOW_RESIZABLE})
 	rl.InitWindow(1280, 760, "STARFALL COMMAND // Planetary RTS Prototype")
 	defer rl.CloseWindow()
 	rl.SetTargetFPS(60)
-	rl.SetExitKey(.KEY_NULL) // ESC opens the pause menu instead of closing the window.
+	rl.SetExitKey(.KEY_NULL) // ESC cancels the last queued build instead of closing the window; P/F10 pause.
 
 	initialize_game()
 	camera = rl.Camera3D{
@@ -125,7 +145,7 @@ main :: proc() {
 
 	for !rl.WindowShouldClose() && !quit_requested {
 		dt := rl.GetFrameTime()
-		if rl.IsKeyPressed(.ESCAPE) { toggle_pause() }
+		if pause_key_pressed() { toggle_pause() }
 		if game_paused {
 			update_pause_menu()
 		} else {
@@ -202,6 +222,8 @@ update_camera :: proc(dt: f32) {
 }
 
 update_input :: proc() {
+	// ESC cancels the most recently queued unit and refunds it.
+	if rl.IsKeyPressed(.ESCAPE) { cancel_last_queued() }
 	// Build shortcuts use the same validation path as the inspector buttons.
 	if rl.IsKeyPressed(.M) { queue_unit(.MINING) }
 	if rl.IsKeyPressed(.C) { queue_unit(.COMBAT) }
@@ -264,6 +286,13 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 		if rl.CheckCollisionPointRec(mouse, {panel_x + 171, orders_y, 141, 34}) {
 			queue_unit(.COMBAT)
 			return
+		}
+		// Clicking an occupied build-queue slot cancels that unit (refund included).
+		for slot := 0; slot < queued_count(0); slot += 1 {
+			if rl.CheckCollisionPointRec(mouse, queue_slot_rect(panel_x, slot)) {
+				cancel_queued_at(0, slot)
+				return
+			}
 		}
 	}
 	if click_unit_tiles(mouse, panel_x, .MINING) || click_unit_tiles(mouse, panel_x, .COMBAT) { return }
@@ -381,10 +410,14 @@ resume_constructing_miners :: proc(p: int) {
 	}
 }
 
+unit_cost :: proc(kind: Unit_Type) -> int {
+	if kind == .COMBAT { return 125 }
+	return 50
+}
+
 queue_unit :: proc(kind: Unit_Type) {
 	if selected_planet != 0 { return } // All production happens at Earth command bases.
-	cost := 50
-	if kind == .COMBAT { cost = 125 }
+	cost := unit_cost(kind)
 	if minerals < cost || queued_count(selected_planet) >= base_counts[selected_planet] * 5 { return }
 	minerals -= cost
 	for i := 0; i < base_counts[selected_planet]; i += 1 {
@@ -395,6 +428,58 @@ queue_unit :: proc(kind: Unit_Type) {
 	}
 	pending[selected_planet][pending_count[selected_planet]] = kind
 	pending_count[selected_planet] += 1
+}
+
+// Screen rect of build-queue slot `slot` (0 = queue head: active production
+// lines in base order, then pending items). Shared by the queue rendering and
+// the cancel-click hitboxes so they cannot drift apart.
+queue_slot_rect :: proc(panel_x: f32, slot: int) -> rl.Rectangle {
+	queue_y := f32(production_orders_y() + 45)
+	row := slot / MAX_BASES
+	column := slot % MAX_BASES
+	return rl.Rectangle{panel_x + 18 + f32(column * 22), queue_y + 17 + f32(row * 22), 18, 18}
+}
+
+// Cancel the unit at queue position `index` (same ordering as
+// queue_kind_at) with a full mineral refund. Cancelling an active production
+// line promotes the first pending item into the freed line.
+cancel_queued_at :: proc(planet, index: int) -> bool {
+	b := 0
+	found := -1
+	i := index
+	for b < base_counts[planet] {
+		if !production[planet][b].active { b += 1; continue }
+		if i == 0 { found = b; break }
+		i -= 1
+		b += 1
+	}
+	if found >= 0 {
+		line := &production[planet][found]
+		minerals += unit_cost(line.kind)
+		line.active = false
+		line.progress = 0
+		if pending_count[planet] > 0 {
+			line.kind = pending[planet][0]
+			line.active = true
+			for q := 1; q < pending_count[planet]; q += 1 { pending[planet][q-1] = pending[planet][q] }
+			pending_count[planet] -= 1
+		}
+		return true
+	}
+	if i < pending_count[planet] {
+		minerals += unit_cost(pending[planet][i])
+		for q := i; q < pending_count[planet] - 1; q += 1 { pending[planet][q] = pending[planet][q+1] }
+		pending_count[planet] -= 1
+		return true
+	}
+	return false
+}
+
+// ESC handler: cancels the most recently queued unit — the tail of pending,
+// else the newest active production line — with a full refund.
+cancel_last_queued :: proc() -> bool {
+	if queued_count(0) == 0 { return false }
+	return cancel_queued_at(0, queued_count(0) - 1)
 }
 
 update_production :: proc(dt: f32) {
@@ -557,13 +642,17 @@ kill_fighter :: proc(p: int, enemy_side: bool) -> bool {
 	return false
 }
 
+// Garrison defenses only engage miners physically at the planet: transit
+// across space is safe. A scout freshly pinned at an occupied planet keeps
+// a SCOUT_SURVIVAL grace window (its .IDLE progress) before it becomes a
+// target, so the player can peek at the garrison before losing the drone.
 kill_player_miner :: proc(p: int) -> bool {
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
-		if u.kind == .MINING && !u.enemy && u.target_planet == p {
-			remove_unit_at(i)
-			return true
-		}
+		if u.kind != .MINING || u.enemy || u.target_planet != p || u.state == .TRANSIT { continue }
+		if u.state == .IDLE && !planet_liberated(p) && u.progress < SCOUT_SURVIVAL { continue }
+		remove_unit_at(i)
+		return true
 	}
 	return false
 }
@@ -724,7 +813,9 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 				u.progress = 0
 			} else {
 				// Occupied planet: hold in orbit until combat drones liberate it.
+				// progress doubles as the scout survival clock (kill_player_miner).
 				u.state = .IDLE
+				u.progress = 0
 			}
 		}
 	case .MINING:
@@ -757,9 +848,12 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 		}
 	case .IDLE:
 		// Held at an occupied planet: resume mining once it is liberated.
+		// Otherwise the hold time feeds the scout survival clock.
 		if planet_liberated(u.target_planet) {
 			u.state = .MINING
 			u.progress = 0
+		} else {
+			u.progress += dt
 		}
 	case .GUARDING, .CONSTRUCTING:
 		// Idle miners keep their creation planet as their affiliation.
@@ -864,7 +958,7 @@ draw_world :: proc() {
 			rl.DrawText(label, c.int(pos.x - 28), c.int(pos.y - planets[p].radius * 5 - 14), 14, p == selected_planet ? rl.GOLD : rl.WHITE)
 		}
 	}
-	status := rl.TextFormat("FPS %d   RIGHT CLICK: GROUP ORDER   CTRL+CLICK: MULTI-SELECT   N: ENEMY WAVE (DEBUG)", rl.GetFPS())
+	status := rl.TextFormat("FPS %d   RIGHT CLICK: GROUP ORDER   CTRL+CLICK: MULTI-SELECT   P/F10: PAUSE   ESC: CANCEL BUILD   N: ENEMY WAVE (DEBUG)", rl.GetFPS())
 	rl.DrawRectangle(12, 12, 230, 34, rl.Color{20, 32, 45, 235})
 	rl.DrawText(rl.TextFormat("◆ MINERALS: %d", minerals), 22, 20, 18, rl.GOLD)
 	rl.DrawText(status, 18, rl.GetScreenHeight() - 28, 14, rl.Color{155, 170, 195, 255})
@@ -955,18 +1049,15 @@ draw_earth_inspector :: proc(x: f32) {
 	draw_button({x + 18, f32(orders_y), 141, 34}, "[M] MINER  (50)", rl.Color{38, 72, 75, 255})
 	draw_button({x + 171, f32(orders_y), 141, 34}, "[C] COMBAT (125)", rl.Color{78, 48, 55, 255})
 
-	queue_y := orders_y + 45
+	queue_y := production_orders_y() + 45
 	queue_capacity := base_counts[0] * MAX_BASES
 	queue_total := queued_count(0)
 	rl.DrawText(rl.TextFormat("BUILD QUEUE  (%d/%d)", queue_total, queue_capacity), c.int(x + 18), c.int(queue_y), 12, rl.Color{130, 150, 175, 255})
 	for slot := 0; slot < queue_capacity; slot += 1 {
-		row := slot / MAX_BASES
-		column := slot % MAX_BASES
-		rect := rl.Rectangle{x + 18 + f32(column * 22), f32(queue_y + 17 + row * 22), 18, 18}
 		queued := slot < queue_total
 		kind := Unit_Type.MINING
 		if queued { kind = queue_kind_at(0, slot) }
-		draw_queue_slot(rect, queued, kind)
+		draw_queue_slot(queue_slot_rect(x, slot), queued, kind)
 	}
 }
 
@@ -974,11 +1065,12 @@ draw_earth_inspector :: proc(x: f32) {
 // stronghold status (mining is locked until it falls) and unit rosters only.
 draw_outpost_inspector :: proc(x: f32) {
 	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(selected_planet)), c.int(x + 18), 79, 13, rl.SKYBLUE)
-	stronghold_color := rl.Color{120, 120, 138, 255}
-	title: cstring = "UNSCOUTED"
-	status: cstring = "STATUS UNKNOWN — SEND SCOUT DRONE"
-	// Fog of war: no player presence means no intel — no enemy counts, no base HP.
+	card := rl.Rectangle{x + 18, 104, 294, 54}
 	if has_vision(selected_planet) {
+		stronghold_color := rl.Color{120, 120, 138, 255}
+		title: cstring = "UNSCOUTED"
+		status: cstring = "STATUS UNKNOWN — SEND SCOUT DRONE"
+		// Fog of war: no player presence means no intel — no enemy counts, no base HP.
 		if planet_liberated(selected_planet) {
 			stronghold_color = rl.Color{55, 190, 105, 255}
 			title = "LIBERATED"
@@ -989,12 +1081,30 @@ draw_outpost_inspector :: proc(x: f32) {
 			_, garrison := planet_combatants(selected_planet)
 			status = rl.TextFormat("%02d FIGHTERS  BASE %02d — SEND COMBAT DRONES", garrison, enemy_base_hp[selected_planet])
 		}
+		rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
+		rl.DrawRectangleLinesEx(card, 1, stronghold_color)
+		rl.DrawText(title, c.int(x + 28), 114, 14, stronghold_color)
+		rl.DrawText(status, c.int(x + 28), 133, 12, rl.Color{200, 200, 210, 255})
+	} else if intel_recorded[selected_planet] {
+		// Scouted once, now dark: show the last snapshot taken while lit, in
+		// grey/amber to read as stale — the garrison may have changed since.
+		card.height = 66
+		amber := rl.Color{178, 148, 82, 255}
+		grey := rl.Color{152, 152, 162, 255}
+		intel := last_known_intel[selected_planet]
+		rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
+		rl.DrawRectangleLinesEx(card, 1, amber)
+		rl.DrawText("LAST KNOWN INTEL", c.int(x + 28), 112, 13, amber)
+		rl.DrawText(rl.TextFormat("ENEMY FIGHTERS: %d", intel.fighters), c.int(x + 28), 128, 10, grey)
+		rl.DrawText(rl.TextFormat("ENEMY MINERS: %d", intel.miners), c.int(x + 28), 141, 10, grey)
+		rl.DrawText(rl.TextFormat("BASE HP: %d/%d", intel.base_hp, JUPITER_BASE_HP), c.int(x + 28), 154, 10, grey)
+	} else {
+		// Never scouted: no intel exists at all.
+		rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
+		rl.DrawRectangleLinesEx(card, 1, rl.Color{120, 120, 138, 255})
+		rl.DrawText("UNSCOUTED", c.int(x + 28), 114, 14, rl.Color{120, 120, 138, 255})
+		rl.DrawText("STATUS UNKNOWN — SEND SCOUT DRONE", c.int(x + 28), 133, 12, rl.Color{200, 200, 210, 255})
 	}
-	card := rl.Rectangle{x + 18, 104, 294, 54}
-	rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
-	rl.DrawRectangleLinesEx(card, 1, stronghold_color)
-	rl.DrawText(title, c.int(x + 28), 114, 14, stronghold_color)
-	rl.DrawText(status, c.int(x + 28), 133, 12, rl.Color{200, 200, 210, 255})
 }
 
 production_orders_y :: proc() -> int {
@@ -1080,25 +1190,25 @@ draw_fighter :: proc(position: rl.Vector3, enemy: bool) {
 	rl.DrawCubeV(position, {0.7, 0.32, 0.7}, color)
 }
 
-// Visible laser fire during battles: bright tracer lines between shooting
-// fighters and their targets (player fire SKYBLUE, enemy fire RED), mirroring
-// the update_planet_combat rules — dogfights, miner sweeps and base sieges.
+// Visible laser fire during battles: short flying bolts from each shooter
+// toward its target (player fire SKYBLUE, enemy fire RED), mirroring the
+// update_planet_combat rules — dogfights, miner sweeps and base sieges.
 draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, ec: int) {
 	target_spots: [MAX_UNITS]rl.Vector3
 	tc := 0
 	if pc > 0 && ec > 0 {
 		// Dogfight: each fighter trades fire with the opposing line.
-		for i in 0..<pc { rl.DrawLine3D(player_spots[i], enemy_spots[i % ec], rl.SKYBLUE) }
-		for j in 0..<ec { rl.DrawLine3D(enemy_spots[j], player_spots[j % pc], rl.RED) }
+		for i in 0..<pc { draw_laser_bolt(player_spots[i], enemy_spots[i % ec], f32(i) * 2.3, rl.SKYBLUE) }
+		for j in 0..<ec { draw_laser_bolt(enemy_spots[j], player_spots[j % pc], f32(j) * 2.3 + 1.1, rl.RED) }
 	} else if ec > 0 {
 		// Enemy fighters strafing unescorted player miners (kill_player_miner).
 		for i := 0; i < unit_count; i += 1 {
 			u := &units[i]
-			if u.kind == .MINING && !u.enemy && u.target_planet == p { target_spots[tc] = u.position; tc += 1 }
+			if u.kind == .MINING && !u.enemy && u.target_planet == p && u.state != .TRANSIT { target_spots[tc] = u.position; tc += 1 }
 		}
 		for j in 0..<ec {
 			if tc == 0 { break }
-			rl.DrawLine3D(enemy_spots[j], target_spots[j % tc], rl.RED)
+			draw_laser_bolt(enemy_spots[j], target_spots[j % tc], f32(j) * 2.3, rl.RED)
 		}
 	} else if pc > 0 {
 		// Player fighters sweeping enemy miners (kill_enemy_miner), then
@@ -1108,11 +1218,27 @@ draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, 
 			if u.kind == .MINING && u.enemy && u.affiliation == p { target_spots[tc] = u.position; tc += 1 }
 		}
 		if tc > 0 {
-			for i in 0..<pc { rl.DrawLine3D(player_spots[i], target_spots[i % tc], rl.SKYBLUE) }
+			for i in 0..<pc { draw_laser_bolt(player_spots[i], target_spots[i % tc], f32(i) * 2.3, rl.SKYBLUE) }
 		} else if enemy_base_hp[p] > 0 {
 			base := planets[p].position + rl.Vector3{0, planets[p].radius * 0.6, 0}
-			for i in 0..<pc { rl.DrawLine3D(player_spots[i], base, rl.SKYBLUE) }
+			for i in 0..<pc { draw_laser_bolt(player_spots[i], base, f32(i) * 2.3, rl.SKYBLUE) }
 		}
+	}
+}
+
+// A short laser bolt flying along the shooter->target ray: its head advances
+// at LASER_BOLT_SPEED on the game clock (laser_anim_time, frozen on pause)
+// with a per-shooter phase offset, wrapping at the target. Two half-cycle
+// phased bolts per ray read as sustained fire.
+draw_laser_bolt :: proc(from, to: rl.Vector3, offset: f32, color: rl.Color) {
+	diff := rl.Vector3{to.x - from.x, to.y - from.y, to.z - from.z}
+	dist := rl.Vector3Length(diff)
+	if dist < 0.05 { return }
+	dir := diff * (1.0 / dist)
+	for phase in 0..<2 {
+		head := math.mod(laser_anim_time * LASER_BOLT_SPEED + offset + f32(phase) * dist * 0.5, dist)
+		tail := clamp_f32(head - LASER_BOLT_LEN, 0, dist)
+		rl.DrawLine3D(from + dir * tail, from + dir * head, color)
 	}
 }
 
@@ -1207,6 +1333,11 @@ selection_count :: proc() -> int {
 
 // ---- Pause menu ----------------------------------------------------------
 
+// P or F10 toggles the pause menu (ESC is the build-cancel key).
+pause_key_pressed :: proc() -> bool {
+	return rl.IsKeyPressed(.P) || rl.IsKeyPressed(.F10)
+}
+
 toggle_pause :: proc() { game_paused = !game_paused }
 
 // One unpaused simulation tick. The main loop skips this entirely while the
@@ -1217,12 +1348,27 @@ step_simulation :: proc(dt: f32) {
 	update_production(dt)
 	update_units(dt)
 	update_enemy_waves(dt)
+	update_intel()
+	// Wrapping the laser clock keeps f32 precision stable across long sessions.
+	laser_anim_time = math.mod(laser_anim_time + dt, 3600.0)
+}
+
+// Fog-of-war intel memory: while a planet is lit, keep snapshotting its
+// enemy fighters, enemy miners and base HP. Once it goes dark the outpost
+// inspector shows the last snapshot (last_known_intel) instead of nothing.
+update_intel :: proc() {
+	for p in 0..<PLANET_COUNT {
+		if !has_vision(p) { continue }
+		_, enemies := planet_combatants(p)
+		last_known_intel[p] = Intel{fighters = enemies, miners = enemy_miner_count(p), base_hp = enemy_base_hp[p]}
+		intel_recorded[p] = true
+	}
 }
 
 pause_menu_rects :: proc() -> (box, continue_rect, quit_rect: rl.Rectangle) {
 	w := f32(rl.GetScreenWidth())
 	h := f32(rl.GetScreenHeight())
-	status: cstring = "SIMULATION FROZEN // ESC OR CONTINUE TO RESUME"
+	status: cstring = "SIMULATION FROZEN // P/F10 OR CONTINUE TO RESUME"
 	status_w := f32(rl.MeasureText(status, 14))
 	title_w := f32(rl.MeasureText("PAUSED", 36))
 	// Dialog is sized to the widest label plus balanced 28px padding, so no
@@ -1256,7 +1402,7 @@ draw_pause_menu :: proc() {
 	title: cstring = "PAUSED"
 	title_w := f32(rl.MeasureText(title, 36))
 	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 30), 36, rl.WHITE)
-	status: cstring = "SIMULATION FROZEN // ESC OR CONTINUE TO RESUME"
+	status: cstring = "SIMULATION FROZEN // P/F10 OR CONTINUE TO RESUME"
 	status_w := f32(rl.MeasureText(status, 14))
 	rl.DrawText(status, c.int(box.x + (box.width - status_w) / 2), c.int(box.y + 76), 14, rl.Color{130, 150, 175, 255})
 	draw_button(continue_rect, "CONTINUE", rl.Color{38, 92, 60, 255})
