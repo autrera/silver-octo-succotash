@@ -219,18 +219,52 @@ base_construction_is_earth_only :: proc(t: ^testing.T) {
 	testing.expect(t, base_build_planet != 2 && minerals == 350, "liberated Jupiter refuses construction")
 
 	reset_world()
+	// Earth queues immediately even with no miners on hand: the 200 mineral
+	// cost is deducted up front and miners assemble onto the site later.
 	selected_planet = 0
-	start_base_construction()
-	testing.expect(t, base_build_planet != 0, "liberated Earth with no miners blocks construction")
-	for i in 0..<4 { add_miner(0) }
-	start_base_construction()
-	testing.expect(t, base_build_planet != 0, "4 miners still block construction")
-	add_miner(0)
-	testing.expect(t, player_miners_present(0) == 5, "5 miners present")
 	before := minerals
 	start_base_construction()
-	testing.expect(t, base_build_planet == 0, "Earth with 5 miners allows construction")
-	testing.expect(t, minerals == before - 200, "construction costs 200 minerals")
+	testing.expect(t, base_build_planet == 0, "Earth queues construction with no miners present")
+	testing.expect(t, minerals == before - 200, "construction costs 200 minerals up front")
+	testing.expect(t, constructing_miners_at(0) == 0, "no miners assembled yet")
+}
+
+@(test)
+base_construction_queues_and_gathers_miners_dynamically :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = 0
+	// Clear any leftover production state so no stray units spawn mid-test.
+	for p in 0..<PLANET_COUNT {
+		for b in 0..<MAX_BASES { production[p][b] = {} }
+		pending_count[p] = 0
+	}
+	// Only 2 miners are present when the build is queued.
+	for i in 0..<2 { add_miner(0) }
+	before := minerals
+	start_base_construction()
+	testing.expect(t, base_build_planet == 0 && minerals == before - 200, "queued build deducts 200 immediately with <5 miners")
+	// Two more miners become available (e.g. they finish a deposit cycle and
+	// resume mining): they join the site, but the timer must not advance.
+	for i in 0..<2 { add_miner(0) }
+	update_production(30.0)
+	testing.expect(t, constructing_miners_at(0) == 4, "available miners join the build site as they arrive")
+	testing.expect(t, base_build_progress == 0, "no progress before 5 miners assemble")
+	// The 5th miner finishes its transit and arrives on Earth.
+	units[unit_count] = Unit{kind = .MINING, state = .TRANSIT, position = planets[1].position, home_planet = 0, affiliation = 0, target_planet = 0}
+	unit_count += 1
+	update_miner(&units[4], 4, 1000.0)
+	testing.expect(t, units[4].state == .MINING, "5th miner starts mining on Earth")
+	update_production(0.1)
+	testing.expect(t, constructing_miners_at(0) == 5, "all 5 miners assemble at the build site")
+	testing.expect(t, abs(base_build_progress - 0.1) < 0.001, "progress advances only once all 5 are assembled")
+	// Now the 60s clock runs to completion.
+	update_production(BASE_CONSTRUCT_TIME - 0.2)
+	testing.expect(t, base_counts[0] == 1 && base_build_planet == 0, "still building just before 60s")
+	update_production(0.2)
+	testing.expect(t, base_counts[0] == 2 && base_build_planet == -1, "base completes after one full minute")
+	for i in 0..<unit_count {
+		if units[i].kind == .MINING { testing.expect(t, units[i].state == .MINING, "assembled miners resume mining") }
+	}
 }
 
 @(test)
@@ -242,11 +276,12 @@ construction_miners_stop_mining_and_resume :: proc(t: ^testing.T) {
 	full_mps := f32(5) * f32(mining_rate(0)) / earth_cycle
 	testing.expect(t, abs(planet_mps(0) - full_mps) < 0.001, "5 miners mine at full rate before construction")
 	start_base_construction()
-	testing.expect(t, abs(planet_mps(0)) < 0.001, "construction miners stop generating MPS")
+	update_production(0.1) // gather the 5 present miners
 	for i in 0..<unit_count {
 		if units[i].kind == .MINING { testing.expect(t, units[i].state == .CONSTRUCTING, "miners switch to constructing") }
 	}
-	update_production(59.9)
+	testing.expect(t, abs(planet_mps(0)) < 0.001, "construction miners stop generating MPS")
+	update_production(BASE_CONSTRUCT_TIME - 0.2)
 	testing.expect(t, base_counts[0] == 1 && base_build_planet == 0, "construction still in progress before 60s")
 	update_production(0.2)
 	testing.expect(t, base_counts[0] == 2 && base_build_planet == -1, "base completes after one full minute")
@@ -463,7 +498,7 @@ paused_game_skips_simulation_step :: proc(t: ^testing.T) {
 	// gate flag controls the only place sim state advances.
 	game_paused = false
 	unit_count = 0
-	mars_scouted = false
+	scouted = [PLANET_COUNT]bool{true, false, false}
 	production[0][0] = Production{kind = .MINING, active = true, progress = 0}
 	step_simulation(1.0) // 1s of an unpaused tick: a 3s mining build advances.
 	testing.expect(t, production[0][0].progress > 0, "unpaused sim advances production")
@@ -471,68 +506,101 @@ paused_game_skips_simulation_step :: proc(t: ^testing.T) {
 	// Restore.
 	production[0][0] = Production{}
 	unit_count = 2
-	mars_scouted = false
+	scouted = [PLANET_COUNT]bool{true, false, false}
 	game_paused = false
 }
 
 @(test)
-mars_fog_starts_down :: proc(t: ^testing.T) {
-	mars_scouted = false
-	testing.expect(t, !mars_scouted, "Mars starts under fog of war")
-	testing.expect(t, string(mars_intel_status()) == "UNSCOUTED // STATUS UNKNOWN", "unscouted Mars masks intel status")
-	mars_scouted = false
+offworld_planets_start_under_fog :: proc(t: ^testing.T) {
+	scouted = [PLANET_COUNT]bool{true, false, false}
+	testing.expect(t, scouted[0], "Earth is always scouted")
+	for p in 1..<PLANET_COUNT {
+		testing.expect(t, !scouted[p], "off-world planet starts under fog")
+		testing.expect(t, string(scout_status(p)) == "UNSCOUTED // STATUS UNKNOWN", "unscouted planet masks intel status")
+	}
+	scouted = [PLANET_COUNT]bool{true, false, false}
 }
 
 @(test)
-mars_fog_lifts_when_player_unit_arrives :: proc(t: ^testing.T) {
-	mars_scouted = false
-	unit_count = 1
-	units[0] = Unit{kind = .MINING, state = .MINING, position = planets[1].position, home_planet = 0, affiliation = 1, target_planet = 1}
-	update_scouting()
-	testing.expect(t, mars_scouted, "player unit stationed on Mars scouts it")
-	testing.expect(t, string(mars_intel_status()) == "SCOUTED // INTEL AVAILABLE", "scouted Mars reveals intel status")
+fog_lifts_when_player_unit_arrives :: proc(t: ^testing.T) {
+	// Every off-world planet lifts its fog as soon as a player unit reaches it.
+	for p in 1..<PLANET_COUNT {
+		scouted = [PLANET_COUNT]bool{true, false, false}
+		unit_count = 1
+		units[0] = Unit{kind = .MINING, state = .MINING, position = planets[p].position, home_planet = 0, affiliation = p, target_planet = p}
+		update_scouting()
+		testing.expectf(t, scouted[p], "player unit stationed on planet %d scouts it", p)
+		testing.expectf(t, string(scout_status(p)) == "SCOUTED // INTEL AVAILABLE", "scouted planet %d reveals intel status", p)
+	}
 	unit_count = 2
-	mars_scouted = false
+	scouted = [PLANET_COUNT]bool{true, false, false}
 }
 
 @(test)
-mars_fog_stays_down_for_units_elsewhere :: proc(t: ^testing.T) {
-	mars_scouted = false
+fog_stays_down_for_units_elsewhere :: proc(t: ^testing.T) {
+	scouted = [PLANET_COUNT]bool{true, false, false}
 	unit_count = 1
 	units[0] = Unit{kind = .MINING, state = .TRANSIT, position = {0, 0, 0}, home_planet = 0, affiliation = 0, target_planet = 0}
 	update_scouting()
-	testing.expect(t, !mars_scouted, "units away from Mars keep the fog down")
+	for p in 1..<PLANET_COUNT {
+		testing.expect(t, !scouted[p], "units away from a planet keep its fog down")
+	}
 	unit_count = 2
-	mars_scouted = false
+	scouted = [PLANET_COUNT]bool{true, false, false}
 }
 
 @(test)
-unscouted_mars_masks_intel_details :: proc(t: ^testing.T) {
+enemy_units_do_not_lift_fog :: proc(t: ^testing.T) {
+	// Only player units scout; the enemy garrison on Jupiter must not reveal it.
+	scouted = [PLANET_COUNT]bool{true, false, false}
+	unit_count = 1
+	units[0] = Unit{kind = .COMBAT, state = .GUARDING, position = planets[2].position, home_planet = 2, affiliation = 2, target_planet = 2, enemy = true}
+	update_scouting()
+	testing.expect(t, !scouted[2], "enemy units never scout a planet")
+	unit_count = 2
+	scouted = [PLANET_COUNT]bool{true, false, false}
+}
+
+@(test)
+unscouted_planet_masks_intel_details :: proc(t: ^testing.T) {
 	// Counts exist under the hood but the inspector shows the masked status
-	// until a player unit scouts Mars.
-	mars_scouted = false
+	// until a player unit scouts the planet.
+	scouted = [PLANET_COUNT]bool{true, false, false}
 	unit_count = 1
 	units[0] = Unit{kind = .COMBAT, state = .GUARDING, position = planets[1].position, home_planet = 1, affiliation = 1, target_planet = 1}
 	testing.expect(t, intel_fighters(1) == 1, "garrison counted once scouted")
 	testing.expect(t, intel_miners(1) == 0, "no miners stationed")
 	testing.expect(t, intel_presence(1), "presence positive with garrison")
-	testing.expect(t, string(mars_intel_status()) == "UNSCOUTED // STATUS UNKNOWN", "status still masked while unscouted")
+	testing.expect(t, string(scout_status(1)) == "UNSCOUTED // STATUS UNKNOWN", "status still masked while unscouted")
 	unit_count = 2
-	mars_scouted = false
+	scouted = [PLANET_COUNT]bool{true, false, false}
 }
 
 @(test)
-scouted_mars_reveals_intel_details :: proc(t: ^testing.T) {
-	mars_scouted = true
+scouted_planet_reveals_intel_details :: proc(t: ^testing.T) {
+	scouted = [PLANET_COUNT]bool{true, true, false}
 	unit_count = 2
 	units[0] = Unit{kind = .COMBAT, state = .GUARDING, position = planets[1].position, home_planet = 1, affiliation = 1, target_planet = 1}
 	units[1] = Unit{kind = .MINING, state = .MINING, position = planets[1].position, home_planet = 0, affiliation = 1, target_planet = 1}
 	testing.expect(t, intel_fighters(1) == 1, "fighter count revealed after scouting")
 	testing.expect(t, intel_miners(1) == 1, "miner count revealed after scouting")
 	testing.expect(t, intel_presence(1), "enemy presence revealed after scouting")
-	testing.expect(t, string(mars_intel_status()) == "SCOUTED // INTEL AVAILABLE", "scouted status shown")
+	testing.expect(t, string(scout_status(1)) == "SCOUTED // INTEL AVAILABLE", "scouted status shown")
 	unit_count = 2
-	mars_scouted = false
+	scouted = [PLANET_COUNT]bool{true, false, false}
+}
+
+@(test)
+spacebar_shortcut_selects_earth :: proc(t: ^testing.T) {
+	// update_input binds SPACE to select_earth; the action itself sets the
+	// inspector selection back to Earth from any planet.
+	selected_planet = 2
+	select_earth()
+	testing.expect(t, selected_planet == 0, "spacebar shortcut selects Earth")
+	selected_planet = 1
+	select_earth()
+	testing.expect(t, selected_planet == 0, "spacebar works from any planet")
+	selected_planet = 0
 }
 
 @(test)

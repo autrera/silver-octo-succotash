@@ -104,7 +104,9 @@ base_timer: [PLANET_COUNT]f32
 
 game_paused := false
 quit_requested := false
-mars_scouted := false
+// Universal fog of war: Earth is always scouted; every off-world planet starts
+// shrouded until a player unit reaches it.
+scouted := [PLANET_COUNT]bool{true, false, false}
 earth_rally := 0
 
 main :: proc() {
@@ -205,6 +207,8 @@ update_input :: proc() {
 	// Build shortcuts use the same validation path as the inspector buttons.
 	if rl.IsKeyPressed(.M) { queue_unit(.MINING) }
 	if rl.IsKeyPressed(.C) { queue_unit(.COMBAT) }
+	// Spacebar is a shortcut to select Earth in the inspector.
+	if rl.IsKeyPressed(.SPACE) { select_earth() }
 	// Debug: force the next enemy wave immediately (verify combat without waiting 3 minutes).
 	if rl.IsKeyPressed(.N) { spawn_enemy_wave() }
 	mouse := rl.GetMousePosition()
@@ -239,6 +243,9 @@ update_input :: proc() {
 ctrl_down :: proc() -> bool {
 	return rl.IsKeyDown(.LEFT_CONTROL) || rl.IsKeyDown(.RIGHT_CONTROL)
 }
+
+// SPACE in update_input jumps the inspector straight to Earth.
+select_earth :: proc() { selected_planet = 0 }
 
 clear_selection :: proc() {
 	for i := 0; i < MAX_UNITS; i += 1 { selected_units[i] = false }
@@ -315,20 +322,21 @@ click_unit_tiles :: proc(mouse: rl.Vector2, panel_x: f32, kind: Unit_Type) -> bo
 }
 
 // A command base needs a liberated planet, 200 minerals and BASE_CONSTRUCT_MINERS
-// mining drones physically present at the planet. Those miners drop out of
-// mining (and MPS) for the BASE_CONSTRUCT_TIME build, then resume.
+// mining drones physically at the planet. Clicking queues the build immediately
+// (deducting the cost); assembling miners join the site as they become available
+// until BASE_CONSTRUCT_MINERS are gathered, then the BASE_CONSTRUCT_TIME build
+// runs. Those miners drop out of mining (and MPS) for the build, then resume.
 start_base_construction :: proc() {
 	if selected_planet != 0 { return } // Command bases build on Earth only.
 	if base_counts[selected_planet] >= MAX_BASES || base_build_planet >= 0 || minerals < 200 { return }
 	if !planet_liberated(selected_planet) { return }
-	if player_miners_present(selected_planet) < BASE_CONSTRUCT_MINERS { return }
 	minerals -= 200
 	base_build_planet = selected_planet
 	base_build_progress = 0
-	assign_constructing_miners(selected_planet, BASE_CONSTRUCT_MINERS)
 }
 
-// Player mining drones physically on the planet: stationed there and mining.
+// Mining drones physically on Earth and available to be pulled into a build:
+// stationed there and currently in a mining cycle.
 player_miners_present :: proc(p: int) -> int {
 	count := 0
 	for i := 0; i < unit_count; i += 1 {
@@ -338,13 +346,26 @@ player_miners_present :: proc(p: int) -> int {
 	return count
 }
 
+// Mining drones already committed to the active build site on a planet.
+constructing_miners_at :: proc(p: int) -> int {
+	count := 0
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .MINING && u.state == .CONSTRUCTING && u.target_planet == p { count += 1 }
+	}
+	return count
+}
+
+// Pull available Earth mining drones into the build site until n are assigned.
+// Called every tick so drones that finish a cycle are gathered dynamically.
 assign_constructing_miners :: proc(p, n: int) {
-	assigned := 0
+	assigned := constructing_miners_at(p)
 	for i := 0; i < unit_count; i += 1 {
 		if assigned >= n { break }
 		u := &units[i]
 		if u.kind == .MINING && !u.enemy && u.target_planet == p && u.state == .MINING {
 			u.state = .CONSTRUCTING
+			u.progress = 0
 			assigned += 1
 		}
 	}
@@ -378,12 +399,18 @@ queue_unit :: proc(kind: Unit_Type) {
 
 update_production :: proc(dt: f32) {
 	if base_build_planet >= 0 {
-		base_build_progress += dt
-		if base_build_progress >= BASE_CONSTRUCT_TIME {
-			base_counts[base_build_planet] += 1
-			resume_constructing_miners(base_build_planet)
-			base_build_planet = -1
-			base_build_progress = 0
+		// Dynamically gather available Earth mining drones into the build site
+		// until the required count is assembled; the timer only advances once
+		// all of them are present.
+		assign_constructing_miners(base_build_planet, BASE_CONSTRUCT_MINERS)
+		if constructing_miners_at(base_build_planet) >= BASE_CONSTRUCT_MINERS {
+			base_build_progress += dt
+			if base_build_progress >= BASE_CONSTRUCT_TIME {
+				base_counts[base_build_planet] += 1
+				resume_constructing_miners(base_build_planet)
+				base_build_planet = -1
+				base_build_progress = 0
+			}
 		}
 	}
 	for p := 0; p < PLANET_COUNT; p += 1 {
@@ -729,8 +756,8 @@ draw_world :: proc() {
 		planet := planets[p]
 		surface := planet.color
 		wire := rl.Color{220, 230, 245, 180}
-		if p == 1 && !mars_scouted {
-			// Fog of war: Mars renders shadowed until a player unit scouts it.
+		if !scouted[p] {
+			// Fog of war: a planet renders shadowed until a player unit scouts it.
 			surface = rl.Color{58, 62, 74, 255}
 			wire = rl.Color{95, 100, 118, 120}
 		}
@@ -856,13 +883,16 @@ draw_earth_inspector :: proc(x: f32) {
 	rl.DrawRectangleRec(base_button, rl.Color{35, 56, 78, 255})
 	rl.DrawRectangleLinesEx(base_button, 1, rl.Color{85, 125, 155, 255})
 	if base_build_planet == 0 {
-		rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + 28), 115, 14, rl.GOLD)
-	} else if player_miners_present(0) < BASE_CONSTRUCT_MINERS {
-		rl.DrawText(rl.TextFormat("NEEDS %d MINERS AT %s", BASE_CONSTRUCT_MINERS, planets[0].name), c.int(x + 28), 115, 12, rl.GOLD)
+		assigned := constructing_miners_at(0)
+		if assigned >= BASE_CONSTRUCT_MINERS {
+			rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + 28), 115, 14, rl.GOLD)
+			draw_progress({x + 18, 142, 294, 7}, base_build_progress / BASE_CONSTRUCT_TIME, rl.GOLD)
+		} else {
+			rl.DrawText(rl.TextFormat("ASSEMBLING %d/%d MINERS", assigned, BASE_CONSTRUCT_MINERS), c.int(x + 28), 115, 14, rl.GOLD)
+		}
 	} else {
 		rl.DrawText("Construct Command Base (200 Minerals)", c.int(x + 28), 115, 14, rl.WHITE)
 	}
-	if base_build_planet == 0 { draw_progress({x + 18, 142, 294, 7}, base_build_progress / BASE_CONSTRUCT_TIME, rl.GOLD) }
 
 	rl.DrawText("PRODUCTION LINES", c.int(x + 18), 166, 13, rl.Color{130, 150, 175, 255})
 	for b := 0; b < base_counts[0]; b += 1 {
@@ -906,7 +936,7 @@ draw_outpost_inspector :: proc(x: f32) {
 	stronghold_color := rl.Color{120, 120, 138, 255}
 	title: cstring = "UNSCOUTED"
 	status: cstring = "STATUS UNKNOWN — SEND SCOUT DRONE"
-	if selected_planet != 1 || mars_scouted {
+	if scouted[selected_planet] {
 		if planet_liberated(selected_planet) {
 			stronghold_color = rl.Color{55, 190, 105, 255}
 			title = "LIBERATED"
@@ -1115,9 +1145,16 @@ step_simulation :: proc(dt: f32) {
 pause_menu_rects :: proc() -> (box, continue_rect, quit_rect: rl.Rectangle) {
 	w := f32(rl.GetScreenWidth())
 	h := f32(rl.GetScreenHeight())
-	box = rl.Rectangle{(w - 340) / 2, (h - 250) / 2, 340, 250}
-	continue_rect = rl.Rectangle{box.x + 40, box.y + 96, box.width - 80, 42}
-	quit_rect = rl.Rectangle{box.x + 40, box.y + 156, box.width - 80, 42}
+	status: cstring = "SIMULATION FROZEN // ESC OR CONTINUE TO RESUME"
+	status_w := f32(rl.MeasureText(status, 14))
+	title_w := f32(rl.MeasureText("PAUSED", 36))
+	// Dialog is sized to the widest label plus balanced 28px padding, so no
+	// text ever overflows horizontally.
+	box_w := max(status_w, title_w) + 56
+	box_h: f32 = 270.0
+	box = rl.Rectangle{(w - box_w) / 2, (h - box_h) / 2, box_w, box_h}
+	continue_rect = rl.Rectangle{box.x + 28, box.y + 140, box.width - 56, 44}
+	quit_rect = rl.Rectangle{box.x + 28, box.y + 196, box.width - 56, 44}
 	return
 }
 
@@ -1137,36 +1174,44 @@ draw_pause_menu :: proc() {
 	box, continue_rect, quit_rect := pause_menu_rects()
 	rl.DrawRectangleRec(box, rl.Color{16, 22, 38, 250})
 	rl.DrawRectangleLinesEx(box, 2, rl.GOLD)
-	rl.DrawText("PAUSED", c.int(box.x + 22), c.int(box.y + 26), 30, rl.WHITE)
-	rl.DrawText("SIMULATION FROZEN // ESC OR CONTINUE TO RESUME", c.int(box.x + 22), c.int(box.y + 66), 12, rl.Color{130, 150, 175, 255})
+	// Title and status are centered under a 36px / 14px heading with balanced
+	// vertical padding between all elements, keeping every line inside the box.
+	title: cstring = "PAUSED"
+	title_w := f32(rl.MeasureText(title, 36))
+	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 30), 36, rl.WHITE)
+	status: cstring = "SIMULATION FROZEN // ESC OR CONTINUE TO RESUME"
+	status_w := f32(rl.MeasureText(status, 14))
+	rl.DrawText(status, c.int(box.x + (box.width - status_w) / 2), c.int(box.y + 76), 14, rl.Color{130, 150, 175, 255})
 	draw_button(continue_rect, "CONTINUE", rl.Color{38, 92, 60, 255})
 	draw_button(quit_rect, "QUIT", rl.Color{92, 42, 42, 255})
 }
 
 // ---- Fog of war ----------------------------------------------------------
 
-// Mars stays under fog of war until any player unit reaches it (or is
-// stationed there); arrival lifts the mask for good.
+// Every off-world planet stays under fog of war until any player unit reaches
+// it (or is stationed there); arrival lifts the mask for good. Earth is always
+// scouted.
 update_scouting :: proc() {
-	if mars_scouted { return }
-	for i := 0; i < unit_count; i += 1 {
-		u := &units[i]
-		if u.target_planet != 1 && u.affiliation != 1 { continue }
-		if distance(u.position, planets[1].position) <= planets[1].radius + 2.0 {
-			mars_scouted = true
-			return
+	for p in 1..<PLANET_COUNT {
+		if scouted[p] { continue }
+		for i := 0; i < unit_count; i += 1 {
+			u := &units[i]
+			if u.enemy { continue } // only player units scout
+			if u.target_planet == p && distance(u.position, planets[p].position) <= planets[p].radius + 2.0 {
+				scouted[p] = true
+				break
+			}
 		}
 	}
 }
 
-mars_intel_status :: proc() -> cstring {
-	if mars_scouted { return "SCOUTED // INTEL AVAILABLE" }
+scout_status :: proc(p: int) -> cstring {
+	if scouted[p] { return "SCOUTED // INTEL AVAILABLE" }
 	return "UNSCOUTED // STATUS UNKNOWN"
 }
 
-// Intel counters: units stationed at a planet. This prototype has no enemy
-// faction yet, so they count everything garrisoned there; the fog gate on
-// Mars is what hides them until scouted.
+// Intel counters: units stationed at a planet. The fog gate on each
+// off-world planet is what hides them until scouted.
 intel_fighters :: proc(p: int) -> int {
 	n := 0
 	for i := 0; i < unit_count; i += 1 {
