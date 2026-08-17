@@ -14,8 +14,8 @@ reset_world :: proc() {
 		miner_timer[p] = 0
 		base_timer[p] = 0
 	}
-	enemy_base_hp = [PLANET_COUNT]int{0, MARS_BASE_HP, JUPITER_BASE_HP}
-	base_counts = [PLANET_COUNT]int{1, 0, 0}
+	enemy_base_hp = [PLANET_COUNT]int{0, 0, JUPITER_BASE_HP}
+	base_counts = [PLANET_COUNT]int{1, 1, 0}
 	base_build_planet = -1
 	base_build_progress = 0
 	minerals = 350
@@ -150,6 +150,9 @@ miners_die_every_two_seconds_without_defenders :: proc(t: ^testing.T) {
 @(test)
 mars_base_destroyed_after_garrison_cleared :: proc(t: ^testing.T) {
 	reset_world()
+	// Mars starts liberated now, so this scenario plants an enemy base on Mars
+	// explicitly: base destruction logic must work wherever a base is present.
+	enemy_base_hp[1] = MARS_BASE_HP
 	for i in 0..<3 { add_guarding_fighter(1, false) }
 	add_guarding_fighter(1, true)
 	for i in 0..<2 { add_enemy_miner(1) }
@@ -195,13 +198,13 @@ base_construction_requires_liberated_planet_and_five_miners :: proc(t: ^testing.
 	reset_world()
 	selected_planet = 1
 	// Occupied planet: blocked even with miners present.
+	enemy_base_hp[1] = MARS_BASE_HP
 	for i in 0..<5 { add_miner(1) }
 	start_base_construction()
 	testing.expect(t, base_build_planet != 1, "occupied planet blocks base construction even with miners present")
 
 	reset_world()
 	selected_planet = 1
-	enemy_base_hp[1] = 0
 	start_base_construction()
 	testing.expect(t, base_build_planet != 1, "liberated planet with no miners blocks construction")
 	for i in 0..<4 { add_miner(1) }
@@ -219,7 +222,6 @@ base_construction_requires_liberated_planet_and_five_miners :: proc(t: ^testing.
 construction_miners_stop_mining_and_resume :: proc(t: ^testing.T) {
 	reset_world()
 	selected_planet = 1
-	enemy_base_hp[1] = 0
 	for i in 0..<5 { add_miner(1) }
 	full_mps := f32(5) * f32(mining_rate(1)) / 3.0
 	testing.expect(t, abs(planet_mps(1) - full_mps) < 0.001, "5 miners mine at full rate before construction")
@@ -229,9 +231,9 @@ construction_miners_stop_mining_and_resume :: proc(t: ^testing.T) {
 		if units[i].kind == .MINING { testing.expect(t, units[i].state == .CONSTRUCTING, "miners switch to constructing") }
 	}
 	update_production(59.9)
-	testing.expect(t, base_counts[1] == 0 && base_build_planet == 1, "construction still in progress before 60s")
+	testing.expect(t, base_counts[1] == 1 && base_build_planet == 1, "construction still in progress before 60s")
 	update_production(0.2)
-	testing.expect(t, base_counts[1] == 1 && base_build_planet == -1, "base completes after one full minute")
+	testing.expect(t, base_counts[1] == 2 && base_build_planet == -1, "base completes after one full minute")
 	for i in 0..<unit_count {
 		if units[i].kind == .MINING { testing.expect(t, units[i].state == .MINING, "miners resume mining") }
 	}
@@ -300,19 +302,26 @@ transit_fleets_render_representationally :: proc(t: ^testing.T) {
 }
 
 @(test)
-mars_and_jupiter_start_occupied :: proc(t: ^testing.T) {
+mars_starts_player_owned :: proc(t: ^testing.T) {
 	reset_world()
 	initialize_game()
+	testing.expect(t, base_counts[1] == 1, "Mars starts with 1 player base")
+	testing.expect(t, enemy_base_hp[1] == 0, "Mars starts with 0 enemy base HP")
+	testing.expect(t, planet_liberated(1), "Mars starts liberated")
 	players, enemies := planet_combatants(1)
-	testing.expect(t, enemies == MARS_GARRISON_FIGHTERS && players == 0, "enemy fighters garrison Mars")
-	testing.expect(t, enemy_miner_count(1) == MARS_GARRISON_MINERS, "enemy mining drones garrison Mars")
-	testing.expect(t, enemy_base_hp[1] == MARS_BASE_HP, "enemy base on Mars intact")
-	players, enemies = planet_combatants(2)
-	testing.expect(t, enemies == JUPITER_GARRISON_FIGHTERS && players == 0, "enemy fighters garrison Jupiter")
-	testing.expect(t, enemy_miner_count(2) == JUPITER_GARRISON_MINERS, "enemy mining drones garrison Jupiter")
-	testing.expect(t, enemy_base_hp[2] == JUPITER_BASE_HP, "enemy base on Jupiter intact")
-	testing.expect(t, base_counts[1] == 0 && base_counts[2] == 0, "no player bases on occupied planets")
-	testing.expect(t, !planet_liberated(1) && !planet_liberated(2), "both planets start occupied")
+	testing.expect(t, players == 0 && enemies == 0, "no guarding fighters on Mars")
+	testing.expect(t, enemy_miner_count(1) == 0, "no enemy mining drones on Mars")
+}
+
+@(test)
+jupiter_starts_as_enemy_stronghold :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+	players, enemies := planet_combatants(2)
+	testing.expect(t, enemies == JUPITER_GARRISON_FIGHTERS && players == 0, "Jupiter starts with 40 enemy fighters")
+	testing.expect(t, enemy_miner_count(2) == JUPITER_GARRISON_MINERS, "Jupiter starts with 10 enemy mining drones")
+	testing.expect(t, enemy_base_hp[2] == JUPITER_BASE_HP, "Jupiter starts with a 20 HP enemy base")
+	testing.expect(t, !planet_liberated(2), "Jupiter starts occupied")
 }
 
 @(test)

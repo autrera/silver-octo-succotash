@@ -15,13 +15,12 @@ COMBAT_TICK :: 2
 WAVE_FIRST_DELAY :: 180
 WAVE_INTERVAL :: 120
 WAVE_SIZE :: 5
-// Standing enemy garrisons: Mars holds a small outpost, Jupiter the stronghold.
-MARS_GARRISON_FIGHTERS :: 3
-MARS_GARRISON_MINERS :: 3
+// Standing enemy garrison: Jupiter is the sole enemy stronghold at game start.
 JUPITER_GARRISON_FIGHTERS :: 40
 JUPITER_GARRISON_MINERS :: 10
-MARS_BASE_HP :: 10
 JUPITER_BASE_HP :: 20
+// HP of an enemy command base wherever one is present (combat and tests).
+MARS_BASE_HP :: 10
 // A command base needs 5 mining drones present at the planet and takes one
 // full minute to build; those drones stop mining until it completes.
 BASE_CONSTRUCT_MINERS :: 5
@@ -77,7 +76,7 @@ unit_count: int
 selected_units: [MAX_UNITS]bool
 selected_planet := 0
 minerals := 350
-base_counts := [PLANET_COUNT]int{1, 0, 0}
+base_counts := [PLANET_COUNT]int{1, 1, 0}
 production: [PLANET_COUNT][MAX_BASES]Production
 pending: [PLANET_COUNT][MAX_PENDING]Unit_Type
 pending_count: [PLANET_COUNT]int
@@ -88,10 +87,10 @@ camera_target := rl.Vector3{7.5, 0, -2.5}
 inspector_drag_start: rl.Vector2
 inspector_drag_active: bool
 
-// Enemy occupation: per-planet base HP. Mars and Jupiter start with an enemy
-// base; a planet is liberated once its base is destroyed (and, by the combat
-// rules, all enemy drones are gone).
-enemy_base_hp: [PLANET_COUNT]int = {0, MARS_BASE_HP, JUPITER_BASE_HP}
+// Enemy occupation: per-planet base HP. Only Jupiter starts with an enemy
+// base; Mars is liberated at start. A planet is liberated once its base is
+// destroyed (and, by the combat rules, all enemy drones are gone).
+enemy_base_hp: [PLANET_COUNT]int = {0, 0, JUPITER_BASE_HP}
 enemy_wave_timer: f32
 wave_started: bool
 // Per-planet combat pacing: 1:1 fighter trades, miner sweeps and base damage
@@ -135,13 +134,12 @@ initialize_game :: proc() {
 	unit_count = 2
 	units[0] = Unit{kind = .MINING, state = .MINING, position = {3.8, 0.4, 0}, home_planet = 0, affiliation = 0, target_planet = 0}
 	units[1] = Unit{kind = .COMBAT, state = .GUARDING, position = {0, 3.8, 0}, home_planet = 0, affiliation = 0, target_planet = 0, orbit_angle = 0.5}
-	spawn_garrison(1, MARS_GARRISON_FIGHTERS, MARS_GARRISON_MINERS)
 	spawn_garrison(2, JUPITER_GARRISON_FIGHTERS, JUPITER_GARRISON_MINERS)
 }
 
-// Mars and Jupiter open as enemy-held planets: standing fighting and mining
-// drones orbiting them, plus an enemy base. Enemy miners are static garrison
-// units; they mine nothing.
+// Jupiter opens as the enemy stronghold: standing fighting and mining drones
+// orbiting it, plus an enemy base. Enemy miners are static garrison units;
+// they mine nothing.
 // ponytail: no enemy economy, revisit if waves should scale with looted minerals
 spawn_garrison :: proc(p, fighters, miners: int) {
 	for i in 0..<fighters {
