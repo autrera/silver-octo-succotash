@@ -494,11 +494,10 @@ pause_toggle_isolates_sim_state :: proc(t: ^testing.T) {
 @(test)
 paused_game_skips_simulation_step :: proc(t: ^testing.T) {
 	// The pause gate lives in the main loop: step_simulation (camera, input,
-	// production, units, scouting) is only invoked while unpaused. Verify the
-	// gate flag controls the only place sim state advances.
+	// production, units) is only invoked while unpaused. Verify the gate flag
+	// controls the only place sim state advances.
 	game_paused = false
 	unit_count = 0
-	scouted = [PLANET_COUNT]bool{true, false, false}
 	production[0][0] = Production{kind = .MINING, active = true, progress = 0}
 	step_simulation(1.0) // 1s of an unpaused tick: a 3s mining build advances.
 	testing.expect(t, production[0][0].progress > 0, "unpaused sim advances production")
@@ -506,88 +505,7 @@ paused_game_skips_simulation_step :: proc(t: ^testing.T) {
 	// Restore.
 	production[0][0] = Production{}
 	unit_count = 2
-	scouted = [PLANET_COUNT]bool{true, false, false}
 	game_paused = false
-}
-
-@(test)
-offworld_planets_start_under_fog :: proc(t: ^testing.T) {
-	scouted = [PLANET_COUNT]bool{true, false, false}
-	testing.expect(t, scouted[0], "Earth is always scouted")
-	for p in 1..<PLANET_COUNT {
-		testing.expect(t, !scouted[p], "off-world planet starts under fog")
-		testing.expect(t, string(scout_status(p)) == "UNSCOUTED // STATUS UNKNOWN", "unscouted planet masks intel status")
-	}
-	scouted = [PLANET_COUNT]bool{true, false, false}
-}
-
-@(test)
-fog_lifts_when_player_unit_arrives :: proc(t: ^testing.T) {
-	// Every off-world planet lifts its fog as soon as a player unit reaches it.
-	for p in 1..<PLANET_COUNT {
-		scouted = [PLANET_COUNT]bool{true, false, false}
-		unit_count = 1
-		units[0] = Unit{kind = .MINING, state = .MINING, position = planets[p].position, home_planet = 0, affiliation = p, target_planet = p}
-		update_scouting()
-		testing.expectf(t, scouted[p], "player unit stationed on planet %d scouts it", p)
-		testing.expectf(t, string(scout_status(p)) == "SCOUTED // INTEL AVAILABLE", "scouted planet %d reveals intel status", p)
-	}
-	unit_count = 2
-	scouted = [PLANET_COUNT]bool{true, false, false}
-}
-
-@(test)
-fog_stays_down_for_units_elsewhere :: proc(t: ^testing.T) {
-	scouted = [PLANET_COUNT]bool{true, false, false}
-	unit_count = 1
-	units[0] = Unit{kind = .MINING, state = .TRANSIT, position = {0, 0, 0}, home_planet = 0, affiliation = 0, target_planet = 0}
-	update_scouting()
-	for p in 1..<PLANET_COUNT {
-		testing.expect(t, !scouted[p], "units away from a planet keep its fog down")
-	}
-	unit_count = 2
-	scouted = [PLANET_COUNT]bool{true, false, false}
-}
-
-@(test)
-enemy_units_do_not_lift_fog :: proc(t: ^testing.T) {
-	// Only player units scout; the enemy garrison on Jupiter must not reveal it.
-	scouted = [PLANET_COUNT]bool{true, false, false}
-	unit_count = 1
-	units[0] = Unit{kind = .COMBAT, state = .GUARDING, position = planets[2].position, home_planet = 2, affiliation = 2, target_planet = 2, enemy = true}
-	update_scouting()
-	testing.expect(t, !scouted[2], "enemy units never scout a planet")
-	unit_count = 2
-	scouted = [PLANET_COUNT]bool{true, false, false}
-}
-
-@(test)
-unscouted_planet_masks_intel_details :: proc(t: ^testing.T) {
-	// Counts exist under the hood but the inspector shows the masked status
-	// until a player unit scouts the planet.
-	scouted = [PLANET_COUNT]bool{true, false, false}
-	unit_count = 1
-	units[0] = Unit{kind = .COMBAT, state = .GUARDING, position = planets[1].position, home_planet = 1, affiliation = 1, target_planet = 1}
-	testing.expect(t, intel_fighters(1) == 1, "garrison counted once scouted")
-	testing.expect(t, intel_miners(1) == 0, "no miners stationed")
-	testing.expect(t, intel_presence(1), "presence positive with garrison")
-	testing.expect(t, string(scout_status(1)) == "UNSCOUTED // STATUS UNKNOWN", "status still masked while unscouted")
-	unit_count = 2
-	scouted = [PLANET_COUNT]bool{true, false, false}
-}
-
-@(test)
-scouted_planet_reveals_intel_details :: proc(t: ^testing.T) {
-	scouted = [PLANET_COUNT]bool{true, true, false}
-	unit_count = 2
-	units[0] = Unit{kind = .COMBAT, state = .GUARDING, position = planets[1].position, home_planet = 1, affiliation = 1, target_planet = 1}
-	units[1] = Unit{kind = .MINING, state = .MINING, position = planets[1].position, home_planet = 0, affiliation = 1, target_planet = 1}
-	testing.expect(t, intel_fighters(1) == 1, "fighter count revealed after scouting")
-	testing.expect(t, intel_miners(1) == 1, "miner count revealed after scouting")
-	testing.expect(t, intel_presence(1), "enemy presence revealed after scouting")
-	testing.expect(t, string(scout_status(1)) == "SCOUTED // INTEL AVAILABLE", "scouted status shown")
-	unit_count = 2
-	scouted = [PLANET_COUNT]bool{true, false, false}
 }
 
 @(test)
@@ -601,6 +519,118 @@ spacebar_shortcut_selects_earth :: proc(t: ^testing.T) {
 	select_earth()
 	testing.expect(t, selected_planet == 0, "spacebar works from any planet")
 	selected_planet = 0
+}
+
+@(test)
+vision_starts_earth_only :: proc(t: ^testing.T) {
+	reset_world()
+	testing.expect(t, has_vision(0), "Earth is always lit")
+	testing.expect(t, !has_vision(1), "Mars starts dark with no player presence")
+	testing.expect(t, !has_vision(2), "Jupiter starts dark with no player presence")
+}
+
+@(test)
+vision_tracks_arrival_and_departure :: proc(t: ^testing.T) {
+	reset_world()
+	// Arrival: a player fighter orbiting Mars lifts its fog.
+	add_guarding_fighter(1, false)
+	testing.expect(t, has_vision(1), "player fighter arriving at Mars lifts its fog")
+	// Departure: retreating back to Earth drops it again.
+	units[0].state = .TRANSIT
+	units[0].target_planet = 0
+	units[0].position = {0, 0, 0}
+	testing.expect(t, !has_vision(1), "Mars goes dark again once the player unit leaves")
+	// Destruction of the last unit there also ends vision.
+	add_guarding_fighter(2, false)
+	testing.expect(t, has_vision(2), "player fighter at Jupiter lights it")
+	remove_unit_at(1)
+	testing.expect(t, !has_vision(2), "Jupiter goes dark when the last unit there is destroyed")
+}
+
+@(test)
+fog_lifts_while_a_player_unit_is_physically_present :: proc(t: ^testing.T) {
+	reset_world()
+	// A mining drone mid-mine at Jupiter counts as presence (within radius+2).
+	units[unit_count] = Unit{kind = .MINING, state = .MINING, position = planets[2].position, home_planet = 0, affiliation = 2, target_planet = 2}
+	unit_count += 1
+	testing.expect(t, has_vision(2), "mining drone present at Jupiter lights it")
+	// A unit far away in transit does not.
+	units[unit_count] = Unit{kind = .COMBAT, state = .TRANSIT, position = {0, 0, 0}, home_planet = 0, affiliation = 2, target_planet = 2}
+	unit_count += 1
+	units[0].position = {0, 0, 0}
+	testing.expect(t, !has_vision(2), "units en route far away do not light Jupiter")
+	// Within the presence radius (radius + 2.0), even a passing unit lights it.
+	units[1].position = planets[2].position
+	testing.expect(t, has_vision(2), "transit unit within the presence radius lights it")
+}
+
+@(test)
+enemy_garrisons_concealed_until_player_presence :: proc(t: ^testing.T) {
+	reset_world()
+	// Jupiter's standing garrison is invisible while the planet is dark.
+	spawn_garrison(2, JUPITER_GARRISON_FIGHTERS, JUPITER_GARRISON_MINERS)
+	for i in 0..<unit_count {
+		testing.expect(t, is_concealed(&units[i]), "Jupiter garrison concealed under fog")
+	}
+	// One player unit arriving at Jupiter reveals every enemy unit there.
+	add_guarding_fighter(2, false)
+	for i in 0..<unit_count {
+		testing.expect(t, !is_concealed(&units[i]), "Jupiter garrison revealed once a player unit is present")
+	}
+	// Enemy units at Mars are concealed until a player unit scouts it.
+	reset_world()
+	spawn_garrison(1, 3, 2)
+	for i in 0..<unit_count {
+		testing.expect(t, is_concealed(&units[i]), "Mars garrison concealed under fog")
+	}
+	add_guarding_fighter(1, false)
+	for i in 0..<unit_count {
+		testing.expect(t, !is_concealed(&units[i]), "Mars garrison revealed by player presence")
+	}
+}
+
+@(test)
+enemy_wave_concealed_in_transit_until_target_lit :: proc(t: ^testing.T) {
+	reset_world()
+	spawn_enemy_wave() // 5 fighters en route to Mars while Mars is dark.
+	testing.expect(t, unit_count == WAVE_SIZE, "wave spawned")
+	for i in 0..<unit_count {
+		testing.expect(t, is_concealed(&units[i]), "enemy wave concealed while the target planet is dark")
+	}
+	add_guarding_fighter(1, false) // Player scout reaches Mars first.
+	for i in 0..<unit_count {
+		testing.expect(t, !is_concealed(&units[i]), "enemy wave visible once the target planet is lit")
+	}
+}
+
+@(test)
+right_click_with_selection_orders_units_and_keeps_rally :: proc(t: ^testing.T) {
+	reset_world()
+	earth_rally = 1
+	selected_planet = 0
+	add_guarding_fighter(0, false)
+	selected_units[0] = true
+	handle_planet_right_click(2)
+	testing.expect(t, units[0].target_planet == 2 && units[0].state == .TRANSIT, "selected units move to the right-clicked planet")
+	testing.expect(t, earth_rally == 1 && rally_flag_planet() == 1, "move order leaves the Earth rally point untouched")
+}
+
+@(test)
+right_click_without_selection_sets_earth_rally :: proc(t: ^testing.T) {
+	reset_world()
+	earth_rally = 0
+	selected_planet = 0
+	add_guarding_fighter(0, false) // Present but NOT selected.
+	handle_planet_right_click(1)
+	testing.expect(t, earth_rally == 1, "no selection + Earth selected sets the rally to Mars")
+	testing.expect(t, units[0].target_planet == 0 && units[0].state == .GUARDING, "unselected units are not given the move order")
+	// Right-clicking Earth itself clears the rally.
+	handle_planet_right_click(0)
+	testing.expect(t, earth_rally == 0, "right-clicking Earth clears the rally")
+	// Outpost selected with no units: right-click is ignored entirely.
+	selected_planet = 1
+	handle_planet_right_click(2)
+	testing.expect(t, earth_rally == 0, "outpost selected without units: right-click does nothing")
 }
 
 @(test)

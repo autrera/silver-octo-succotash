@@ -104,9 +104,6 @@ base_timer: [PLANET_COUNT]f32
 
 game_paused := false
 quit_requested := false
-// Universal fog of war: Earth is always scouted; every off-world planet starts
-// shrouded until a player unit reaches it.
-scouted := [PLANET_COUNT]bool{true, false, false}
 earth_rally := 0
 
 main :: proc() {
@@ -232,10 +229,7 @@ update_input :: proc() {
 	}
 	if rl.IsMouseButtonPressed(.RIGHT) && mouse.x < panel_x {
 		if planet := pick_planet(mouse); planet >= 0 {
-			issue_group_order(planet)
-			// Earth selected: right-click sets the Earth rally point (clicking
-			// Earth itself clears it back to 0).
-			if selected_planet == 0 { set_earth_rally(planet) }
+			handle_planet_right_click(planet)
 		}
 	}
 }
@@ -600,6 +594,18 @@ remove_unit_at :: proc(index: int) {
 	unit_count -= 1
 }
 
+// Right-click on a planet is disambiguated by selection: with units selected
+// it is a move order (the Earth rally point is left untouched); with nothing
+// selected and Earth as the selected planet it (re)sets the Earth rally point
+// — right-clicking Earth itself clears the rally back to 0.
+handle_planet_right_click :: proc(planet: int) {
+	if selection_count() > 0 {
+		issue_group_order(planet)
+	} else if selected_planet == 0 {
+		set_earth_rally(planet)
+	}
+}
+
 issue_group_order :: proc(planet: int) {
 	for i := 0; i < unit_count; i += 1 {
 		if !selected_units[i] { continue }
@@ -756,8 +762,8 @@ draw_world :: proc() {
 		planet := planets[p]
 		surface := planet.color
 		wire := rl.Color{220, 230, 245, 180}
-		if !scouted[p] {
-			// Fog of war: a planet renders shadowed until a player unit scouts it.
+		if !has_vision(p) {
+			// Fog of war: planets the player has no presence at render shadowed.
 			surface = rl.Color{58, 62, 74, 255}
 			wire = rl.Color{95, 100, 118, 120}
 		}
@@ -770,7 +776,8 @@ draw_world :: proc() {
 	}
 	draw_rally_flag()
 	for i := 0; i < unit_count; i += 1 {
-		u := units[i]
+		u := &units[i]
+		if is_concealed(u) { continue }
 		if u.kind == .MINING {
 			color := rl.ORANGE
 			if u.enemy { color = rl.MAROON }
@@ -784,6 +791,7 @@ draw_world :: proc() {
 	// four. This applies in orbit (guarding) and in transit (per target
 	// planet). Rosters, tracking and selection still use the real unit list.
 	for p in 0..<PLANET_COUNT {
+		if !has_vision(p) { continue } // Enemy garrison under fog renders nothing.
 		player_spots: [MAX_UNITS]rl.Vector3
 		enemy_spots: [MAX_UNITS]rl.Vector3
 		pc, ec := 0, 0
@@ -798,6 +806,7 @@ draw_world :: proc() {
 	for p in 0..<PLANET_COUNT {
 		for side in 0..<2 {
 			enemy := side == 1
+			if enemy && !has_vision(p) { continue } // Enemy transits to a dark planet are hidden.
 			visible := rep_count(transit_fighters_at(p, enemy))
 			drawn := 0
 			for i := 0; i < unit_count; i += 1 {
@@ -811,7 +820,8 @@ draw_world :: proc() {
 	}
 	// The transit lines make dispatches visibly physical rather than teleporting.
 	for i := 0; i < unit_count; i += 1 {
-		if units[i].state == .TRANSIT { rl.DrawLine3D(units[i].position, planets[units[i].target_planet].position, rl.Color{255, 210, 80, 100}) }
+		u := &units[i]
+		if u.state == .TRANSIT && !is_concealed(u) { rl.DrawLine3D(u.position, planets[u.target_planet].position, rl.Color{255, 210, 80, 100}) }
 	}
 	rl.EndMode3D()
 
@@ -936,7 +946,8 @@ draw_outpost_inspector :: proc(x: f32) {
 	stronghold_color := rl.Color{120, 120, 138, 255}
 	title: cstring = "UNSCOUTED"
 	status: cstring = "STATUS UNKNOWN — SEND SCOUT DRONE"
-	if scouted[selected_planet] {
+	// Fog of war: no player presence means no intel — no enemy counts, no base HP.
+	if has_vision(selected_planet) {
 		if planet_liberated(selected_planet) {
 			stronghold_color = rl.Color{55, 190, 105, 255}
 			title = "LIBERATED"
@@ -1139,7 +1150,6 @@ step_simulation :: proc(dt: f32) {
 	update_input()
 	update_production(dt)
 	update_units(dt)
-	update_scouting()
 }
 
 pause_menu_rects :: proc() -> (box, continue_rect, quit_rect: rl.Rectangle) {
@@ -1188,48 +1198,31 @@ draw_pause_menu :: proc() {
 
 // ---- Fog of war ----------------------------------------------------------
 
-// Every off-world planet stays under fog of war until any player unit reaches
-// it (or is stationed there); arrival lifts the mask for good. Earth is always
-// scouted.
-update_scouting :: proc() {
-	for p in 1..<PLANET_COUNT {
-		if scouted[p] { continue }
-		for i := 0; i < unit_count; i += 1 {
-			u := &units[i]
-			if u.enemy { continue } // only player units scout
-			if u.target_planet == p && distance(u.position, planets[p].position) <= planets[p].radius + 2.0 {
-				scouted[p] = true
-				break
-			}
+// Dynamic, presence-based vision: a planet is visible only while at least one
+// player unit is physically near it — stationed in orbit, mining, guarding or
+// passing within radius + 2.0. Earth is always lit. Pulling every unit away
+// (retreat, destruction, or a transit leg) puts the planet straight back
+// under fog.
+has_vision :: proc(p: int) -> bool {
+	if p == 0 { return true }
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.enemy { continue }
+		if distance(u.position, planets[p].position) <= planets[p].radius + 2.0 {
+			return true
 		}
 	}
+	return false
 }
 
-scout_status :: proc(p: int) -> cstring {
-	if scouted[p] { return "SCOUTED // INTEL AVAILABLE" }
-	return "UNSCOUTED // STATUS UNKNOWN"
-}
-
-// Intel counters: units stationed at a planet. The fog gate on each
-// off-world planet is what hides them until scouted.
-intel_fighters :: proc(p: int) -> int {
-	n := 0
-	for i := 0; i < unit_count; i += 1 {
-		if units[i].kind == .COMBAT && units[i].affiliation == p { n += 1 }
-	}
-	return n
-}
-
-intel_miners :: proc(p: int) -> int {
-	n := 0
-	for i := 0; i < unit_count; i += 1 {
-		if units[i].kind == .MINING && units[i].target_planet == p { n += 1 }
-	}
-	return n
-}
-
-intel_presence :: proc(p: int) -> bool {
-	return intel_fighters(p) + intel_miners(p) + base_counts[p] > 0
+// Per-unit fog gate for rendering: player units are always visible; enemy
+// units are concealed while the player has no vision of the planet they are
+// at (guarding/stationed) or heading to (transit).
+is_concealed :: proc(u: ^Unit) -> bool {
+	if !u.enemy { return false }
+	p := u.affiliation
+	if u.state == .TRANSIT { p = u.target_planet }
+	return !has_vision(p)
 }
 
 // ---- Earth rally point ---------------------------------------------------
