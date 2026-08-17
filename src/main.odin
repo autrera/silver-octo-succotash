@@ -39,6 +39,7 @@ Unit :: struct {
 	home_planet: int,
 	affiliation: int,
 	target_planet: int,
+	enemy: bool,
 	progress: f32,
 	orbit_angle: f32,
 }
@@ -62,6 +63,12 @@ base_build_planet := -1
 camera: rl.Camera3D
 camera_target := rl.Vector3{7.5, 0, -2.5}
 
+WAVE_INTERVAL :: 120
+WAVE_SIZE :: 5
+enemy_wave_timer: f32
+mars_combat_timer: f32
+mars_miner_timer: f32
+
 main :: proc() {
 	rl.SetConfigFlags({.VSYNC_HINT, .WINDOW_HIGHDPI, .WINDOW_RESIZABLE})
 	rl.InitWindow(1280, 760, "STARFALL COMMAND // Planetary RTS Prototype")
@@ -83,6 +90,7 @@ main :: proc() {
 		update_input()
 		update_production(dt)
 		update_units(dt)
+		update_enemy_waves(dt)
 
 		rl.BeginDrawing()
 		rl.ClearBackground(rl.Color{8, 12, 24, 255})
@@ -94,7 +102,7 @@ main :: proc() {
 
 initialize_game :: proc() {
 	unit_count = 2
-	units[0] = Unit{kind = .MINING, state = .TRANSIT, position = {3.8, 0.4, 0}, home_planet = 0, affiliation = 1, target_planet = 1}
+	units[0] = Unit{kind = .MINING, state = .MINING, position = {3.8, 0.4, 0}, home_planet = 0, affiliation = 0, target_planet = 0}
 	units[1] = Unit{kind = .COMBAT, state = .GUARDING, position = {0, 3.8, 0}, home_planet = 0, affiliation = 0, target_planet = 0, orbit_angle = 0.5}
 }
 
@@ -104,15 +112,6 @@ update_camera :: proc(dt: f32) {
 	if rl.IsKeyDown(.S) || rl.IsKeyDown(.DOWN) { direction.z += 1 }
 	if rl.IsKeyDown(.A) || rl.IsKeyDown(.LEFT) { direction.x -= 1 }
 	if rl.IsKeyDown(.D) || rl.IsKeyDown(.RIGHT) { direction.x += 1 }
-	mouse := rl.GetMousePosition()
-	sw := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
-	// Edge scrolling belongs to the world viewport only; never pan while over the sidebar.
-	if mouse.x < sw {
-		if mouse.x < 18 { direction.x -= 1 }
-		if mouse.x > sw - 18 && mouse.x < sw { direction.x += 1 }
-		if mouse.y < 18 { direction.z -= 1 }
-		if mouse.y > f32(rl.GetScreenHeight()) - 18 { direction.z += 1 }
-	}
 	if rl.Vector3Length(direction) > 0 {
 		direction = rl.Vector3Normalize(direction)
 		camera_target.x += direction.x * dt * 15
@@ -134,6 +133,8 @@ update_input :: proc() {
 	// Build shortcuts use the same validation path as the inspector buttons.
 	if rl.IsKeyPressed(.M) { queue_unit(.MINING) }
 	if rl.IsKeyPressed(.C) { queue_unit(.COMBAT) }
+	// Debug: force the next enemy wave immediately (verify combat without waiting 2 minutes).
+	if rl.IsKeyPressed(.N) { spawn_enemy_wave() }
 	mouse := rl.GetMousePosition()
 	panel_x := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
 	if rl.IsMouseButtonPressed(.LEFT) {
@@ -255,12 +256,112 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 	pos.y += 0.5
 	pos.z += math.sin(angle) * (planets[planet].radius + 1.2)
 	state := Unit_State.TRANSIT
-	target_planet := 1
-	if kind == .COMBAT { state = .GUARDING; target_planet = planet }
+	target_planet := planet
+	if kind == .COMBAT { state = .GUARDING }
+	if kind == .MINING { state = .MINING }
+	// Mining drones work their home planet by default: Earth drones mine Earth.
 	affiliation := planet
-	if kind == .MINING { affiliation = target_planet }
 	units[unit_count] = Unit{kind = kind, state = state, position = pos, home_planet = planet, affiliation = affiliation, target_planet = target_planet, orbit_angle = angle}
 	unit_count += 1
+}
+
+// Every 2 minutes a wave of WAVE_SIZE enemy fighters arrives at Mars to attack it.
+// Combat pacing at Mars: while both sides have fighters there, one drone on each
+// side is destroyed per second (5v5 lasts ~5s, a 1:1 attrition trade). With no
+// player defenders left, enemies destroy one Mars mining drone every 2s.
+update_enemy_waves :: proc(dt: f32) {
+	enemy_wave_timer += dt
+	if enemy_wave_timer >= WAVE_INTERVAL {
+		spawn_enemy_wave()
+		enemy_wave_timer = 0
+	}
+	defenders, attackers := mars_combatants()
+	if attackers > 0 && defenders > 0 {
+		mars_combat_timer += dt
+		for mars_combat_timer >= 1 {
+			mars_combat_timer -= 1
+			if !kill_player_defender() || !kill_enemy_attacker() { break }
+		}
+	} else if attackers > 0 {
+		mars_combat_timer = 0
+		mars_miner_timer += dt
+		for mars_miner_timer >= 2 {
+			mars_miner_timer -= 2
+			if !kill_mars_miner() { break }
+		}
+	} else {
+		mars_combat_timer = 0
+		mars_miner_timer = 0
+	}
+}
+
+spawn_enemy_wave :: proc() {
+	spawn_count := min(WAVE_SIZE, MAX_UNITS - unit_count)
+	if spawn_count <= 0 { return }
+	spawn_pos := planets[1].position + rl.Vector3{40, 0.5, -25}
+	for i in 0..<spawn_count {
+		angle := f32(i) * 1.26
+		pos := spawn_pos + rl.Vector3{math.cos(angle) * 1.5, 0, math.sin(angle) * 1.5}
+		units[unit_count] = Unit{
+			kind = .COMBAT, state = .TRANSIT, position = pos,
+			home_planet = 1, affiliation = 1, target_planet = 1,
+			enemy = true, orbit_angle = angle,
+		}
+		unit_count += 1
+	}
+}
+
+// Counts of guarding fighters at Mars: player defenders vs enemy attackers.
+mars_combatants :: proc() -> (defenders, attackers: int) {
+	for i in 0..<unit_count {
+		u := &units[i]
+		if u.kind != .COMBAT || u.state != .GUARDING || u.affiliation != 1 { continue }
+		if u.enemy { attackers += 1 } else { defenders += 1 }
+	}
+	return
+}
+
+kill_player_defender :: proc() -> bool {
+	for i in 0..<unit_count {
+		u := &units[i]
+		if u.kind == .COMBAT && !u.enemy && u.state == .GUARDING && u.affiliation == 1 {
+			remove_unit_at(i)
+			return true
+		}
+	}
+	return false
+}
+
+kill_enemy_attacker :: proc() -> bool {
+	for i in 0..<unit_count {
+		u := &units[i]
+		if u.kind == .COMBAT && u.enemy && u.state == .GUARDING && u.affiliation == 1 {
+			remove_unit_at(i)
+			return true
+		}
+	}
+	return false
+}
+
+kill_mars_miner :: proc() -> bool {
+	for i in 0..<unit_count {
+		u := &units[i]
+		if u.kind == .MINING && !u.enemy && u.target_planet == 1 {
+			remove_unit_at(i)
+			return true
+		}
+	}
+	return false
+}
+
+// Shift-left removal keeps unit indices stable, so is_effective_miner ranks and
+// selection flags stay consistent for the survivors.
+remove_unit_at :: proc(index: int) {
+	for i := index; i < unit_count - 1; i += 1 {
+		units[i] = units[i + 1]
+		selected_units[i] = selected_units[i + 1]
+	}
+	unit_count -= 1
 }
 
 issue_group_order :: proc(planet: int) {
@@ -409,7 +510,7 @@ draw_world :: proc() {
 			rl.DrawCubeV(u.position, {0.55, 0.55, 0.55}, rl.ORANGE)
 		} else if u.state != .GUARDING {
 			// Transit combat drones render 1:1; guarding crowds are representational below.
-			rl.DrawCubeV(u.position, {0.7, 0.32, 0.7}, rl.RED)
+			draw_fighter(u.position, u.enemy)
 		}
 		if selected_units[i] { draw_selection_ring(u.position, 0.78) }
 	}
@@ -428,8 +529,21 @@ draw_world :: proc() {
 			u := units[i]
 			if u.kind != .COMBAT || u.affiliation != p || u.state != .GUARDING { continue }
 			if drawn >= visible { break }
-			rl.DrawCubeV(u.position, {0.7, 0.32, 0.7}, rl.RED)
+			draw_fighter(u.position, u.enemy)
 			drawn += 1
+		}
+	}
+	// Lasers: while both sides have fighters engaged at Mars, draw thin beams from
+	// every fighter to its nearest opposite.
+	defenders, attackers := mars_combatants()
+	if attackers > 0 && defenders > 0 {
+		for a := 0; a < unit_count; a += 1 {
+			if !mars_fighter(&units[a], true) { continue }
+			rl.DrawLine3D(units[a].position, nearest_mars_fighter(a, false), rl.RED)
+		}
+		for d := 0; d < unit_count; d += 1 {
+			if !mars_fighter(&units[d], false) { continue }
+			rl.DrawLine3D(units[d].position, nearest_mars_fighter(d, true), rl.SKYBLUE)
 		}
 	}
 	// The transit lines make dispatches visibly physical rather than teleporting.
@@ -442,7 +556,7 @@ draw_world :: proc() {
 	for p in 0..<PLANET_COUNT {
 		pos := rl.GetWorldToScreen(planets[p].position, camera)
 		if pos.x < f32(viewport_w) && pos.x > 0 && pos.y > 0 && pos.y < f32(rl.GetScreenHeight()) {
-			label := rl.TextFormat("%s  //  MPS %.1f", planets[p].name, planet_mps(p))
+			label := planets[p].name
 			if p == selected_planet {
 				w := rl.MeasureText(label, 14)
 				rl.DrawRectangle(c.int(pos.x) - w/2 - 6, c.int(pos.y - planets[p].radius * 5 - 18), w + 12, 22, rl.Color{110, 85, 25, 230})
@@ -450,7 +564,7 @@ draw_world :: proc() {
 			rl.DrawText(label, c.int(pos.x - 28), c.int(pos.y - planets[p].radius * 5 - 14), 14, p == selected_planet ? rl.GOLD : rl.WHITE)
 		}
 	}
-	status := rl.TextFormat("FPS %d   RIGHT CLICK: GROUP ORDER   CTRL+CLICK: MULTI-SELECT", rl.GetFPS())
+	status := rl.TextFormat("FPS %d   RIGHT CLICK: GROUP ORDER   CTRL+CLICK: MULTI-SELECT   N: ENEMY WAVE (DEBUG)", rl.GetFPS())
 	rl.DrawRectangle(12, 12, 230, 34, rl.Color{20, 32, 45, 235})
 	rl.DrawText(rl.TextFormat("◆ MINERALS: %d", minerals), 22, 20, 18, rl.GOLD)
 	rl.DrawText(status, 18, rl.GetScreenHeight() - 28, 14, rl.Color{155, 170, 195, 255})
@@ -522,7 +636,7 @@ draw_inspector :: proc() {
 	for i := 0; i < unit_count; i += 1 {
 		if unit_in_roster(i, .MINING) { draw_unit_tile(i, x, roster_ordinal(i, .MINING)) }
 	}
-	rl.DrawText("FIGHTING DRONES", c.int(x + 18), c.int(unit_tile_y(.COMBAT) - 18), 13, rl.RED)
+	rl.DrawText("FIGHTING DRONES", c.int(x + 18), c.int(unit_tile_y(.COMBAT) - 18), 13, rl.SKYBLUE)
 	for i := 0; i < unit_count; i += 1 {
 		if unit_in_roster(i, .COMBAT) { draw_unit_tile(i, x, roster_ordinal(i, .COMBAT)) }
 	}
@@ -550,6 +664,7 @@ queue_kind_at :: proc(planet, index: int) -> Unit_Type {
 }
 
 unit_in_roster :: proc(index: int, kind: Unit_Type) -> bool {
+	if units[index].enemy { return false }
 	if units[index].kind != kind { return false }
 	if kind == .MINING { return units[index].target_planet == selected_planet }
 	return units[index].affiliation == selected_planet
@@ -594,10 +709,35 @@ draw_unit_tile :: proc(index: int, x: f32, ordinal: int) {
 	rl.DrawRectangleLinesEx(rect, 2, border)
 	symbol: cstring = "[M]"
 	accent := rl.ORANGE
-	if units[index].kind == .COMBAT { symbol = "[C]"; accent = rl.RED }
+	if units[index].kind == .COMBAT { symbol = "[C]"; accent = rl.SKYBLUE }
 	rl.DrawText(symbol, c.int(rect.x + 13), c.int(rect.y + 7), 16, accent)
 	rl.DrawText(rl.TextFormat("#%d", ordinal + 1), c.int(rect.x + 16), c.int(rect.y + 28), 11, rl.WHITE)
 	rl.DrawCircle(c.int(rect.x + rect.width - 8), c.int(rect.y + 8), 4, state_color(units[index].state))
+}
+
+// Player fighters are blue, enemy fighters red.
+draw_fighter :: proc(position: rl.Vector3, enemy: bool) {
+	color := rl.SKYBLUE
+	if enemy { color = rl.RED }
+	rl.DrawCubeV(position, {0.7, 0.32, 0.7}, color)
+}
+
+// True when the unit is a guarding fighter stationed at Mars on the given side.
+mars_fighter :: proc(u: ^Unit, enemy_side: bool) -> bool {
+	return u.kind == .COMBAT && u.state == .GUARDING && u.affiliation == 1 && u.enemy == enemy_side
+}
+
+nearest_mars_fighter :: proc(index: int, enemy_side: bool) -> rl.Vector3 {
+	best := planets[1].position
+	best_d := f32(1e9)
+	for j := 0; j < unit_count; j += 1 {
+		if j == index || !mars_fighter(&units[j], enemy_side) { continue }
+		if dd := distance(units[index].position, units[j].position); dd < best_d {
+			best_d = dd
+			best = units[j].position
+		}
+	}
+	return best
 }
 
 draw_selection_ring :: proc(center: rl.Vector3, radius: f32) {
