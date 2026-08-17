@@ -29,6 +29,9 @@ BASE_CONSTRUCT_TIME :: 60.0
 // dispatches are commitments.
 COMBAT_TRANSIT_SPEED :: 2.5
 MINING_TRANSIT_SPEED :: 1.75
+// Mining drone cycle timing (shared by the simulation and the MPS forecast).
+MINING_DURATION :: 3.0
+DEPOSIT_DURATION :: 0.5
 
 Unit_Type :: enum {MINING, COMBAT}
 Unit_State :: enum {IDLE, TRANSIT, MINING, RETURNING, DEPOSITING, GUARDING, CONSTRUCTING}
@@ -76,7 +79,7 @@ unit_count: int
 selected_units: [MAX_UNITS]bool
 selected_planet := 0
 minerals := 350
-base_counts := [PLANET_COUNT]int{1, 1, 0}
+base_counts := [PLANET_COUNT]int{1, 0, 0} // Player command bases exist only on Earth.
 production: [PLANET_COUNT][MAX_BASES]Production
 pending: [PLANET_COUNT][MAX_PENDING]Unit_Type
 pending_count: [PLANET_COUNT]int
@@ -233,18 +236,21 @@ clear_selection :: proc() {
 handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 	// The two production buttons and base button are deliberately ordinary rectangles,
 	// keeping the inspector usable even when raygui styles are unavailable.
-	if rl.CheckCollisionPointRec(mouse, {panel_x + 18, 106, 294, 32}) {
-		start_base_construction()
-		return
-	}
-	orders_y := f32(production_orders_y())
-	if rl.CheckCollisionPointRec(mouse, {panel_x + 18, orders_y, 141, 34}) {
-		queue_unit(.MINING)
-		return
-	}
-	if rl.CheckCollisionPointRec(mouse, {panel_x + 171, orders_y, 141, 34}) {
-		queue_unit(.COMBAT)
-		return
+	// Base construction and unit production exist only on Earth.
+	if selected_planet == 0 {
+		if rl.CheckCollisionPointRec(mouse, {panel_x + 18, 106, 294, 32}) {
+			start_base_construction()
+			return
+		}
+		orders_y := f32(production_orders_y())
+		if rl.CheckCollisionPointRec(mouse, {panel_x + 18, orders_y, 141, 34}) {
+			queue_unit(.MINING)
+			return
+		}
+		if rl.CheckCollisionPointRec(mouse, {panel_x + 171, orders_y, 141, 34}) {
+			queue_unit(.COMBAT)
+			return
+		}
 	}
 	if click_unit_tiles(mouse, panel_x, .MINING) || click_unit_tiles(mouse, panel_x, .COMBAT) { return }
 	if !ctrl_down() { clear_selection() }
@@ -301,6 +307,7 @@ click_unit_tiles :: proc(mouse: rl.Vector2, panel_x: f32, kind: Unit_Type) -> bo
 // mining drones physically present at the planet. Those miners drop out of
 // mining (and MPS) for the BASE_CONSTRUCT_TIME build, then resume.
 start_base_construction :: proc() {
+	if selected_planet != 0 { return } // Command bases build on Earth only.
 	if base_counts[selected_planet] >= MAX_BASES || base_build_planet >= 0 || minerals < 200 { return }
 	if !planet_liberated(selected_planet) { return }
 	if player_miners_present(selected_planet) < BASE_CONSTRUCT_MINERS { return }
@@ -343,6 +350,7 @@ resume_constructing_miners :: proc(p: int) {
 }
 
 queue_unit :: proc(kind: Unit_Type) {
+	if selected_planet != 0 { return } // All production happens at Earth command bases.
 	cost := 50
 	if kind == .COMBAT { cost = 125 }
 	if minerals < cost || queued_count(selected_planet) >= base_counts[selected_planet] * 5 { return }
@@ -579,7 +587,7 @@ update_units :: proc(dt: f32) {
 	}
 }
 
-// Minerals delivered per 3s mining cycle at a planet. Earth is deliberately
+// Minerals delivered per mining cycle at a planet. Earth is deliberately
 // poor: drones there mine at 10% of the Mars rate (1 vs 10 per cycle). Jupiter
 // is the richest prize.
 mining_rate :: proc(planet: int) -> int {
@@ -602,8 +610,10 @@ is_effective_miner :: proc(index: int) -> bool {
 }
 
 // Minerals per second delivered by a planet's effective mining drones
-// (rate per 3s cycle, DRILL_CAP already applied). Drones building a command
-// base are not mining and contribute nothing.
+// (DRILL_CAP already applied; building drones contribute nothing). One full
+// cycle is: transit out, mine MINING_DURATION, transit back to Earth, deposit
+// DEPOSIT_DURATION — the round trip at MINING_TRANSIT_SPEED dominates for
+// distant planets, so MPS falls with distance.
 planet_mps :: proc(planet: int) -> f32 {
 	effective := 0
 	for i := 0; i < unit_count; i += 1 {
@@ -611,7 +621,10 @@ planet_mps :: proc(planet: int) -> f32 {
 			effective += 1
 		}
 	}
-	return f32(effective) * f32(mining_rate(planet)) / 3.0
+	round_trip := 2.0 * distance(planets[planet].position, planets[0].position)
+	travel_time := round_trip / MINING_TRANSIT_SPEED
+	cycle_time := MINING_DURATION + DEPOSIT_DURATION + travel_time
+	return f32(effective) * f32(mining_rate(planet)) / cycle_time
 }
 
 update_combat :: proc(u: ^Unit, dt: f32) {
@@ -639,12 +652,17 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 		travel(u, target, MINING_TRANSIT_SPEED * dt)
 		if distance(u.position, target) <= planets[u.target_planet].radius + 1.0 {
 			u.position = target
-			u.state = .MINING
-			u.progress = 0
+			if planet_liberated(u.target_planet) {
+				u.state = .MINING
+				u.progress = 0
+			} else {
+				// Occupied planet: hold in orbit until combat drones liberate it.
+				u.state = .IDLE
+			}
 		}
 	case .MINING:
 		u.progress += dt
-		if u.progress >= 3 {
+		if u.progress >= MINING_DURATION {
 			planets[u.target_planet].minerals = max_int(planets[u.target_planet].minerals - mining_rate(u.target_planet), 0)
 			u.progress = 0
 			u.state = .RETURNING
@@ -658,12 +676,18 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 		}
 	case .DEPOSITING:
 		u.progress += dt
-		if u.progress >= 0.5 {
+		if u.progress >= DEPOSIT_DURATION {
 			if is_effective_miner(index) { minerals += mining_rate(u.target_planet) }
 			u.progress = 0
 			u.state = .TRANSIT
 		}
-	case .IDLE, .GUARDING, .CONSTRUCTING:
+	case .IDLE:
+		// Held at an occupied planet: resume mining once it is liberated.
+		if planet_liberated(u.target_planet) {
+			u.state = .MINING
+			u.progress = 0
+		}
+	case .GUARDING, .CONSTRUCTING:
 		// Idle miners keep their creation planet as their affiliation.
 		// Constructing miners are parked at the build site; update_production
 		// resumes them when the base completes.
@@ -767,34 +791,57 @@ draw_inspector :: proc() {
 	rl.DrawText("PLANET INSPECTOR", c.int(x + 18), 18, 20, rl.WHITE)
 	planet := &planets[selected_planet]
 	rl.DrawText(rl.TextFormat("%s  //  MINERALS %03d", planet.name, planet.minerals), c.int(x + 18), 48, 15, rl.SKYBLUE)
+	if selected_planet == 0 {
+		draw_earth_inspector(x)
+	} else {
+		draw_outpost_inspector(x)
+	}
+
+	rl.DrawText("MINING DRONES", c.int(x + 18), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
+	for i := 0; i < unit_count; i += 1 {
+		if unit_in_roster(i, .MINING) { draw_unit_tile(i, x, roster_ordinal(i, .MINING)) }
+	}
+	rl.DrawText("FIGHTING DRONES", c.int(x + 18), c.int(unit_tile_y(.COMBAT) - 18), 13, rl.SKYBLUE)
+	for i := 0; i < unit_count; i += 1 {
+		if unit_in_roster(i, .COMBAT) { draw_unit_tile(i, x, roster_ordinal(i, .COMBAT)) }
+	}
+	if h > 700 { rl.DrawText(rl.TextFormat("SELECTED UNITS: %d", selection_count()), c.int(x + 18), rl.GetScreenHeight() - 34, 13, rl.GOLD) }
+	// Live drag rectangle for the inspector box-select.
+	if inspector_drag_active {
+		rect := rect_between(inspector_drag_start, rl.GetMousePosition())
+		rl.DrawRectangleRec(rect, rl.Fade(rl.SKYBLUE, 0.18))
+		rl.DrawRectangleLinesEx(rect, 1, rl.SKYBLUE)
+	}
+}
+
+// Earth owns the command bases: base pips, base construction, production
+// lines and the build queue all live here and nowhere else.
+draw_earth_inspector :: proc(x: f32) {
 	rl.DrawText("BASES", c.int(x + 18), 76, 14, rl.WHITE)
 	for pip := 0; pip < MAX_BASES; pip += 1 {
 		pip_color := rl.Color{43, 51, 64, 255}
-		if pip < base_counts[selected_planet] { pip_color = rl.Color{55, 190, 105, 255} }
+		if pip < base_counts[0] { pip_color = rl.Color{55, 190, 105, 255} }
 		pip_rect := rl.Rectangle{x + 76 + f32(pip * 22), 75, 18, 18}
 		rl.DrawRectangleRec(pip_rect, pip_color)
 		rl.DrawRectangleLinesEx(pip_rect, 1, rl.Color{90, 105, 125, 255})
 	}
-	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(selected_planet)), c.int(x + 236), 79, 13, rl.SKYBLUE)
+	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(0)), c.int(x + 236), 79, 13, rl.SKYBLUE)
 
 	base_button := rl.Rectangle{x + 18, 106, 294, 32}
 	rl.DrawRectangleRec(base_button, rl.Color{35, 56, 78, 255})
 	rl.DrawRectangleLinesEx(base_button, 1, rl.Color{85, 125, 155, 255})
-	if base_build_planet == selected_planet {
+	if base_build_planet == 0 {
 		rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + 28), 115, 14, rl.GOLD)
-	} else if !planet_liberated(selected_planet) {
-		_, garrison := planet_combatants(selected_planet)
-		rl.DrawText(rl.TextFormat("ENEMY STRONGHOLD  %02d FIGHTERS  BASE %02d", garrison, enemy_base_hp[selected_planet]), c.int(x + 28), 115, 12, rl.Color{255, 145, 125, 255})
-	} else if player_miners_present(selected_planet) < BASE_CONSTRUCT_MINERS {
-		rl.DrawText(rl.TextFormat("NEEDS %d MINERS AT %s", BASE_CONSTRUCT_MINERS, planets[selected_planet].name), c.int(x + 28), 115, 12, rl.GOLD)
+	} else if player_miners_present(0) < BASE_CONSTRUCT_MINERS {
+		rl.DrawText(rl.TextFormat("NEEDS %d MINERS AT %s", BASE_CONSTRUCT_MINERS, planets[0].name), c.int(x + 28), 115, 12, rl.GOLD)
 	} else {
 		rl.DrawText("Construct Command Base (200 Minerals)", c.int(x + 28), 115, 14, rl.WHITE)
 	}
-	if base_build_planet == selected_planet { draw_progress({x + 18, 142, 294, 7}, base_build_progress / BASE_CONSTRUCT_TIME, rl.GOLD) }
+	if base_build_planet == 0 { draw_progress({x + 18, 142, 294, 7}, base_build_progress / BASE_CONSTRUCT_TIME, rl.GOLD) }
 
 	rl.DrawText("PRODUCTION LINES", c.int(x + 18), 166, 13, rl.Color{130, 150, 175, 255})
-	for b := 0; b < base_counts[selected_planet]; b += 1 {
-		line := production[selected_planet][b]
+	for b := 0; b < base_counts[0]; b += 1 {
+		line := production[0][b]
 		y := f32(180 + b * 30)
 		if line.active {
 			name := "MINING DRONE"
@@ -813,8 +860,8 @@ draw_inspector :: proc() {
 	draw_button({x + 171, f32(orders_y), 141, 34}, "[C] COMBAT (125)", rl.Color{78, 48, 55, 255})
 
 	queue_y := orders_y + 45
-	queue_capacity := base_counts[selected_planet] * MAX_BASES
-	queue_total := queued_count(selected_planet)
+	queue_capacity := base_counts[0] * MAX_BASES
+	queue_total := queued_count(0)
 	rl.DrawText(rl.TextFormat("BUILD QUEUE  (%d/%d)", queue_total, queue_capacity), c.int(x + 18), c.int(queue_y), 12, rl.Color{130, 150, 175, 255})
 	for slot := 0; slot < queue_capacity; slot += 1 {
 		row := slot / MAX_BASES
@@ -822,25 +869,31 @@ draw_inspector :: proc() {
 		rect := rl.Rectangle{x + 18 + f32(column * 22), f32(queue_y + 17 + row * 22), 18, 18}
 		queued := slot < queue_total
 		kind := Unit_Type.MINING
-		if queued { kind = queue_kind_at(selected_planet, slot) }
+		if queued { kind = queue_kind_at(0, slot) }
 		draw_queue_slot(rect, queued, kind)
 	}
+}
 
-	rl.DrawText("MINING DRONES", c.int(x + 18), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
-	for i := 0; i < unit_count; i += 1 {
-		if unit_in_roster(i, .MINING) { draw_unit_tile(i, x, roster_ordinal(i, .MINING)) }
+// Outpost planets host no player bases: show the mining forecast, the enemy
+// stronghold status (mining is locked until it falls) and unit rosters only.
+draw_outpost_inspector :: proc(x: f32) {
+	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(selected_planet)), c.int(x + 18), 79, 13, rl.SKYBLUE)
+	stronghold_color := rl.Color{155, 60, 60, 255}
+	title: cstring = "ENEMY STRONGHOLD"
+	status: cstring = ""
+	if planet_liberated(selected_planet) {
+		stronghold_color = rl.Color{55, 190, 105, 255}
+		title = "LIBERATED"
+		status = "MINING CLEAR — NO PLAYER BASE HERE"
+	} else {
+		_, garrison := planet_combatants(selected_planet)
+		status = rl.TextFormat("%02d FIGHTERS  BASE %02d — SEND COMBAT DRONES", garrison, enemy_base_hp[selected_planet])
 	}
-	rl.DrawText("FIGHTING DRONES", c.int(x + 18), c.int(unit_tile_y(.COMBAT) - 18), 13, rl.SKYBLUE)
-	for i := 0; i < unit_count; i += 1 {
-		if unit_in_roster(i, .COMBAT) { draw_unit_tile(i, x, roster_ordinal(i, .COMBAT)) }
-	}
-	if h > 700 { rl.DrawText(rl.TextFormat("SELECTED UNITS: %d", selection_count()), c.int(x + 18), rl.GetScreenHeight() - 34, 13, rl.GOLD) }
-	// Live drag rectangle for the inspector box-select.
-	if inspector_drag_active {
-		rect := rect_between(inspector_drag_start, rl.GetMousePosition())
-		rl.DrawRectangleRec(rect, rl.Fade(rl.SKYBLUE, 0.18))
-		rl.DrawRectangleLinesEx(rect, 1, rl.SKYBLUE)
-	}
+	card := rl.Rectangle{x + 18, 104, 294, 54}
+	rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
+	rl.DrawRectangleLinesEx(card, 1, stronghold_color)
+	rl.DrawText(title, c.int(x + 28), 114, 14, stronghold_color)
+	rl.DrawText(status, c.int(x + 28), 133, 12, rl.Color{200, 200, 210, 255})
 }
 
 production_orders_y :: proc() -> int {
@@ -883,7 +936,12 @@ roster_count :: proc(kind: Unit_Type) -> int {
 // rects and click hitboxes alike, so they can never drift apart.
 unit_tile_y :: proc(kind: Unit_Type) -> int {
 	mining_rows := (roster_count(.MINING) + TILES_PER_ROW - 1) / TILES_PER_ROW
-	y := production_orders_y() + 116 + (base_counts[selected_planet] - 1) * 22
+	// Outpost inspectors have no base/production/queue sections, so rosters
+	// sit at a fixed height; on Earth they flow below the build queue.
+	y := 196
+	if selected_planet == 0 {
+		y = production_orders_y() + 116 + (base_counts[selected_planet] - 1) * 22
+	}
 	if kind == .COMBAT { y += 26 + mining_rows * (TILE_SIZE + TILE_GAP) }
 	return y
 }

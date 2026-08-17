@@ -15,7 +15,7 @@ reset_world :: proc() {
 		base_timer[p] = 0
 	}
 	enemy_base_hp = [PLANET_COUNT]int{0, 0, JUPITER_BASE_HP}
-	base_counts = [PLANET_COUNT]int{1, 1, 0}
+	base_counts = [PLANET_COUNT]int{1, 0, 0}
 	base_build_planet = -1
 	base_build_progress = 0
 	minerals = 350
@@ -59,7 +59,10 @@ earth_miner_mines_earth_immediately :: proc(t: ^testing.T) {
 	testing.expect(t, units[0].target_planet == 0, "miner targets home planet")
 	testing.expect(t, units[0].affiliation == 0, "miner affiliated with Earth")
 	testing.expect(t, units[0].state == .MINING, "miner starts mining, no transit")
-	testing.expect(t, abs(planet_mps(0) - f32(1) / 3) < 0.001, "Earth MPS reflects the miner immediately")
+	// Earth is always liberated and has no transit leg: the cycle is just
+	// mine + deposit, so MPS is rate / (MINING_DURATION + DEPOSIT_DURATION).
+	expected := f32(1) / (MINING_DURATION + DEPOSIT_DURATION)
+	testing.expect(t, abs(planet_mps(0) - expected) < 0.001, "Earth MPS reflects the miner immediately")
 }
 
 @(test)
@@ -194,62 +197,146 @@ jupiter_base_destroyed_after_garrison_cleared :: proc(t: ^testing.T) {
 }
 
 @(test)
-base_construction_requires_liberated_planet_and_five_miners :: proc(t: ^testing.T) {
+base_construction_is_earth_only :: proc(t: ^testing.T) {
 	reset_world()
-	selected_planet = 1
-	// Occupied planet: blocked even with miners present.
-	enemy_base_hp[1] = MARS_BASE_HP
-	for i in 0..<5 { add_miner(1) }
+	// Occupied Jupiter: blocked (Earth is always liberated).
+	selected_planet = 2
+	for i in 0..<5 { add_miner(2) }
 	start_base_construction()
-	testing.expect(t, base_build_planet != 1, "occupied planet blocks base construction even with miners present")
+	testing.expect(t, base_build_planet != 2, "occupied planet blocks construction even with miners present")
 
 	reset_world()
+	// Liberated Mars and Jupiter with enough miners still refuse: command
+	// bases build on Earth only.
 	selected_planet = 1
+	for i in 0..<5 { add_miner(1) }
 	start_base_construction()
-	testing.expect(t, base_build_planet != 1, "liberated planet with no miners blocks construction")
-	for i in 0..<4 { add_miner(1) }
+	testing.expect(t, base_build_planet != 1 && minerals == 350, "liberated Mars refuses construction")
+	selected_planet = 2
+	enemy_base_hp[2] = 0
+	for i in 0..<5 { add_miner(2) }
 	start_base_construction()
-	testing.expect(t, base_build_planet != 1, "4 miners still block construction")
-	add_miner(1)
-	testing.expect(t, player_miners_present(1) == 5, "5 miners present")
+	testing.expect(t, base_build_planet != 2 && minerals == 350, "liberated Jupiter refuses construction")
+
+	reset_world()
+	selected_planet = 0
+	start_base_construction()
+	testing.expect(t, base_build_planet != 0, "liberated Earth with no miners blocks construction")
+	for i in 0..<4 { add_miner(0) }
+	start_base_construction()
+	testing.expect(t, base_build_planet != 0, "4 miners still block construction")
+	add_miner(0)
+	testing.expect(t, player_miners_present(0) == 5, "5 miners present")
 	before := minerals
 	start_base_construction()
-	testing.expect(t, base_build_planet == 1, "liberated planet with 5 miners allows construction")
+	testing.expect(t, base_build_planet == 0, "Earth with 5 miners allows construction")
 	testing.expect(t, minerals == before - 200, "construction costs 200 minerals")
 }
 
 @(test)
 construction_miners_stop_mining_and_resume :: proc(t: ^testing.T) {
 	reset_world()
-	selected_planet = 1
-	for i in 0..<5 { add_miner(1) }
-	full_mps := f32(5) * f32(mining_rate(1)) / 3.0
-	testing.expect(t, abs(planet_mps(1) - full_mps) < 0.001, "5 miners mine at full rate before construction")
+	selected_planet = 0
+	for i in 0..<5 { add_miner(0) }
+	earth_cycle: f32 = MINING_DURATION + DEPOSIT_DURATION
+	full_mps := f32(5) * f32(mining_rate(0)) / earth_cycle
+	testing.expect(t, abs(planet_mps(0) - full_mps) < 0.001, "5 miners mine at full rate before construction")
 	start_base_construction()
-	testing.expect(t, abs(planet_mps(1)) < 0.001, "construction miners stop generating MPS")
+	testing.expect(t, abs(planet_mps(0)) < 0.001, "construction miners stop generating MPS")
 	for i in 0..<unit_count {
 		if units[i].kind == .MINING { testing.expect(t, units[i].state == .CONSTRUCTING, "miners switch to constructing") }
 	}
 	update_production(59.9)
-	testing.expect(t, base_counts[1] == 1 && base_build_planet == 1, "construction still in progress before 60s")
+	testing.expect(t, base_counts[0] == 1 && base_build_planet == 0, "construction still in progress before 60s")
 	update_production(0.2)
-	testing.expect(t, base_counts[1] == 2 && base_build_planet == -1, "base completes after one full minute")
+	testing.expect(t, base_counts[0] == 2 && base_build_planet == -1, "base completes after one full minute")
 	for i in 0..<unit_count {
 		if units[i].kind == .MINING { testing.expect(t, units[i].state == .MINING, "miners resume mining") }
 	}
-	testing.expect(t, abs(planet_mps(1) - full_mps) < 0.001, "MPS restored after construction")
+	testing.expect(t, abs(planet_mps(0) - full_mps) < 0.001, "MPS restored after construction")
 }
 
 @(test)
-jupiter_base_construction_also_requires_five_miners :: proc(t: ^testing.T) {
+planet_mps_includes_round_trip_transit :: proc(t: ^testing.T) {
 	reset_world()
-	selected_planet = 2
+	// One effective miner per planet; expected MPS is rate divided by the
+	// full cycle (mine + deposit + round trip at MINING_TRANSIT_SPEED).
+	for p in 0..<PLANET_COUNT {
+		units[unit_count] = Unit{
+			kind = .MINING, state = .MINING, position = planets[p].position,
+			home_planet = 0, affiliation = p, target_planet = p,
+		}
+		unit_count += 1
+		cycle: f32 = MINING_DURATION + DEPOSIT_DURATION +
+			2.0 * distance(planets[p].position, planets[0].position) / MINING_TRANSIT_SPEED
+		expected := f32(mining_rate(p)) / cycle
+		testing.expectf(t, abs(planet_mps(p) - expected) < 0.001,
+			"planet %d MPS %.4f != expected %.4f", p, planet_mps(p), expected)
+	}
+	// Every off-Earth planet is slower than the mining-only cycle would claim.
+	no_transit := f32(mining_rate(1)) / (MINING_DURATION + DEPOSIT_DURATION)
+	testing.expect(t, planet_mps(1) < no_transit, "Mars transit time lowers MPS below the mining-only cycle")
+	testing.expect(t, planet_mps(2) < f32(mining_rate(2)) / (MINING_DURATION + DEPOSIT_DURATION), "Jupiter transit time lowers MPS")
+	// Jupiter's richer rate more than pays for its longer transit.
+	testing.expect(t, planet_mps(2) > planet_mps(1), "Jupiter MPS beats Mars despite the longer round trip")
+}
+
+@(test)
+miner_waits_for_liberation :: proc(t: ^testing.T) {
+	reset_world()
+	units[unit_count] = Unit{
+		kind = .MINING, state = .TRANSIT, position = planets[2].position,
+		home_planet = 0, affiliation = 2, target_planet = 2,
+	}
+	unit_count += 1
+	update_miner(&units[0], 0, 0.1)
+	testing.expect(t, units[0].state == .IDLE, "miner holds instead of mining an occupied planet")
+
 	enemy_base_hp[2] = 0
-	start_base_construction()
-	testing.expect(t, base_build_planet != 2, "Jupiter needs 5 miners before construction")
-	for i in 0..<5 { add_miner(2) }
-	start_base_construction()
-	testing.expect(t, base_build_planet == 2, "Jupiter construction unlocks with 5 miners present")
+	update_miner(&units[0], 0, 0.1)
+	testing.expect(t, units[0].state == .MINING, "idle miner resumes after liberation")
+}
+
+@(test)
+mining_round_trip_deposits_on_earth :: proc(t: ^testing.T) {
+	reset_world()
+	units[unit_count] = Unit{
+		kind = .MINING, state = .MINING, position = planets[2].position,
+		home_planet = 0, affiliation = 2, target_planet = 2,
+	}
+	unit_count += 1
+	// A full mining cycle sends the drone back to Earth.
+	units[0].progress = MINING_DURATION - 0.01
+	update_miner(&units[0], 0, 0.02)
+	testing.expect(t, units[0].state == .RETURNING, "miner returns to Earth after a full cycle")
+	// Deposit pays out only after DEPOSIT_DURATION on Earth.
+	units[0].position = planets[0].position
+	units[0].state = .DEPOSITING
+	units[0].progress = 0.1
+	minerals = 0
+	update_miner(&units[0], 0, 0.02)
+	testing.expect(t, minerals == 0, "no payout before the deposit completes")
+	units[0].progress = DEPOSIT_DURATION - 0.01
+	update_miner(&units[0], 0, 0.02)
+	testing.expect(t, minerals == mining_rate(2), "deposit pays the mined rate")
+	testing.expect(t, units[0].state == .TRANSIT, "deposited miner transits back out")
+}
+
+@(test)
+queue_unit_is_earth_only :: proc(t: ^testing.T) {
+	reset_world()
+	minerals = 1000
+	for p in 1..<PLANET_COUNT {
+		selected_planet = p
+		queue_unit(.MINING)
+		queue_unit(.COMBAT)
+		testing.expect(t, minerals == 1000, "no minerals spent queueing off Earth")
+		testing.expect(t, queued_count(p) == 0, "no production queued off Earth")
+	}
+	selected_planet = 0
+	queue_unit(.MINING)
+	testing.expect(t, minerals == 950, "Earth mining queue costs 50")
+	testing.expect(t, production[0][0].active && production[0][0].kind == .MINING, "Earth production line active")
 }
 
 @(test)
@@ -302,10 +389,12 @@ transit_fleets_render_representationally :: proc(t: ^testing.T) {
 }
 
 @(test)
-mars_starts_player_owned :: proc(t: ^testing.T) {
+mars_starts_without_player_base :: proc(t: ^testing.T) {
 	reset_world()
 	initialize_game()
-	testing.expect(t, base_counts[1] == 1, "Mars starts with 1 player base")
+	testing.expect(t, base_counts[0] == 1, "Earth starts with 1 player base")
+	testing.expect(t, base_counts[1] == 0, "Mars starts with no player base")
+	testing.expect(t, base_counts[2] == 0, "Jupiter starts with no player base")
 	testing.expect(t, enemy_base_hp[1] == 0, "Mars starts with 0 enemy base HP")
 	testing.expect(t, planet_liberated(1), "Mars starts liberated")
 	players, enemies := planet_combatants(1)
