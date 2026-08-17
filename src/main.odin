@@ -54,7 +54,6 @@ MAX_PENDING :: 25
 TILE_SIZE :: 52
 TILE_GAP :: 6
 TILES_PER_ROW :: 5
-DRILL_CAP :: 50
 
 Unit :: struct {
 	kind: Unit_Type,
@@ -317,11 +316,10 @@ click_unit_tiles :: proc(mouse: rl.Vector2, panel_x: f32, kind: Unit_Type) -> bo
 	return false
 }
 
-// A command base needs a liberated planet, 200 minerals and BASE_CONSTRUCT_MINERS
-// mining drones physically at the planet. Clicking queues the build immediately
-// (deducting the cost); assembling miners join the site as they become available
-// until BASE_CONSTRUCT_MINERS are gathered, then the BASE_CONSTRUCT_TIME build
-// runs. Those miners drop out of mining (and MPS) for the build, then resume.
+// A command base needs a liberated Earth and 200 minerals; it queues with no
+// crew. Miners already mining Earth join immediately; the rest auto-join as
+// they finish depositing on Earth (update_miner). The BASE_CONSTRUCT_TIME
+// clock runs only with a full crew, and everyone resumes mining after.
 start_base_construction :: proc() {
 	if selected_planet != 0 { return } // Command bases build on Earth only.
 	if base_counts[selected_planet] >= MAX_BASES || base_build_planet >= 0 || minerals < 200 { return }
@@ -331,13 +329,12 @@ start_base_construction :: proc() {
 	base_build_progress = 0
 }
 
-// Mining drones physically on Earth and available to be pulled into a build:
-// stationed there and currently in a mining cycle.
-player_miners_present :: proc(p: int) -> int {
+// Player miners currently on a planet's build crew.
+constructing_miners :: proc(p: int) -> int {
 	count := 0
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
-		if u.kind == .MINING && !u.enemy && u.target_planet == p && u.state == .MINING { count += 1 }
+		if u.kind == .MINING && !u.enemy && u.state == .CONSTRUCTING && u.target_planet == p { count += 1 }
 	}
 	return count
 }
@@ -395,18 +392,15 @@ queue_unit :: proc(kind: Unit_Type) {
 
 update_production :: proc(dt: f32) {
 	if base_build_planet >= 0 {
-		// Dynamically gather available Earth mining drones into the build site
-		// until the required count is assembled; the timer only advances once
-		// all of them are present.
-		assign_constructing_miners(base_build_planet, BASE_CONSTRUCT_MINERS)
-		if constructing_miners_at(base_build_planet) >= BASE_CONSTRUCT_MINERS {
+		// The build clock only runs with a full crew; deposits auto-fill it.
+		if constructing_miners(base_build_planet) >= BASE_CONSTRUCT_MINERS {
 			base_build_progress += dt
-			if base_build_progress >= BASE_CONSTRUCT_TIME {
-				base_counts[base_build_planet] += 1
-				resume_constructing_miners(base_build_planet)
-				base_build_planet = -1
-				base_build_progress = 0
-			}
+		}
+		if base_build_progress >= BASE_CONSTRUCT_TIME {
+			base_counts[base_build_planet] += 1
+			resume_constructing_miners(base_build_planet)
+			base_build_planet = -1
+			base_build_progress = 0
 		}
 	}
 	for p := 0; p < PLANET_COUNT; p += 1 {
@@ -637,30 +631,39 @@ update_units :: proc(dt: f32) {
 	}
 }
 
-// Minerals delivered per mining cycle at a planet. Earth is deliberately
-// poor: drones there mine at 10% of the Mars rate (1 vs 10 per cycle). Jupiter
-// is the richest prize.
+// Minerals delivered per mining cycle at a planet. Earth and Mars share the
+// standard 10; Jupiter is the richest prize. (No Earth penalty.)
 mining_rate :: proc(planet: int) -> int {
-	if planet == 0 { return 1 }
 	if planet == 2 { return 25 }
 	return 10
 }
 
-// Global hard cap on earning miners: only the first DRILL_CAP mining drones
-// (by unit index) deposit minerals. Extra drones still mine and deplete the
-// planet but pay out 0, so income never exceeds the cap.
-// ponytail: index-order cap, revisit if a per-planet or weighted split is wanted
+// Active mining drone cap per planet (planet size): only this many player
+// miners per planet count as effective and earn minerals.
+planet_mining_cap :: proc(planet: int) -> int {
+	if planet == 0 { return 30 }
+	if planet == 1 { return 25 }
+	return 100
+}
+
+// Per-planet hard cap on earning miners: only the first planet_mining_cap(p)
+// player miners targeting planet p (by unit index) deposit minerals; extras
+// still mine and deplete the planet but pay out 0. Constructing miners hold
+// no slot, so the cap counts active miners only.
+// ponytail: index-order cap, revisit if a weighted split is wanted
 is_effective_miner :: proc(index: int) -> bool {
 	if units[index].kind != .MINING || units[index].enemy { return false }
+	p := units[index].target_planet
 	rank := 0
 	for j := 0; j < index; j += 1 {
-		if units[j].kind == .MINING && !units[j].enemy { rank += 1 }
+		u := &units[j]
+		if u.kind == .MINING && !u.enemy && u.target_planet == p && u.state != .CONSTRUCTING { rank += 1 }
 	}
-	return rank < DRILL_CAP
+	return rank < planet_mining_cap(p)
 }
 
 // Minerals per second delivered by a planet's effective mining drones
-// (DRILL_CAP already applied; building drones contribute nothing). One full
+// (planet_mining_cap already applied; constructing drones contribute nothing). One full
 // cycle is: transit out, mine MINING_DURATION, transit back to Earth, deposit
 // DEPOSIT_DURATION — the round trip at MINING_TRANSIT_SPEED dominates for
 // distant planets, so MPS falls with distance.
@@ -675,6 +678,13 @@ planet_mps :: proc(planet: int) -> f32 {
 	travel_time := round_trip / MINING_TRANSIT_SPEED
 	cycle_time := MINING_DURATION + DEPOSIT_DURATION + travel_time
 	return f32(effective) * f32(mining_rate(planet)) / cycle_time
+}
+
+// Empire-wide income: the sum of every planet's MPS, shown on Earth.
+global_mps :: proc() -> f32 {
+	total := f32(0)
+	for p in 0..<PLANET_COUNT { total += planet_mps(p) }
+	return total
 }
 
 update_combat :: proc(u: ^Unit, dt: f32) {
@@ -730,6 +740,13 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 			if is_effective_miner(index) { minerals += mining_rate(u.target_planet) }
 			u.progress = 0
 			u.state = .TRANSIT
+			// A queued Earth base soaks up returning miners: after the payout
+			// they join the build crew instead of transiting back out.
+			if base_build_planet == 0 && !u.enemy && constructing_miners(0) < BASE_CONSTRUCT_MINERS {
+				u.state = .CONSTRUCTING
+				u.target_planet = 0
+				u.affiliation = 0
+			}
 		}
 	case .IDLE:
 		// Held at an occupied planet: resume mining once it is liberated.
@@ -861,11 +878,11 @@ draw_inspector :: proc() {
 		draw_outpost_inspector(x)
 	}
 
-	rl.DrawText("MINING DRONES", c.int(x + 18), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
+	rl.DrawText(rl.TextFormat("MINING DRONES (%d)", roster_count(.MINING)), c.int(x + 18), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
 	for i := 0; i < unit_count; i += 1 {
 		if unit_in_roster(i, .MINING) { draw_unit_tile(i, x, roster_ordinal(i, .MINING)) }
 	}
-	rl.DrawText("FIGHTING DRONES", c.int(x + 18), c.int(unit_tile_y(.COMBAT) - 18), 13, rl.SKYBLUE)
+	rl.DrawText(rl.TextFormat("FIGHTING DRONES (%d)", roster_count(.COMBAT)), c.int(x + 18), c.int(unit_tile_y(.COMBAT) - 18), 13, rl.SKYBLUE)
 	for i := 0; i < unit_count; i += 1 {
 		if unit_in_roster(i, .COMBAT) { draw_unit_tile(i, x, roster_ordinal(i, .COMBAT)) }
 	}
@@ -889,19 +906,17 @@ draw_earth_inspector :: proc(x: f32) {
 		rl.DrawRectangleRec(pip_rect, pip_color)
 		rl.DrawRectangleLinesEx(pip_rect, 1, rl.Color{90, 105, 125, 255})
 	}
-	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(0)), c.int(x + 236), 79, 13, rl.SKYBLUE)
+	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(0)), c.int(x + 236), 70, 13, rl.SKYBLUE)
+	rl.DrawText(rl.TextFormat("GLOBAL %.1f", global_mps()), c.int(x + 236), 86, 13, rl.GOLD)
 
 	base_button := rl.Rectangle{x + 18, 106, 294, 32}
 	rl.DrawRectangleRec(base_button, rl.Color{35, 56, 78, 255})
 	rl.DrawRectangleLinesEx(base_button, 1, rl.Color{85, 125, 155, 255})
-	if base_build_planet == 0 {
-		assigned := constructing_miners_at(0)
-		if assigned >= BASE_CONSTRUCT_MINERS {
-			rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + 28), 115, 14, rl.GOLD)
-			draw_progress({x + 18, 142, 294, 7}, base_build_progress / BASE_CONSTRUCT_TIME, rl.GOLD)
-		} else {
-			rl.DrawText(rl.TextFormat("ASSEMBLING %d/%d MINERS", assigned, BASE_CONSTRUCT_MINERS), c.int(x + 28), 115, 14, rl.GOLD)
-		}
+	if base_build_planet == 0 && constructing_miners(0) < BASE_CONSTRUCT_MINERS {
+		rl.DrawText(rl.TextFormat("CREW %d/%d  //  MINERS AUTO-JOIN ON DEPOSIT", constructing_miners(0), BASE_CONSTRUCT_MINERS), c.int(x + 24), 115, 11, rl.GOLD)
+	} else if base_build_planet == 0 {
+		rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + 28), 115, 14, rl.GOLD)
+		draw_progress({x + 18, 142, 294, 7}, base_build_progress / BASE_CONSTRUCT_TIME, rl.GOLD)
 	} else {
 		rl.DrawText("Construct Command Base (200 Minerals)", c.int(x + 28), 115, 14, rl.WHITE)
 	}
