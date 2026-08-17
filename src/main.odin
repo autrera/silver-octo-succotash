@@ -102,11 +102,17 @@ combat_timer: [PLANET_COUNT]f32
 miner_timer: [PLANET_COUNT]f32
 base_timer: [PLANET_COUNT]f32
 
+game_paused := false
+quit_requested := false
+mars_scouted := false
+earth_rally := 0
+
 main :: proc() {
 	rl.SetConfigFlags({.VSYNC_HINT, .WINDOW_HIGHDPI, .WINDOW_RESIZABLE})
 	rl.InitWindow(1280, 760, "STARFALL COMMAND // Planetary RTS Prototype")
 	defer rl.CloseWindow()
 	rl.SetTargetFPS(60)
+	rl.SetExitKey(.KEY_NULL) // ESC opens the pause menu instead of closing the window.
 
 	initialize_game()
 	camera = rl.Camera3D{
@@ -117,18 +123,20 @@ main :: proc() {
 		projection = .PERSPECTIVE,
 	}
 
-	for !rl.WindowShouldClose() {
+	for !rl.WindowShouldClose() && !quit_requested {
 		dt := rl.GetFrameTime()
-		update_camera(dt)
-		update_input()
-		update_production(dt)
-		update_units(dt)
-		update_enemy_waves(dt)
+		if rl.IsKeyPressed(.ESCAPE) { toggle_pause() }
+		if game_paused {
+			update_pause_menu()
+		} else {
+			step_simulation(dt)
+		}
 
 		rl.BeginDrawing()
 		rl.ClearBackground(rl.Color{8, 12, 24, 255})
 		draw_world()
 		draw_inspector()
+		if game_paused { draw_pause_menu() }
 		rl.EndDrawing()
 	}
 }
@@ -221,6 +229,9 @@ update_input :: proc() {
 	if rl.IsMouseButtonPressed(.RIGHT) && mouse.x < panel_x {
 		if planet := pick_planet(mouse); planet >= 0 {
 			issue_group_order(planet)
+			// Earth selected: right-click sets the Earth rally point (clicking
+			// Earth itself clears it back to 0).
+			if selected_planet == 0 { set_earth_rally(planet) }
 		}
 	}
 }
@@ -406,9 +417,13 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 	target_planet := planet
 	if kind == .COMBAT { state = .GUARDING }
 	if kind == .MINING { state = .MINING }
-	// Mining drones work their home planet by default; dispatch them elsewhere
-	// with a right-click group order.
+	// Earth's rally point: newly produced units auto-dispatch to the rally world.
+	if planet == 0 && earth_rally != 0 {
+		target_planet = earth_rally
+		state = .TRANSIT
+	}
 	affiliation := planet
+	if kind == .MINING || target_planet != planet { affiliation = target_planet }
 	units[unit_count] = Unit{kind = kind, state = state, position = pos, home_planet = planet, affiliation = affiliation, target_planet = target_planet, orbit_angle = angle}
 	unit_count += 1
 }
@@ -712,13 +727,21 @@ draw_world :: proc() {
 	rl.DrawLine3D({-40, 0, 0}, {40, 0, 0}, rl.Color{40, 45, 65, 255})
 	for p in 0..<PLANET_COUNT {
 		planet := planets[p]
-		rl.DrawSphere(planet.position, planet.radius, planet.color)
-		rl.DrawSphereWires(planet.position, planet.radius + 0.04, 12, 16, rl.Color{220, 230, 245, 180})
+		surface := planet.color
+		wire := rl.Color{220, 230, 245, 180}
+		if p == 1 && !mars_scouted {
+			// Fog of war: Mars renders shadowed until a player unit scouts it.
+			surface = rl.Color{58, 62, 74, 255}
+			wire = rl.Color{95, 100, 118, 120}
+		}
+		rl.DrawSphere(planet.position, planet.radius, surface)
+		rl.DrawSphereWires(planet.position, planet.radius + 0.04, 12, 16, wire)
 		if p == selected_planet {
 			rl.DrawCircle3D(planet.position, planet.radius + 0.35, {0, 1, 0}, 90, rl.GOLD)
 			rl.DrawCircle3D(planet.position, planet.radius + 0.55, {0, 1, 0}, 90, rl.SKYBLUE)
 		}
 	}
+	draw_rally_flag()
 	for i := 0; i < unit_count; i += 1 {
 		u := units[i]
 		if u.kind == .MINING {
@@ -781,6 +804,8 @@ draw_world :: proc() {
 	rl.DrawRectangle(12, 12, 230, 34, rl.Color{20, 32, 45, 235})
 	rl.DrawText(rl.TextFormat("◆ MINERALS: %d", minerals), 22, 20, 18, rl.GOLD)
 	rl.DrawText(status, 18, rl.GetScreenHeight() - 28, 14, rl.Color{155, 170, 195, 255})
+	zoom_text := rl.TextFormat("ZOOM %d%% // ALTITUDE %.0f", zoom_percent(), camera.position.y)
+	rl.DrawText(zoom_text, viewport_w - 208, rl.GetScreenHeight() - 28, 14, rl.Color{155, 170, 195, 255})
 }
 
 draw_inspector :: proc() {
@@ -878,16 +903,20 @@ draw_earth_inspector :: proc(x: f32) {
 // stronghold status (mining is locked until it falls) and unit rosters only.
 draw_outpost_inspector :: proc(x: f32) {
 	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(selected_planet)), c.int(x + 18), 79, 13, rl.SKYBLUE)
-	stronghold_color := rl.Color{155, 60, 60, 255}
-	title: cstring = "ENEMY STRONGHOLD"
-	status: cstring = ""
-	if planet_liberated(selected_planet) {
-		stronghold_color = rl.Color{55, 190, 105, 255}
-		title = "LIBERATED"
-		status = "MINING CLEAR — NO PLAYER BASE HERE"
-	} else {
-		_, garrison := planet_combatants(selected_planet)
-		status = rl.TextFormat("%02d FIGHTERS  BASE %02d — SEND COMBAT DRONES", garrison, enemy_base_hp[selected_planet])
+	stronghold_color := rl.Color{120, 120, 138, 255}
+	title: cstring = "UNSCOUTED"
+	status: cstring = "STATUS UNKNOWN — SEND SCOUT DRONE"
+	if selected_planet != 1 || mars_scouted {
+		if planet_liberated(selected_planet) {
+			stronghold_color = rl.Color{55, 190, 105, 255}
+			title = "LIBERATED"
+			status = "MINING CLEAR — NO PLAYER BASE HERE"
+		} else {
+			stronghold_color = rl.Color{155, 60, 60, 255}
+			title = "ENEMY STRONGHOLD"
+			_, garrison := planet_combatants(selected_planet)
+			status = rl.TextFormat("%02d FIGHTERS  BASE %02d — SEND COMBAT DRONES", garrison, enemy_base_hp[selected_planet])
+		}
 	}
 	card := rl.Rectangle{x + 18, 104, 294, 54}
 	rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
@@ -1067,6 +1096,122 @@ selection_count :: proc() -> int {
 	count := 0
 	for i := 0; i < unit_count; i += 1 { if selected_units[i] { count += 1 } }
 	return count
+}
+
+// ---- Pause menu ----------------------------------------------------------
+
+toggle_pause :: proc() { game_paused = !game_paused }
+
+// One unpaused simulation tick. The main loop skips this entirely while the
+// pause menu is open, freezing camera, input, production and units.
+step_simulation :: proc(dt: f32) {
+	update_camera(dt)
+	update_input()
+	update_production(dt)
+	update_units(dt)
+	update_scouting()
+}
+
+pause_menu_rects :: proc() -> (box, continue_rect, quit_rect: rl.Rectangle) {
+	w := f32(rl.GetScreenWidth())
+	h := f32(rl.GetScreenHeight())
+	box = rl.Rectangle{(w - 340) / 2, (h - 250) / 2, 340, 250}
+	continue_rect = rl.Rectangle{box.x + 40, box.y + 96, box.width - 80, 42}
+	quit_rect = rl.Rectangle{box.x + 40, box.y + 156, box.width - 80, 42}
+	return
+}
+
+update_pause_menu :: proc() {
+	if !rl.IsMouseButtonPressed(.LEFT) { return }
+	_, continue_rect, quit_rect := pause_menu_rects()
+	mouse := rl.GetMousePosition()
+	if rl.CheckCollisionPointRec(mouse, continue_rect) {
+		game_paused = false
+	} else if rl.CheckCollisionPointRec(mouse, quit_rect) {
+		quit_requested = true
+	}
+}
+
+draw_pause_menu :: proc() {
+	rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), rl.Color{0, 0, 0, 180})
+	box, continue_rect, quit_rect := pause_menu_rects()
+	rl.DrawRectangleRec(box, rl.Color{16, 22, 38, 250})
+	rl.DrawRectangleLinesEx(box, 2, rl.GOLD)
+	rl.DrawText("PAUSED", c.int(box.x + 22), c.int(box.y + 26), 30, rl.WHITE)
+	rl.DrawText("SIMULATION FROZEN // ESC OR CONTINUE TO RESUME", c.int(box.x + 22), c.int(box.y + 66), 12, rl.Color{130, 150, 175, 255})
+	draw_button(continue_rect, "CONTINUE", rl.Color{38, 92, 60, 255})
+	draw_button(quit_rect, "QUIT", rl.Color{92, 42, 42, 255})
+}
+
+// ---- Fog of war ----------------------------------------------------------
+
+// Mars stays under fog of war until any player unit reaches it (or is
+// stationed there); arrival lifts the mask for good.
+update_scouting :: proc() {
+	if mars_scouted { return }
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.target_planet != 1 && u.affiliation != 1 { continue }
+		if distance(u.position, planets[1].position) <= planets[1].radius + 2.0 {
+			mars_scouted = true
+			return
+		}
+	}
+}
+
+mars_intel_status :: proc() -> cstring {
+	if mars_scouted { return "SCOUTED // INTEL AVAILABLE" }
+	return "UNSCOUTED // STATUS UNKNOWN"
+}
+
+// Intel counters: units stationed at a planet. This prototype has no enemy
+// faction yet, so they count everything garrisoned there; the fog gate on
+// Mars is what hides them until scouted.
+intel_fighters :: proc(p: int) -> int {
+	n := 0
+	for i := 0; i < unit_count; i += 1 {
+		if units[i].kind == .COMBAT && units[i].affiliation == p { n += 1 }
+	}
+	return n
+}
+
+intel_miners :: proc(p: int) -> int {
+	n := 0
+	for i := 0; i < unit_count; i += 1 {
+		if units[i].kind == .MINING && units[i].target_planet == p { n += 1 }
+	}
+	return n
+}
+
+intel_presence :: proc(p: int) -> bool {
+	return intel_fighters(p) + intel_miners(p) + base_counts[p] > 0
+}
+
+// ---- Earth rally point ---------------------------------------------------
+
+set_earth_rally :: proc(target: int) { earth_rally = target }
+
+// Planet the rally flag flies over; 0 = no rally point set.
+rally_flag_planet :: proc() -> int { return earth_rally }
+
+// 3D rally flag (pole + pennant) above the rally world.
+draw_rally_flag :: proc() {
+	if earth_rally == 0 { return }
+	p := planets[earth_rally]
+	base := rl.Vector3{p.position.x, p.position.y + p.radius, p.position.z}
+	top := rl.Vector3{p.position.x, p.position.y + p.radius + 3.4, p.position.z}
+	rl.DrawCylinderEx(base, top, 0.07, 0.07, 6, rl.Color{205, 208, 218, 255})
+	// Pennant: two windings so it reads from either side.
+	tip := rl.Vector3{p.position.x + 1.7, top.y - 0.55, p.position.z}
+	rl.DrawTriangle3D({p.position.x, top.y, p.position.z}, {p.position.x, top.y - 1.3, p.position.z}, tip, rl.GOLD)
+	rl.DrawTriangle3D({p.position.x, top.y - 1.3, p.position.z}, {p.position.x, top.y, p.position.z}, tip, rl.GOLD)
+}
+
+// ---- Camera zoom ---------------------------------------------------------
+
+// camera.position.y spans [15, 200] (clamped in update_camera); 15 = 100%.
+zoom_percent :: proc() -> int {
+	return int(clamp_f32((200 - camera.position.y) / 185.0 * 100.0, 0, 100))
 }
 
 pick_planet :: proc(mouse: rl.Vector2) -> int {

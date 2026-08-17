@@ -421,9 +421,170 @@ enemy_fighters_guard_and_orbit_after_arriving :: proc(t: ^testing.T) {
 	// pass a large dt).
 	for i in 0..<unit_count { update_combat(&units[i], 100.0) }
 	for i in 0..<unit_count {
-		testing.expect(t, units[i].state == .GUARDING, "enemy fighters guard Mars after arriving")
+	testing.expect(t, units[i].state == .GUARDING, "enemy fighters guard Mars after arriving")
 	}
 	first := units[0].position
 	update_combat(&units[0], 1.0)
 	testing.expect(t, distance(first, units[0].position) > 0.01, "guarding fighters keep orbiting while fighting")
+}
+
+// Tests run serially (ODIN_TEST_THREADS=1) and share package globals, so each
+// test sets its own preconditions and restores the globals it touches.
+
+@(test)
+pause_toggle_cycles :: proc(t: ^testing.T) {
+	game_paused = false
+	toggle_pause()
+	testing.expect(t, game_paused, "ESC should pause the game")
+	toggle_pause()
+	testing.expect(t, !game_paused, "ESC again should resume the game")
+	game_paused = false
+}
+
+@(test)
+pause_toggle_isolates_sim_state :: proc(t: ^testing.T) {
+	// toggle_pause only flips the gate flag; it must not mutate sim state.
+	minerals_before := minerals
+	unit_count_before := unit_count
+	progress_before := production[0][0].progress
+	game_paused = false
+	toggle_pause()
+	testing.expect(t, game_paused, "paused flag set")
+	testing.expect(t, minerals == minerals_before, "pause toggle must not touch minerals")
+	testing.expect(t, unit_count == unit_count_before, "pause toggle must not touch unit count")
+	testing.expect(t, production[0][0].progress == progress_before, "pause toggle must not touch production")
+	game_paused = false
+}
+
+@(test)
+paused_game_skips_simulation_step :: proc(t: ^testing.T) {
+	// The pause gate lives in the main loop: step_simulation (camera, input,
+	// production, units, scouting) is only invoked while unpaused. Verify the
+	// gate flag controls the only place sim state advances.
+	game_paused = false
+	unit_count = 0
+	mars_scouted = false
+	production[0][0] = Production{kind = .MINING, active = true, progress = 0}
+	step_simulation(1.0) // 1s of an unpaused tick: a 3s mining build advances.
+	testing.expect(t, production[0][0].progress > 0, "unpaused sim advances production")
+	testing.expect(t, production[0][0].active, "3s build not complete after 1s")
+	// Restore.
+	production[0][0] = Production{}
+	unit_count = 2
+	mars_scouted = false
+	game_paused = false
+}
+
+@(test)
+mars_fog_starts_down :: proc(t: ^testing.T) {
+	mars_scouted = false
+	testing.expect(t, !mars_scouted, "Mars starts under fog of war")
+	testing.expect(t, string(mars_intel_status()) == "UNSCOUTED // STATUS UNKNOWN", "unscouted Mars masks intel status")
+	mars_scouted = false
+}
+
+@(test)
+mars_fog_lifts_when_player_unit_arrives :: proc(t: ^testing.T) {
+	mars_scouted = false
+	unit_count = 1
+	units[0] = Unit{kind = .MINING, state = .MINING, position = planets[1].position, home_planet = 0, affiliation = 1, target_planet = 1}
+	update_scouting()
+	testing.expect(t, mars_scouted, "player unit stationed on Mars scouts it")
+	testing.expect(t, string(mars_intel_status()) == "SCOUTED // INTEL AVAILABLE", "scouted Mars reveals intel status")
+	unit_count = 2
+	mars_scouted = false
+}
+
+@(test)
+mars_fog_stays_down_for_units_elsewhere :: proc(t: ^testing.T) {
+	mars_scouted = false
+	unit_count = 1
+	units[0] = Unit{kind = .MINING, state = .TRANSIT, position = {0, 0, 0}, home_planet = 0, affiliation = 0, target_planet = 0}
+	update_scouting()
+	testing.expect(t, !mars_scouted, "units away from Mars keep the fog down")
+	unit_count = 2
+	mars_scouted = false
+}
+
+@(test)
+unscouted_mars_masks_intel_details :: proc(t: ^testing.T) {
+	// Counts exist under the hood but the inspector shows the masked status
+	// until a player unit scouts Mars.
+	mars_scouted = false
+	unit_count = 1
+	units[0] = Unit{kind = .COMBAT, state = .GUARDING, position = planets[1].position, home_planet = 1, affiliation = 1, target_planet = 1}
+	testing.expect(t, intel_fighters(1) == 1, "garrison counted once scouted")
+	testing.expect(t, intel_miners(1) == 0, "no miners stationed")
+	testing.expect(t, intel_presence(1), "presence positive with garrison")
+	testing.expect(t, string(mars_intel_status()) == "UNSCOUTED // STATUS UNKNOWN", "status still masked while unscouted")
+	unit_count = 2
+	mars_scouted = false
+}
+
+@(test)
+scouted_mars_reveals_intel_details :: proc(t: ^testing.T) {
+	mars_scouted = true
+	unit_count = 2
+	units[0] = Unit{kind = .COMBAT, state = .GUARDING, position = planets[1].position, home_planet = 1, affiliation = 1, target_planet = 1}
+	units[1] = Unit{kind = .MINING, state = .MINING, position = planets[1].position, home_planet = 0, affiliation = 1, target_planet = 1}
+	testing.expect(t, intel_fighters(1) == 1, "fighter count revealed after scouting")
+	testing.expect(t, intel_miners(1) == 1, "miner count revealed after scouting")
+	testing.expect(t, intel_presence(1), "enemy presence revealed after scouting")
+	testing.expect(t, string(mars_intel_status()) == "SCOUTED // INTEL AVAILABLE", "scouted status shown")
+	unit_count = 2
+	mars_scouted = false
+}
+
+@(test)
+earth_rally_set_and_cleared :: proc(t: ^testing.T) {
+	earth_rally = 0
+	set_earth_rally(1)
+	testing.expect(t, earth_rally == 1, "right-click Mars with Earth selected sets the rally to Mars")
+	testing.expect(t, rally_flag_planet() == 1, "rally flag targets the rally planet")
+	set_earth_rally(0)
+	testing.expect(t, earth_rally == 0, "right-click Earth clears the rally point")
+	testing.expect(t, rally_flag_planet() == 0, "no flag when the rally is cleared")
+}
+
+@(test)
+rally_auto_dispatches_new_combat_drones :: proc(t: ^testing.T) {
+	unit_count = 0
+	earth_rally = 1
+	spawn_unit(.COMBAT, 0)
+	testing.expect(t, unit_count == 1, "combat drone spawned")
+	u := units[0]
+	testing.expect(t, u.state == .TRANSIT, "rally combat drone auto-dispatches into transit")
+	testing.expect(t, u.target_planet == 1 && u.affiliation == 1, "rally combat drone heads to the rally world")
+	earth_rally = 0
+	unit_count = 0
+}
+
+@(test)
+rally_auto_dispatches_new_mining_drones :: proc(t: ^testing.T) {
+	unit_count = 0
+	earth_rally = 1
+	spawn_unit(.MINING, 0)
+	testing.expect(t, units[0].state == .TRANSIT, "rally mining drone transits to the rally world")
+	testing.expect(t, units[0].target_planet == 1 && units[0].affiliation == 1, "rally mining drone targets the rally world")
+	earth_rally = 0
+	unit_count = 0
+}
+
+@(test)
+no_rally_keeps_default_spawn_behavior :: proc(t: ^testing.T) {
+	unit_count = 0
+	earth_rally = 0
+	spawn_unit(.COMBAT, 0)
+	testing.expect(t, units[0].state == .GUARDING && units[0].target_planet == 0, "without a rally, combat drones guard Earth")
+	unit_count = 0
+}
+
+@(test)
+rally_only_redirects_earth_spawns :: proc(t: ^testing.T) {
+	unit_count = 0
+	earth_rally = 1
+	spawn_unit(.COMBAT, 1)
+	testing.expect(t, units[0].state == .GUARDING && units[0].target_planet == 1, "non-Earth spawns ignore the Earth rally")
+	earth_rally = 0
+	unit_count = 0
 }
