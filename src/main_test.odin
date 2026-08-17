@@ -281,9 +281,13 @@ construction_miners_stop_mining_and_resume :: proc(t: ^testing.T) {
 	full_mps := f32(5) * f32(mining_rate(0)) / earth_cycle
 	testing.expect(t, abs(planet_mps(0) - full_mps) < 0.001, "5 miners mine at full rate before construction")
 	start_base_construction()
-	update_production(0.1) // gather the 5 present miners
 	for i in 0..<unit_count {
-		if units[i].kind == .MINING { testing.expect(t, units[i].state == .CONSTRUCTING, "miners switch to constructing") }
+		units[i].state = .DEPOSITING
+		units[i].progress = DEPOSIT_DURATION - 0.01
+		update_miner(&units[i], i, 0.02)
+	}
+	for i in 0..<unit_count {
+		if units[i].kind == .MINING { testing.expect(t, units[i].state == .CONSTRUCTING, "miners switch to constructing on deposit") }
 	}
 	testing.expect(t, abs(planet_mps(0)) < 0.001, "construction miners stop generating MPS")
 	update_production(BASE_CONSTRUCT_TIME - 0.2)
