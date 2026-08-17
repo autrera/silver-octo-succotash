@@ -51,9 +51,9 @@ Production :: struct {
 }
 
 MAX_PENDING :: 25
-TILE_SIZE :: 52
-TILE_GAP :: 6
-TILES_PER_ROW :: 5
+TILE_SIZE :: 26
+TILE_GAP :: 3
+TILES_PER_ROW :: 10
 
 Unit :: struct {
 	kind: Unit_Type,
@@ -252,7 +252,8 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 	// Base construction and unit production exist only on Earth.
 	if selected_planet == 0 {
 		if rl.CheckCollisionPointRec(mouse, {panel_x + 18, 106, 294, 32}) {
-			start_base_construction()
+			// The hidden button still swallows the click: nothing happens at cap.
+			if base_button_visible() { start_base_construction() }
 			return
 		}
 		orders_y := f32(production_orders_y())
@@ -314,6 +315,12 @@ click_unit_tiles :: proc(mouse: rl.Vector2, panel_x: f32, kind: Unit_Type) -> bo
 		ordinal += 1
 	}
 	return false
+}
+
+// The construct-base button disappears once Earth holds MAX_BASES bases and
+// none is under construction; a lost base brings it back.
+base_button_visible :: proc() -> bool {
+	return base_counts[0] < MAX_BASES || base_build_planet == 0
 }
 
 // A command base needs a liberated Earth and 200 minerals; it queues with no
@@ -446,8 +453,8 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 }
 
 // Enemy waves: every 2 minutes (first at the 3-minute mark) WAVE_SIZE fighters
-// lift off from Jupiter space. While Jupiter is still occupied they reinforce
-// Mars; once Jupiter is liberated they strike Mars or Jupiter at random. Combat
+// lift off from Jupiter space and strike Earth, Mars or Jupiter at random.
+// Combat
 // pacing is planet-general: while both sides have guarding fighters at a
 // planet, one drone on each side is destroyed every COMBAT_TICK seconds. With
 // no player defenders left, enemies destroy one mining drone every COMBAT_TICK.
@@ -508,8 +515,8 @@ update_planet_combat :: proc(dt: f32, p: int) {
 spawn_enemy_wave :: proc() {
 	spawn_count := min(WAVE_SIZE, MAX_UNITS - unit_count)
 	if spawn_count <= 0 { return }
-	target := 1
-	if planet_liberated(2) { target = int(rl.GetRandomValue(1, 2)) }
+	// Every wave picks its target at random: Earth, Mars or Jupiter.
+	target := int(rl.GetRandomValue(0, 2))
 	spawn_pos := planets[2].position + rl.Vector3{40, 0.5, -25}
 	for i in 0..<spawn_count {
 		angle := f32(i) * 1.26
@@ -821,6 +828,7 @@ draw_world :: proc() {
 		}
 		for d in 0..<rep_count(pc) { draw_fighter(player_spots[d], false) }
 		for d in 0..<rep_count(ec) { draw_fighter(enemy_spots[d], true) }
+		draw_combat_lasers(p, player_spots[:], enemy_spots[:], pc, ec)
 	}
 	for p in 0..<PLANET_COUNT {
 		for side in 0..<2 {
@@ -909,16 +917,22 @@ draw_earth_inspector :: proc(x: f32) {
 	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(0)), c.int(x + 236), 70, 13, rl.SKYBLUE)
 	rl.DrawText(rl.TextFormat("GLOBAL %.1f", global_mps()), c.int(x + 236), 86, 13, rl.GOLD)
 
-	base_button := rl.Rectangle{x + 18, 106, 294, 32}
-	rl.DrawRectangleRec(base_button, rl.Color{35, 56, 78, 255})
-	rl.DrawRectangleLinesEx(base_button, 1, rl.Color{85, 125, 155, 255})
-	if base_build_planet == 0 && constructing_miners(0) < BASE_CONSTRUCT_MINERS {
-		rl.DrawText(rl.TextFormat("CREW %d/%d  //  MINERS AUTO-JOIN ON DEPOSIT", constructing_miners(0), BASE_CONSTRUCT_MINERS), c.int(x + 24), 115, 11, rl.GOLD)
-	} else if base_build_planet == 0 {
-		rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + 28), 115, 14, rl.GOLD)
-		draw_progress({x + 18, 142, 294, 7}, base_build_progress / BASE_CONSTRUCT_TIME, rl.GOLD)
-	} else {
-		rl.DrawText("Construct Command Base (200 Minerals)", c.int(x + 28), 115, 14, rl.WHITE)
+	if base_button_visible() {
+		base_button := rl.Rectangle{x + 18, 106, 294, 32}
+		if base_build_planet == 0 {
+			rl.DrawRectangleRec(base_button, rl.Color{30, 40, 55, 255})
+			if constructing_miners(0) < BASE_CONSTRUCT_MINERS {
+				rl.DrawText(rl.TextFormat("CREW %d/%d  //  MINERS AUTO-JOIN ON DEPOSIT", constructing_miners(0), BASE_CONSTRUCT_MINERS), c.int(x + 24), 115, 11, rl.GOLD)
+			} else {
+				rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + 28), 115, 14, rl.GOLD)
+				draw_progress({x + 18, 142, 294, 7}, base_build_progress / BASE_CONSTRUCT_TIME, rl.GOLD)
+			}
+			rl.DrawRectangleLinesEx(base_button, 1, rl.Color{85, 125, 155, 255})
+		} else {
+			rl.DrawRectangleRec(base_button, rl.Color{35, 56, 78, 255})
+			rl.DrawRectangleLinesEx(base_button, 1, rl.Color{85, 125, 155, 255})
+			rl.DrawText("Construct Command Base (200 Minerals)", c.int(x + 28), 115, 14, rl.WHITE)
+		}
 	}
 
 	rl.DrawText("PRODUCTION LINES", c.int(x + 18), 166, 13, rl.Color{130, 150, 175, 255})
@@ -1051,13 +1065,12 @@ draw_unit_tile :: proc(index: int, x: f32, ordinal: int) {
 	border := rl.Color{91, 113, 140, 255}
 	if selected_units[index] { fill = rl.Color{123, 94, 26, 255}; border = rl.GOLD }
 	rl.DrawRectangleRec(rect, fill)
-	rl.DrawRectangleLinesEx(rect, 2, border)
-	symbol: cstring = "[M]"
+	rl.DrawRectangleLinesEx(rect, 1, border)
+	symbol: cstring = "M"
 	accent := rl.ORANGE
-	if units[index].kind == .COMBAT { symbol = "[C]"; accent = rl.SKYBLUE }
-	rl.DrawText(symbol, c.int(rect.x + 13), c.int(rect.y + 7), 16, accent)
-	rl.DrawText(rl.TextFormat("#%d", ordinal + 1), c.int(rect.x + 16), c.int(rect.y + 28), 11, rl.WHITE)
-	rl.DrawCircle(c.int(rect.x + rect.width - 8), c.int(rect.y + 8), 4, state_color(units[index].state))
+	if units[index].kind == .COMBAT { symbol = "C"; accent = rl.SKYBLUE }
+	rl.DrawText(symbol, c.int(rect.x + 8), c.int(rect.y + 7), 12, accent)
+	rl.DrawCircle(c.int(rect.x + rect.width - 5), c.int(rect.y + 5), 3, state_color(units[index].state))
 }
 
 // Player fighters are blue, enemy fighters red.
@@ -1065,6 +1078,42 @@ draw_fighter :: proc(position: rl.Vector3, enemy: bool) {
 	color := rl.SKYBLUE
 	if enemy { color = rl.RED }
 	rl.DrawCubeV(position, {0.7, 0.32, 0.7}, color)
+}
+
+// Visible laser fire during battles: bright tracer lines between shooting
+// fighters and their targets (player fire SKYBLUE, enemy fire RED), mirroring
+// the update_planet_combat rules — dogfights, miner sweeps and base sieges.
+draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, ec: int) {
+	target_spots: [MAX_UNITS]rl.Vector3
+	tc := 0
+	if pc > 0 && ec > 0 {
+		// Dogfight: each fighter trades fire with the opposing line.
+		for i in 0..<pc { rl.DrawLine3D(player_spots[i], enemy_spots[i % ec], rl.SKYBLUE) }
+		for j in 0..<ec { rl.DrawLine3D(enemy_spots[j], player_spots[j % pc], rl.RED) }
+	} else if ec > 0 {
+		// Enemy fighters strafing unescorted player miners (kill_player_miner).
+		for i := 0; i < unit_count; i += 1 {
+			u := &units[i]
+			if u.kind == .MINING && !u.enemy && u.target_planet == p { target_spots[tc] = u.position; tc += 1 }
+		}
+		for j in 0..<ec {
+			if tc == 0 { break }
+			rl.DrawLine3D(enemy_spots[j], target_spots[j % tc], rl.RED)
+		}
+	} else if pc > 0 {
+		// Player fighters sweeping enemy miners (kill_enemy_miner), then
+		// besieging the enemy base itself.
+		for i := 0; i < unit_count; i += 1 {
+			u := &units[i]
+			if u.kind == .MINING && u.enemy && u.affiliation == p { target_spots[tc] = u.position; tc += 1 }
+		}
+		if tc > 0 {
+			for i in 0..<pc { rl.DrawLine3D(player_spots[i], target_spots[i % tc], rl.SKYBLUE) }
+		} else if enemy_base_hp[p] > 0 {
+			base := planets[p].position + rl.Vector3{0, planets[p].radius * 0.6, 0}
+			for i in 0..<pc { rl.DrawLine3D(player_spots[i], base, rl.SKYBLUE) }
+		}
+	}
 }
 
 // One rendered cube per up-to-10 units: ceil(count / 10).

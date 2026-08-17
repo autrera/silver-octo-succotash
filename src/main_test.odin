@@ -71,13 +71,15 @@ enemy_wave_spawns_five_attackers_from_jupiter :: proc(t: ^testing.T) {
 	spawn_enemy_wave()
 	testing.expect(t, unit_count == WAVE_SIZE, "wave size")
 	jump_off := planets[2].position + rl.Vector3{40, 0.5, -25}
+	target := units[0].target_planet
+	testing.expect(t, target >= 0 && target < PLANET_COUNT, "wave targets Earth, Mars or Jupiter")
 	for i in 0..<unit_count {
 		testing.expect(t, units[i].kind == .COMBAT, "enemy is combat")
 		testing.expect(t, units[i].enemy, "enemy flag set")
-		testing.expect(t, units[i].target_planet == 1 && units[i].affiliation == 1, "enemy targets Mars while Jupiter is occupied")
+		testing.expect(t, units[i].target_planet == target && units[i].affiliation == target, "wave shares one target")
 		testing.expect(t, distance(units[i].position, jump_off) < 3, "wave lifts off from Jupiter space")
 	}
-	selected_planet = 1
+	selected_planet = target
 	testing.expect(t, roster_count(.COMBAT) == 0, "enemies never appear in the player roster")
 }
 
@@ -384,28 +386,23 @@ queue_unit_is_earth_only :: proc(t: ^testing.T) {
 }
 
 @(test)
-enemy_wave_targets_mars_until_jupiter_liberated :: proc(t: ^testing.T) {
-	reset_world()
-	for i in 0..<3 { spawn_enemy_wave() }
-	for i in 0..<unit_count {
-		testing.expect(t, units[i].target_planet == 1, "waves target Mars before Jupiter is liberated")
-	}
-	// After liberation the target flips to a seeded random pick between Mars
-	// and Jupiter; both must show up across seeds.
-	seen_mars, seen_jupiter := false, false
-	for seed in 0..<40 {
+enemy_waves_hit_earth_mars_and_jupiter :: proc(t: ^testing.T) {
+	// Every wave picks a seeded random target among Earth (0), Mars (1) and
+	// Jupiter (2); all three must show up across seeds.
+	seen := [PLANET_COUNT]bool{}
+	for seed in 0..<60 {
 		reset_world()
-		enemy_base_hp[2] = 0
 		rl.SetRandomSeed(u32(seed))
 		spawn_enemy_wave()
-		for i in 0..<unit_count {
-			target := units[i].target_planet
-			testing.expect(t, target == 1 || target == 2, "post-liberation waves target Mars or Jupiter")
-			if target == 1 { seen_mars = true }
-			if target == 2 { seen_jupiter = true }
+		testing.expect(t, unit_count == WAVE_SIZE, "wave size")
+		target := units[0].target_planet
+		testing.expect(t, target >= 0 && target < PLANET_COUNT, "wave targets a valid planet")
+		for i in 1..<unit_count {
+			testing.expect(t, units[i].target_planet == target, "every unit in a wave shares one target")
 		}
+		seen[target] = true
 	}
-	testing.expect(t, seen_mars && seen_jupiter, "post-liberation waves hit both planets across seeds")
+	testing.expect(t, seen[0] && seen[1] && seen[2], "Earth, Mars and Jupiter are all valid wave targets")
 }
 
 @(test)
@@ -424,12 +421,16 @@ transit_fleets_render_representationally :: proc(t: ^testing.T) {
 		units[unit_count] = Unit{kind = .COMBAT, state = .TRANSIT, position = {}, home_planet = 0, affiliation = 1, target_planet = 1}
 		unit_count += 1
 	}
-	spawn_enemy_wave() // 5 enemies in transit to Mars
+	spawn_enemy_wave() // 5 enemies in transit to a random target.
+	wave_target := units[unit_count - WAVE_SIZE].target_planet
 	testing.expect(t, transit_fighters_at(1, false) == 12, "12 player fighters in transit to Mars")
 	testing.expect(t, rep_count(transit_fighters_at(1, false)) == 2, "12 transit fighters render as 2 cubes")
-	testing.expect(t, transit_fighters_at(1, true) == WAVE_SIZE, "wave of 5 in transit to Mars")
-	testing.expect(t, rep_count(transit_fighters_at(1, true)) == 1, "5-enemy wave renders as 1 cube")
-	testing.expect(t, transit_fighters_at(2, true) == 0, "no enemies in transit to Jupiter before liberation")
+	testing.expect(t, transit_fighters_at(wave_target, true) == WAVE_SIZE, "enemy wave in transit to its target")
+	testing.expect(t, rep_count(transit_fighters_at(wave_target, true)) == 1, "5-enemy wave renders as 1 cube")
+	for p in 0..<PLANET_COUNT {
+		expected := p == wave_target ? WAVE_SIZE : 0
+		testing.expectf(t, transit_fighters_at(p, true) == expected, "planet %d enemy transit count %d != %d", p, transit_fighters_at(p, true), expected)
+	}
 }
 
 @(test)
@@ -601,14 +602,18 @@ enemy_garrisons_concealed_until_player_presence :: proc(t: ^testing.T) {
 @(test)
 enemy_wave_concealed_in_transit_until_target_lit :: proc(t: ^testing.T) {
 	reset_world()
-	spawn_enemy_wave() // 5 fighters en route to Mars while Mars is dark.
+	spawn_enemy_wave()
 	testing.expect(t, unit_count == WAVE_SIZE, "wave spawned")
+	target := units[0].target_planet
+	lit := has_vision(target)
 	for i in 0..<unit_count {
-		testing.expect(t, is_concealed(&units[i]), "enemy wave concealed while the target planet is dark")
+		testing.expect(t, is_concealed(&units[i]) != lit, "wave hidden while the target is dark, visible once lit")
 	}
-	add_guarding_fighter(1, false) // Player scout reaches Mars first.
-	for i in 0..<unit_count {
-		testing.expect(t, !is_concealed(&units[i]), "enemy wave visible once the target planet is lit")
+	if target != 0 { // Earth is always lit, so only off-world targets can be darkened then lit.
+		add_guarding_fighter(target, false)
+		for i in 0..<unit_count {
+			testing.expect(t, !is_concealed(&units[i]), "enemy wave visible once the target planet is lit")
+		}
 	}
 }
 
@@ -812,4 +817,48 @@ planet_mining_caps_limit_effective_miners :: proc(t: ^testing.T) {
 	jupiter_cycle: f32 = MINING_DURATION + DEPOSIT_DURATION + 2.0 * distance(planets[2].position, planets[0].position) / MINING_TRANSIT_SPEED
 	expected = f32(planet_mining_cap(2)) * f32(mining_rate(2)) / jupiter_cycle
 	testing.expect(t, abs(planet_mps(2) - expected) < 0.001, "Jupiter MPS caps at 100 effective miners")
+}
+
+// ---- Hidden base button & compact unit tiles ----------------------------
+
+@(test)
+base_button_hidden_at_max_bases :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = 0
+	testing.expect(t, base_button_visible(), "button visible below the cap")
+	// At the cap with nothing building, the button disappears.
+	base_counts[0] = MAX_BASES
+	testing.expect(t, base_build_planet == -1, "nothing under construction")
+	testing.expect(t, !base_button_visible(), "button hidden at 5 bases")
+	// A lost base brings it back.
+	base_counts[0] = MAX_BASES - 1
+	testing.expect(t, base_button_visible(), "button returns when a base is lost")
+	// While building, the progress panel stays visible even at the cap boundary.
+	base_counts[0] = MAX_BASES
+	base_build_planet = 0
+	testing.expect(t, base_button_visible(), "progress panel shows while building")
+	base_build_planet = -1
+	// Clicking the hidden button area does nothing: no minerals spent, no build.
+	base_counts[0] = MAX_BASES
+	minerals = 1000
+	handle_inspector_click({19, 107}, 0) // panel_x = 0: base rect is {18,106,294,32}.
+	testing.expect(t, minerals == 1000 && base_build_planet == -1, "clicking the hidden button area does nothing at the cap")
+}
+
+@(test)
+unit_tiles_are_compact_and_hitboxes_match_layout :: proc(t: ^testing.T) {
+	testing.expect(t, TILE_SIZE == 26, "tiles are 50% smaller (52 -> 26)")
+	// A full row packs inside the panel content area (two 18px margins).
+	testing.expect(t, TILE_SIZE * TILES_PER_ROW + (TILES_PER_ROW - 1) * TILE_GAP <= SCREEN_PANEL_WIDTH - 36, "a full row fits inside the panel")
+	testing.expect(t, TILES_PER_ROW >= 9, "rows hold at least 9 tiles")
+	// First tile sits at the panel margin; ordinal 10 wraps to the second row.
+	r0 := unit_tile_rect(100, 200, 0)
+	testing.expect(t, r0.x == 118 && r0.y == 200 && r0.width == TILE_SIZE && r0.height == TILE_SIZE, "first tile at the panel margin")
+	r10 := unit_tile_rect(100, 200, 10)
+	testing.expect(t, r10.x == 118 && r10.y == 200 + (TILE_SIZE + TILE_GAP), "ordinal 10 wraps to the second row")
+	r9 := unit_tile_rect(100, 200, 9)
+	testing.expect(t, r9.x == 100 + 18 + 9 * (TILE_SIZE + TILE_GAP), "tiles pack left to right")
+	// Hitbox covers the tile and stays inside it.
+	testing.expect(t, rl.CheckCollisionPointRec({r0.x + 1, r0.y + 1}, r0), "hitbox covers the tile")
+	testing.expect(t, !rl.CheckCollisionPointRec({r0.x - 1, r0.y - 1}, r0), "hitbox stays inside the tile")
 }
