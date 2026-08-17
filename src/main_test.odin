@@ -95,6 +95,47 @@ wave_timer_first_at_180_seconds_then_every_120 :: proc(t: ^testing.T) {
 }
 
 @(test)
+step_simulation_advances_wave_timer_and_spawns_on_schedule :: proc(t: ^testing.T) {
+	reset_world()
+	production = {}
+	pending_count = {}
+	// Unpaused play drives the wave clock through step_simulation, not just
+	// direct calls: first wave at 3:00, then every 2:00.
+	step_simulation(f32(WAVE_FIRST_DELAY) - 0.1)
+	testing.expect(t, unit_count == 0, "no wave before 3 minutes of unpaused play")
+	step_simulation(0.1)
+	testing.expect(t, unit_count == WAVE_SIZE, "first wave spawns at the 3-minute mark")
+	step_simulation(f32(WAVE_INTERVAL) - 0.1)
+	testing.expect(t, unit_count == WAVE_SIZE, "no wave before 2 minutes elapse")
+	step_simulation(0.1)
+	testing.expect(t, unit_count == 2 * WAVE_SIZE, "second wave spawns 2 minutes after the first")
+}
+
+@(test)
+step_simulation_resolves_combat_at_jupiter :: proc(t: ^testing.T) {
+	reset_world()
+	production = {}
+	pending_count = {}
+	for i in 0..<5 { add_guarding_fighter(2, false) }
+	for i in 0..<5 { add_guarding_fighter(2, true) }
+	step_simulation(f32(COMBAT_TICK))
+	players, enemies := planet_combatants(2)
+	testing.expect(t, players == 4 && enemies == 4, "1:1 trade per 2s tick through step_simulation")
+	step_simulation(f32(COMBAT_TICK))
+	players, enemies = planet_combatants(2)
+	testing.expect(t, players == 3 && enemies == 3, "combat keeps ticking on every simulation step")
+}
+
+@(test)
+initial_camera_zoom_is_85_percent :: proc(t: ^testing.T) {
+	// Startup altitude 200 - 185*0.85 = 42.75 maps zoom_percent() to exactly 85%.
+	testing.expect(t, abs(CAMERA_START_Y - 42.75) < 0.0001, "startup altitude is 42.75")
+	camera.position = {camera_target.x, CAMERA_START_Y, camera_target.z + CAMERA_START_Y}
+	testing.expect(t, zoom_percent() == 85, "startup camera reads exactly 85% zoom")
+	camera.position = {}
+}
+
+@(test)
 transit_speeds_reduced_by_75_percent :: proc(t: ^testing.T) {
 	reset_world()
 	units[unit_count] = Unit{kind = .COMBAT, state = .TRANSIT, position = {0, 0, 0}, home_planet = 0, affiliation = 0, target_planet = 1}

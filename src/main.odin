@@ -87,6 +87,8 @@ base_build_progress: f32
 base_build_planet := -1
 camera: rl.Camera3D
 camera_target := rl.Vector3{7.5, 0, -2.5}
+// Startup altitude: 200 - 185*0.85 so zoom_percent() opens at exactly 85%.
+CAMERA_START_Y :: 200.0 - 185.0 * 0.85
 inspector_drag_start: rl.Vector2
 inspector_drag_active: bool
 
@@ -115,7 +117,7 @@ main :: proc() {
 
 	initialize_game()
 	camera = rl.Camera3D{
-		position = {camera_target.x, 100, camera_target.z + 100},
+		position = {camera_target.x, CAMERA_START_Y, camera_target.z + CAMERA_START_Y},
 		target = camera_target,
 		up = {0, 1, 0},
 		fovy = 45,
@@ -1150,6 +1152,7 @@ step_simulation :: proc(dt: f32) {
 	update_input()
 	update_production(dt)
 	update_units(dt)
+	update_enemy_waves(dt)
 }
 
 pause_menu_rects :: proc() -> (box, continue_rect, quit_rect: rl.Rectangle) {
