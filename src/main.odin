@@ -85,6 +85,8 @@ base_build_progress: f32
 base_build_planet := -1
 camera: rl.Camera3D
 camera_target := rl.Vector3{7.5, 0, -2.5}
+inspector_drag_start: rl.Vector2
+inspector_drag_active: bool
 
 // Enemy occupation: per-planet base HP. Mars and Jupiter start with an enemy
 // base; a planet is liberated once its base is destroyed (and, by the combat
