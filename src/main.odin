@@ -8,14 +8,31 @@ SCREEN_PANEL_WIDTH :: 330
 MAX_BASES :: 5
 MAX_UNITS :: 256
 PLANET_COUNT :: 3
-GARRISON_FIGHTERS :: 40
-GARRISON_MINERS :: 10
-ENEMY_BASE_HP :: 20
+
 // Combat pacing: one 1:1 kill trade per side every COMBAT_TICK seconds.
 COMBAT_TICK :: 2
+// Enemy attack waves: first at the 3-minute mark, then every 2 minutes.
+WAVE_FIRST_DELAY :: 180
+WAVE_INTERVAL :: 120
+WAVE_SIZE :: 5
+// Standing enemy garrisons: Mars holds a small outpost, Jupiter the stronghold.
+MARS_GARRISON_FIGHTERS :: 3
+MARS_GARRISON_MINERS :: 3
+JUPITER_GARRISON_FIGHTERS :: 40
+JUPITER_GARRISON_MINERS :: 10
+MARS_BASE_HP :: 10
+JUPITER_BASE_HP :: 20
+// A command base needs 5 mining drones present at the planet and takes one
+// full minute to build; those drones stop mining until it completes.
+BASE_CONSTRUCT_MINERS :: 5
+BASE_CONSTRUCT_TIME :: 60.0
+// Transit speeds run at 25% of the pre-warpace pace: slow enough that
+// dispatches are commitments.
+COMBAT_TRANSIT_SPEED :: 2.5
+MINING_TRANSIT_SPEED :: 1.75
 
 Unit_Type :: enum {MINING, COMBAT}
-Unit_State :: enum {IDLE, TRANSIT, MINING, RETURNING, DEPOSITING, GUARDING}
+Unit_State :: enum {IDLE, TRANSIT, MINING, RETURNING, DEPOSITING, GUARDING, CONSTRUCTING}
 
 Planet :: struct {
 	name: cstring,
@@ -60,7 +77,7 @@ unit_count: int
 selected_units: [MAX_UNITS]bool
 selected_planet := 0
 minerals := 350
-base_counts := [PLANET_COUNT]int{1, 1, 0}
+base_counts := [PLANET_COUNT]int{1, 0, 0}
 production: [PLANET_COUNT][MAX_BASES]Production
 pending: [PLANET_COUNT][MAX_PENDING]Unit_Type
 pending_count: [PLANET_COUNT]int
@@ -69,18 +86,17 @@ base_build_planet := -1
 camera: rl.Camera3D
 camera_target := rl.Vector3{7.5, 0, -2.5}
 
-WAVE_INTERVAL :: 120
-WAVE_SIZE :: 5
+// Enemy occupation: per-planet base HP. Mars and Jupiter start with an enemy
+// base; a planet is liberated once its base is destroyed (and, by the combat
+// rules, all enemy drones are gone).
+enemy_base_hp: [PLANET_COUNT]int = {0, MARS_BASE_HP, JUPITER_BASE_HP}
 enemy_wave_timer: f32
-// Per-planet combat pacing (COMBAT_TICK seconds per 1:1 kill trade) and the
-// Jupiter stronghold conquest state.
+wave_started: bool
+// Per-planet combat pacing: 1:1 fighter trades, miner sweeps and base damage
+// all tick on COMBAT_TICK.
 combat_timer: [PLANET_COUNT]f32
 miner_timer: [PLANET_COUNT]f32
-jupiter_base_timer: f32
-enemy_base_hp: int = ENEMY_BASE_HP
-// Planet Inspector drag-to-select state.
-inspector_drag_start: rl.Vector2
-inspector_drag_active: bool
+base_timer: [PLANET_COUNT]f32
 
 main :: proc() {
 	rl.SetConfigFlags({.VSYNC_HINT, .WINDOW_HIGHDPI, .WINDOW_RESIZABLE})
@@ -117,37 +133,38 @@ initialize_game :: proc() {
 	unit_count = 2
 	units[0] = Unit{kind = .MINING, state = .MINING, position = {3.8, 0.4, 0}, home_planet = 0, affiliation = 0, target_planet = 0}
 	units[1] = Unit{kind = .COMBAT, state = .GUARDING, position = {0, 3.8, 0}, home_planet = 0, affiliation = 0, target_planet = 0, orbit_angle = 0.5}
-	spawn_jupiter_garrison()
+	spawn_garrison(1, MARS_GARRISON_FIGHTERS, MARS_GARRISON_MINERS)
+	spawn_garrison(2, JUPITER_GARRISON_FIGHTERS, JUPITER_GARRISON_MINERS)
 }
 
-// Jupiter opens as an enemy stronghold: GARRISON_FIGHTERS fighting drones and
-// GARRISON_MINERS mining drones guarding it, all orbiting the planet. Enemy
-// miners are static garrison units; they mine nothing.
+// Mars and Jupiter open as enemy-held planets: standing fighting and mining
+// drones orbiting them, plus an enemy base. Enemy miners are static garrison
+// units; they mine nothing.
 // ponytail: no enemy economy, revisit if waves should scale with looted minerals
-spawn_jupiter_garrison :: proc() {
-	for i in 0..<GARRISON_FIGHTERS {
-		angle := f32(i) * (2 * math.PI / f32(GARRISON_FIGHTERS))
+spawn_garrison :: proc(p, fighters, miners: int) {
+	for i in 0..<fighters {
+		angle := f32(i) * (2 * math.PI / f32(fighters))
 		units[unit_count] = Unit{
-			kind = .COMBAT, state = .GUARDING, position = jupiter_orbit_pos(angle),
-			home_planet = 2, affiliation = 2, target_planet = 2,
+			kind = .COMBAT, state = .GUARDING, position = orbit_pos(p, angle),
+			home_planet = p, affiliation = p, target_planet = p,
 			enemy = true, orbit_angle = angle,
 		}
 		unit_count += 1
 	}
-	for i in 0..<GARRISON_MINERS {
-		angle := f32(i) * (2 * math.PI / f32(GARRISON_MINERS)) + 0.3
+	for i in 0..<miners {
+		angle := f32(i) * (2 * math.PI / f32(miners)) + 0.3
 		units[unit_count] = Unit{
-			kind = .MINING, state = .GUARDING, position = jupiter_orbit_pos(angle),
-			home_planet = 2, affiliation = 2, target_planet = 2,
+			kind = .MINING, state = .GUARDING, position = orbit_pos(p, angle),
+			home_planet = p, affiliation = p, target_planet = p,
 			enemy = true, orbit_angle = angle,
 		}
 		unit_count += 1
 	}
 }
 
-jupiter_orbit_pos :: proc(angle: f32) -> rl.Vector3 {
-	center := planets[2].position
-	return {center.x + math.cos(angle) * (planets[2].radius + 1.5), center.y + 1.0, center.z + math.sin(angle) * (planets[2].radius + 1.5)}
+orbit_pos :: proc(p: int, angle: f32) -> rl.Vector3 {
+	center := planets[p].position
+	return {center.x + math.cos(angle) * (planets[p].radius + 1.5), center.y + 1.0, center.z + math.sin(angle) * (planets[p].radius + 1.5)}
 }
 
 update_camera :: proc(dt: f32) {
@@ -177,7 +194,7 @@ update_input :: proc() {
 	// Build shortcuts use the same validation path as the inspector buttons.
 	if rl.IsKeyPressed(.M) { queue_unit(.MINING) }
 	if rl.IsKeyPressed(.C) { queue_unit(.COMBAT) }
-	// Debug: force the next enemy wave immediately (verify combat without waiting 2 minutes).
+	// Debug: force the next enemy wave immediately (verify combat without waiting 3 minutes).
 	if rl.IsKeyPressed(.N) { spawn_enemy_wave() }
 	mouse := rl.GetMousePosition()
 	panel_x := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
@@ -280,13 +297,49 @@ click_unit_tiles :: proc(mouse: rl.Vector2, panel_x: f32, kind: Unit_Type) -> bo
 	return false
 }
 
+// A command base needs a liberated planet, 200 minerals and BASE_CONSTRUCT_MINERS
+// mining drones physically present at the planet. Those miners drop out of
+// mining (and MPS) for the BASE_CONSTRUCT_TIME build, then resume.
 start_base_construction :: proc() {
 	if base_counts[selected_planet] >= MAX_BASES || base_build_planet >= 0 || minerals < 200 { return }
-	// Jupiter is enemy territory until its garrison, miners and base are gone.
-	if selected_planet == 2 && !jupiter_liberated() { return }
+	if !planet_liberated(selected_planet) { return }
+	if player_miners_present(selected_planet) < BASE_CONSTRUCT_MINERS { return }
 	minerals -= 200
 	base_build_planet = selected_planet
 	base_build_progress = 0
+	assign_constructing_miners(selected_planet, BASE_CONSTRUCT_MINERS)
+}
+
+// Player mining drones physically on the planet: stationed there and mining.
+player_miners_present :: proc(p: int) -> int {
+	count := 0
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .MINING && !u.enemy && u.target_planet == p && u.state == .MINING { count += 1 }
+	}
+	return count
+}
+
+assign_constructing_miners :: proc(p, n: int) {
+	assigned := 0
+	for i := 0; i < unit_count; i += 1 {
+		if assigned >= n { break }
+		u := &units[i]
+		if u.kind == .MINING && !u.enemy && u.target_planet == p && u.state == .MINING {
+			u.state = .CONSTRUCTING
+			assigned += 1
+		}
+	}
+}
+
+resume_constructing_miners :: proc(p: int) {
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .MINING && u.state == .CONSTRUCTING && u.target_planet == p {
+			u.state = .MINING
+			u.progress = 0
+		}
+	}
 }
 
 queue_unit :: proc(kind: Unit_Type) {
@@ -307,8 +360,9 @@ queue_unit :: proc(kind: Unit_Type) {
 update_production :: proc(dt: f32) {
 	if base_build_planet >= 0 {
 		base_build_progress += dt
-		if base_build_progress >= 6 {
+		if base_build_progress >= BASE_CONSTRUCT_TIME {
 			base_counts[base_build_planet] += 1
+			resume_constructing_miners(base_build_planet)
 			base_build_planet = -1
 			base_build_progress = 0
 		}
@@ -344,24 +398,29 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 	target_planet := planet
 	if kind == .COMBAT { state = .GUARDING }
 	if kind == .MINING { state = .MINING }
-	// Mining drones work their home planet by default: Earth drones mine Earth.
+	// Mining drones work their home planet by default; dispatch them elsewhere
+	// with a right-click group order.
 	affiliation := planet
 	units[unit_count] = Unit{kind = kind, state = state, position = pos, home_planet = planet, affiliation = affiliation, target_planet = target_planet, orbit_angle = angle}
 	unit_count += 1
 }
 
-// Every 2 minutes a wave of WAVE_SIZE enemy fighters lifts off from Jupiter and
-// attacks Mars. Combat pacing is planet-general: while both sides have guarding
-// fighters at a planet, one drone on each side is destroyed every COMBAT_TICK
-// seconds (5v5 lasts ~10s, a 1:1 attrition trade). With no player defenders
-// left, enemies destroy one mining drone every COMBAT_TICK seconds. Player
-// fleets assaulting Jupiter sweep its garrison miners and demolish the enemy
-// base once the fighters fall, liberating the stronghold.
+// Enemy waves: every 2 minutes (first at the 3-minute mark) WAVE_SIZE fighters
+// lift off from Jupiter space. While Jupiter is still occupied they reinforce
+// Mars; once Jupiter is liberated they strike Mars or Jupiter at random. Combat
+// pacing is planet-general: while both sides have guarding fighters at a
+// planet, one drone on each side is destroyed every COMBAT_TICK seconds. With
+// no player defenders left, enemies destroy one mining drone every COMBAT_TICK.
+// Player fleets sweeping an occupied planet kill its garrison miners first,
+// then damage the enemy base by one per player fighter per tick until it falls.
 update_enemy_waves :: proc(dt: f32) {
 	enemy_wave_timer += dt
-	if enemy_wave_timer >= WAVE_INTERVAL {
+	interval := f32(WAVE_FIRST_DELAY)
+	if wave_started { interval = f32(WAVE_INTERVAL) }
+	if enemy_wave_timer >= interval {
 		spawn_enemy_wave()
 		enemy_wave_timer = 0
+		wave_started = true
 	}
 	for p in 0..<PLANET_COUNT { update_planet_combat(dt, p) }
 }
@@ -381,49 +440,58 @@ update_planet_combat :: proc(dt: f32, p: int) {
 			miner_timer[p] -= COMBAT_TICK
 			if !kill_player_miner(p) { break }
 		}
+	} else if players > 0 {
+		combat_timer[p] = 0
+		// Occupation cleanup: with the garrison fighters gone, player fighters
+		// sweep the enemy mining drones, then bring down the enemy base.
+		if enemy_miner_count(p) > 0 {
+			miner_timer[p] += dt
+			for miner_timer[p] >= COMBAT_TICK {
+				miner_timer[p] -= COMBAT_TICK
+				if !kill_enemy_miner(p) { break }
+			}
+		} else if enemy_base_hp[p] > 0 {
+			base_timer[p] += dt
+			for base_timer[p] >= COMBAT_TICK {
+				base_timer[p] -= COMBAT_TICK
+				enemy_base_hp[p] = max_int(enemy_base_hp[p] - players, 0)
+				if enemy_base_hp[p] == 0 { break }
+			}
+		}
 	} else {
 		combat_timer[p] = 0
 		miner_timer[p] = 0
-		// Conquest cleanup at Jupiter: with the garrison fighters gone, player
-		// fighters sweep the enemy mining drones, then bring down the base.
-		if p == 2 && players > 0 {
-			if enemy_miner_count(2) > 0 {
-				miner_timer[2] += dt
-				for miner_timer[2] >= COMBAT_TICK {
-					miner_timer[2] -= COMBAT_TICK
-					if !kill_enemy_miner() { break }
-				}
-			} else if enemy_base_hp > 0 {
-				jupiter_base_timer += dt
-				for jupiter_base_timer >= COMBAT_TICK {
-					jupiter_base_timer -= COMBAT_TICK
-					enemy_base_hp -= players
-					if enemy_base_hp <= 0 { enemy_base_hp = 0; break }
-				}
-			}
-		}
+		base_timer[p] = 0
 	}
 }
 
 spawn_enemy_wave :: proc() {
 	spawn_count := min(WAVE_SIZE, MAX_UNITS - unit_count)
 	if spawn_count <= 0 { return }
+	target := 1
+	if planet_liberated(2) { target = int(rl.GetRandomValue(1, 2)) }
 	spawn_pos := planets[2].position + rl.Vector3{40, 0.5, -25}
 	for i in 0..<spawn_count {
 		angle := f32(i) * 1.26
 		pos := spawn_pos + rl.Vector3{math.cos(angle) * 1.5, 0, math.sin(angle) * 1.5}
 		units[unit_count] = Unit{
 			kind = .COMBAT, state = .TRANSIT, position = pos,
-			home_planet = 2, affiliation = 1, target_planet = 1,
+			home_planet = 2, affiliation = target, target_planet = target,
 			enemy = true, orbit_angle = angle,
 		}
 		unit_count += 1
 	}
 }
 
+// A planet is liberated once its enemy base is destroyed (the combat rules
+// only damage the base after every enemy drone there is gone).
+planet_liberated :: proc(p: int) -> bool {
+	return enemy_base_hp[p] <= 0
+}
+
 // Counts of guarding fighters at a planet: player units vs enemy units.
 planet_combatants :: proc(p: int) -> (players, enemies: int) {
-	for i in 0..<unit_count {
+	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.kind != .COMBAT || u.state != .GUARDING || u.affiliation != p { continue }
 		if u.enemy { enemies += 1 } else { players += 1 }
@@ -432,7 +500,7 @@ planet_combatants :: proc(p: int) -> (players, enemies: int) {
 }
 
 kill_fighter :: proc(p: int, enemy_side: bool) -> bool {
-	for i in 0..<unit_count {
+	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.kind == .COMBAT && u.enemy == enemy_side && u.state == .GUARDING && u.affiliation == p {
 			remove_unit_at(i)
@@ -443,7 +511,7 @@ kill_fighter :: proc(p: int, enemy_side: bool) -> bool {
 }
 
 kill_player_miner :: proc(p: int) -> bool {
-	for i in 0..<unit_count {
+	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.kind == .MINING && !u.enemy && u.target_planet == p {
 			remove_unit_at(i)
@@ -455,29 +523,21 @@ kill_player_miner :: proc(p: int) -> bool {
 
 enemy_miner_count :: proc(p: int) -> int {
 	count := 0
-	for i in 0..<unit_count {
+	for i := 0; i < unit_count; i += 1 {
 		if units[i].kind == .MINING && units[i].enemy && units[i].affiliation == p { count += 1 }
 	}
 	return count
 }
 
-kill_enemy_miner :: proc() -> bool {
-	for i in 0..<unit_count {
+kill_enemy_miner :: proc(p: int) -> bool {
+	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
-		if u.kind == .MINING && u.enemy && u.affiliation == 2 {
+		if u.kind == .MINING && u.enemy && u.affiliation == p {
 			remove_unit_at(i)
 			return true
 		}
 	}
 	return false
-}
-
-// Jupiter is liberated once its enemy base is down and no enemy units remain.
-jupiter_liberated :: proc() -> bool {
-	if enemy_base_hp > 0 { return false }
-	if enemy_miner_count(2) > 0 { return false }
-	_, enemies := planet_combatants(2)
-	return enemies == 0
 }
 
 // Shift-left removal keeps unit indices stable, so is_effective_miner ranks and
@@ -520,7 +580,8 @@ update_units :: proc(dt: f32) {
 }
 
 // Minerals delivered per 3s mining cycle at a planet. Earth is deliberately
-// poor: drones there mine at 10% of the Mars rate (1 vs 10 per cycle).
+// poor: drones there mine at 10% of the Mars rate (1 vs 10 per cycle). Jupiter
+// is the richest prize.
 mining_rate :: proc(planet: int) -> int {
 	if planet == 0 { return 1 }
 	if planet == 2 { return 25 }
@@ -535,17 +596,18 @@ is_effective_miner :: proc(index: int) -> bool {
 	if units[index].kind != .MINING || units[index].enemy { return false }
 	rank := 0
 	for j := 0; j < index; j += 1 {
-		if units[j].kind == .MINING { rank += 1 }
+		if units[j].kind == .MINING && !units[j].enemy { rank += 1 }
 	}
 	return rank < DRILL_CAP
 }
 
 // Minerals per second delivered by a planet's effective mining drones
-// (rate per 3s cycle, DRILL_CAP already applied).
+// (rate per 3s cycle, DRILL_CAP already applied). Drones building a command
+// base are not mining and contribute nothing.
 planet_mps :: proc(planet: int) -> f32 {
 	effective := 0
 	for i := 0; i < unit_count; i += 1 {
-		if units[i].kind == .MINING && !units[i].enemy && units[i].target_planet == planet && is_effective_miner(i) {
+		if units[i].kind == .MINING && !units[i].enemy && units[i].state != .CONSTRUCTING && units[i].target_planet == planet && is_effective_miner(i) {
 			effective += 1
 		}
 	}
@@ -555,7 +617,7 @@ planet_mps :: proc(planet: int) -> f32 {
 update_combat :: proc(u: ^Unit, dt: f32) {
 	if u.state == .TRANSIT {
 		target := planets[u.target_planet].position
-		travel(u, target, 10 * dt)
+		travel(u, target, COMBAT_TRANSIT_SPEED * dt)
 		if distance(u.position, target) <= planets[u.target_planet].radius + 1.4 {
 			u.state = .GUARDING
 			u.orbit_angle = 0
@@ -574,7 +636,7 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 	earth := planets[0].position
 	switch u.state {
 	case .TRANSIT:
-		travel(u, target, 7 * dt)
+		travel(u, target, MINING_TRANSIT_SPEED * dt)
 		if distance(u.position, target) <= planets[u.target_planet].radius + 1.0 {
 			u.position = target
 			u.state = .MINING
@@ -588,7 +650,7 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 			u.state = .RETURNING
 		}
 	case .RETURNING:
-		travel(u, earth, 7 * dt)
+		travel(u, earth, MINING_TRANSIT_SPEED * dt)
 		if distance(u.position, earth) <= planets[0].radius + 1.0 {
 			u.position = earth
 			u.state = .DEPOSITING
@@ -601,8 +663,10 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 			u.progress = 0
 			u.state = .TRANSIT
 		}
-	case .IDLE, .GUARDING:
+	case .IDLE, .GUARDING, .CONSTRUCTING:
 		// Idle miners keep their creation planet as their affiliation.
+		// Constructing miners are parked at the build site; update_production
+		// resumes them when the base completes.
 	}
 }
 
@@ -637,16 +701,14 @@ draw_world :: proc() {
 			color := rl.ORANGE
 			if u.enemy { color = rl.MAROON }
 			rl.DrawCubeV(u.position, {0.55, 0.55, 0.55}, color)
-		} else if u.state != .GUARDING {
-			// Transit combat drones render 1:1; guarding crowds are representational below.
-			draw_fighter(u.position, u.enemy)
 		}
-		if selected_units[i] { draw_selection_ring(u.position, 0.78) }
+		if !u.enemy && selected_units[i] { draw_selection_ring(u.position, 0.78) }
 	}
-	// Guarding fighters render representationally per side: one cube per up-to-10
-	// drones (ceil(count/10)), so a 5-fighter wave shows as one red cube and a
-	// 40-strong garrison as four. Rosters, tracking and selection still use the
-	// real unit list.
+	// Fighting drones render representationally per side and group: one cube
+	// per up-to-10 drones (ceil(count/10)), so a 5-fighter enemy wave in
+	// transit shows as one red cube and the 40-strong Jupiter garrison as
+	// four. This applies in orbit (guarding) and in transit (per target
+	// planet). Rosters, tracking and selection still use the real unit list.
 	for p in 0..<PLANET_COUNT {
 		player_spots: [MAX_UNITS]rl.Vector3
 		enemy_spots: [MAX_UNITS]rl.Vector3
@@ -658,11 +720,19 @@ draw_world :: proc() {
 		}
 		for d in 0..<rep_count(pc) { draw_fighter(player_spots[d], false) }
 		for d in 0..<rep_count(ec) { draw_fighter(enemy_spots[d], true) }
-		// Lasers: while both sides are engaged, each visible cube fires a
-		// pulsing bolt at its nearest opposite.
-		if pc > 0 && ec > 0 {
-			for d in 0..<rep_count(ec) { draw_laser(enemy_spots[d], nearest_spot(player_spots, pc, enemy_spots[d]), rl.Color{255, 75, 75, 255}) }
-			for d in 0..<rep_count(pc) { draw_laser(player_spots[d], nearest_spot(enemy_spots, ec, player_spots[d]), rl.Color{90, 170, 255, 255}) }
+	}
+	for p in 0..<PLANET_COUNT {
+		for side in 0..<2 {
+			enemy := side == 1
+			visible := rep_count(transit_fighters_at(p, enemy))
+			drawn := 0
+			for i := 0; i < unit_count; i += 1 {
+				u := &units[i]
+				if u.kind != .COMBAT || u.state != .TRANSIT || u.target_planet != p || u.enemy != enemy { continue }
+				if drawn >= visible { break }
+				draw_fighter(u.position, u.enemy)
+				drawn += 1
+			}
 		}
 	}
 	// The transit lines make dispatches visibly physical rather than teleporting.
@@ -711,14 +781,16 @@ draw_inspector :: proc() {
 	rl.DrawRectangleRec(base_button, rl.Color{35, 56, 78, 255})
 	rl.DrawRectangleLinesEx(base_button, 1, rl.Color{85, 125, 155, 255})
 	if base_build_planet == selected_planet {
-		rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", 6 - base_build_progress), c.int(x + 28), 115, 14, rl.GOLD)
-	} else if selected_planet == 2 && !jupiter_liberated() {
-		_, garrison := planet_combatants(2)
-		rl.DrawText(rl.TextFormat("ENEMY STRONGHOLD  %02d FIGHTERS  BASE %02d", garrison, enemy_base_hp), c.int(x + 28), 115, 12, rl.Color{255, 145, 125, 255})
+		rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + 28), 115, 14, rl.GOLD)
+	} else if !planet_liberated(selected_planet) {
+		_, garrison := planet_combatants(selected_planet)
+		rl.DrawText(rl.TextFormat("ENEMY STRONGHOLD  %02d FIGHTERS  BASE %02d", garrison, enemy_base_hp[selected_planet]), c.int(x + 28), 115, 12, rl.Color{255, 145, 125, 255})
+	} else if player_miners_present(selected_planet) < BASE_CONSTRUCT_MINERS {
+		rl.DrawText(rl.TextFormat("NEEDS %d MINERS AT %s", BASE_CONSTRUCT_MINERS, planets[selected_planet].name), c.int(x + 28), 115, 12, rl.GOLD)
 	} else {
 		rl.DrawText("Construct Command Base (200 Minerals)", c.int(x + 28), 115, 14, rl.WHITE)
 	}
-	if base_build_planet == selected_planet { draw_progress({x + 18, 142, 294, 7}, base_build_progress / 6, rl.GOLD) }
+	if base_build_planet == selected_planet { draw_progress({x + 18, 142, 294, 7}, base_build_progress / BASE_CONSTRUCT_TIME, rl.GOLD) }
 
 	rl.DrawText("PRODUCTION LINES", c.int(x + 18), 166, 13, rl.Color{130, 150, 175, 255})
 	for b := 0; b < base_counts[selected_planet]; b += 1 {
@@ -853,25 +925,15 @@ draw_fighter :: proc(position: rl.Vector3, enemy: bool) {
 // One rendered cube per up-to-10 units: ceil(count / 10).
 rep_count :: proc(count: int) -> int { return (count + 9) / 10 }
 
-nearest_spot :: proc(spots: [MAX_UNITS]rl.Vector3, count: int, from: rl.Vector3) -> rl.Vector3 {
-	best := from
-	best_d := f32(1e9)
-	for j in 0..<count {
-		if dd := distance(from, spots[j]); dd < best_d {
-			best_d = dd
-			best = spots[j]
-		}
+// Fighting drones in transit to a planet, grouped by side — the unit side of
+// the transit representational rendering.
+transit_fighters_at :: proc(target_planet: int, enemy: bool) -> int {
+	count := 0
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .COMBAT && u.state == .TRANSIT && u.target_planet == target_planet && u.enemy == enemy { count += 1 }
 	}
-	return best
-}
-
-// Pulsing laser bolt: a bright line that extends toward the target plus a
-// glowing tip, so exchanges read as fire rather than static wires.
-draw_laser :: proc(from, to: rl.Vector3, color: rl.Color) {
-	k := 0.5 + 0.45 * abs(math.sin(f32(rl.GetTime()) * 10 + from.x * 3 + from.z * 5))
-	tip := rl.Vector3{from.x + (to.x - from.x) * k, from.y + (to.y - from.y) * k, from.z + (to.z - from.z) * k}
-	rl.DrawLine3D(from, tip, color)
-	rl.DrawSphere(tip, 0.14, color)
+	return count
 }
 
 draw_selection_ring :: proc(center: rl.Vector3, radius: f32) {
@@ -925,6 +987,7 @@ state_color :: proc(state: Unit_State) -> rl.Color {
 	case .RETURNING: return rl.ORANGE
 	case .DEPOSITING: return rl.GOLD
 	case .GUARDING: return rl.RED
+	case .CONSTRUCTING: return rl.GOLD
 	}
 	return rl.WHITE
 }
@@ -937,6 +1000,7 @@ state_name :: proc(state: Unit_State) -> cstring {
 	case .RETURNING: return "RETURNING"
 	case .DEPOSITING: return "DEPOSITING"
 	case .GUARDING: return "GUARDING"
+	case .CONSTRUCTING: return "CONSTRUCTING"
 	}
 	return "UNKNOWN"
 }
