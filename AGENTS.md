@@ -14,6 +14,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - On macOS the vendor `libraylib.a` symlink resolves through Homebrew's `/opt/homebrew/opt/raylib`; `libraygui-arm64.a` must be linked before `libraylib.a`, which Odin does automatically.
 - On Windows, Odin links the prebuilt static `vendor/raylib/windows/raylib.lib` and `raygui.lib` automatically; no system libs or premake needed. `odin` must be on PATH (e.g. in the w64devkit terminal).
 - DANGER: do not run `premake5 gmake` or the old `build/*.bat` regenerate step — it overwrites the hand-written Odin `Makefile` with the C/C++ quickstart makefiles and `make` then fails with `undefined reference to WinMain` (no C source to provide an entry point). `build-MinGW-W64.bat` is already fixed to just run `make`.
+- Visual verification on this dev box: `screencapture` lacks screen-recording permission and window-compositor captures are stale. For headless visual checks, temporarily render into `rl.LoadRenderTexture` + `rl.LoadImageFromTexture` + `rl.ExportImage` (framebuffer export, no window server involved); pass relative filenames — raylib resolves them against the working directory.
 
 ## Maintaining this file
 

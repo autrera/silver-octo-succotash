@@ -30,6 +30,7 @@ MAX_PENDING :: 25
 TILE_SIZE :: 52
 TILE_GAP :: 6
 TILES_PER_ROW :: 5
+DRILL_CAP :: 50
 
 Unit :: struct {
 	kind: Unit_Type,
@@ -43,7 +44,7 @@ Unit :: struct {
 }
 
 planets := [PLANET_COUNT]Planet{
-	{name = "EARTH", position = {0, 0, 0}, radius = 3.0, color = rl.Color{45, 125, 220, 255}, minerals = 0},
+	{name = "EARTH", position = {0, 0, 0}, radius = 3.0, color = rl.Color{45, 125, 220, 255}, minerals = 80},
 	{name = "MARS", position = {15, 1, -5}, radius = 2.2, color = rl.Color{215, 80, 55, 255}, minerals = 80},
 }
 
@@ -286,9 +287,41 @@ update_units :: proc(dt: f32) {
 		if u.kind == .COMBAT {
 			update_combat(u, dt)
 		} else {
-			update_miner(u, dt)
+			update_miner(u, i, dt)
 		}
 	}
+}
+
+// Minerals delivered per 3s mining cycle at a planet. Earth is deliberately
+// poor: drones there mine at 10% of the Mars rate (1 vs 10 per cycle).
+mining_rate :: proc(planet: int) -> int {
+	if planet == 0 { return 1 }
+	return 10
+}
+
+// Global hard cap on earning miners: only the first DRILL_CAP mining drones
+// (by unit index) deposit minerals. Extra drones still mine and deplete the
+// planet but pay out 0, so income never exceeds the cap.
+// ponytail: index-order cap, revisit if a per-planet or weighted split is wanted
+is_effective_miner :: proc(index: int) -> bool {
+	if units[index].kind != .MINING { return false }
+	rank := 0
+	for j := 0; j < index; j += 1 {
+		if units[j].kind == .MINING { rank += 1 }
+	}
+	return rank < DRILL_CAP
+}
+
+// Minerals per second delivered by a planet's effective mining drones
+// (rate per 3s cycle, DRILL_CAP already applied).
+planet_mps :: proc(planet: int) -> f32 {
+	effective := 0
+	for i := 0; i < unit_count; i += 1 {
+		if units[i].kind == .MINING && units[i].target_planet == planet && is_effective_miner(i) {
+			effective += 1
+		}
+	}
+	return f32(effective) * f32(mining_rate(planet)) / 3.0
 }
 
 update_combat :: proc(u: ^Unit, dt: f32) {
@@ -308,7 +341,7 @@ update_combat :: proc(u: ^Unit, dt: f32) {
 	}
 }
 
-update_miner :: proc(u: ^Unit, dt: f32) {
+update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 	target := planets[u.target_planet].position
 	earth := planets[0].position
 	switch u.state {
@@ -322,7 +355,7 @@ update_miner :: proc(u: ^Unit, dt: f32) {
 	case .MINING:
 		u.progress += dt
 		if u.progress >= 3 {
-			planets[u.target_planet].minerals = max_int(planets[u.target_planet].minerals - 10, 0)
+			planets[u.target_planet].minerals = max_int(planets[u.target_planet].minerals - mining_rate(u.target_planet), 0)
 			u.progress = 0
 			u.state = .RETURNING
 		}
@@ -336,7 +369,7 @@ update_miner :: proc(u: ^Unit, dt: f32) {
 	case .DEPOSITING:
 		u.progress += dt
 		if u.progress >= 0.5 {
-			minerals += 10
+			if is_effective_miner(index) { minerals += mining_rate(u.target_planet) }
 			u.progress = 0
 			u.state = .TRANSIT
 		}
@@ -374,10 +407,30 @@ draw_world :: proc() {
 		u := units[i]
 		if u.kind == .MINING {
 			rl.DrawCubeV(u.position, {0.55, 0.55, 0.55}, rl.ORANGE)
-		} else {
+		} else if u.state != .GUARDING {
+			// Transit combat drones render 1:1; guarding crowds are representational below.
 			rl.DrawCubeV(u.position, {0.7, 0.32, 0.7}, rl.RED)
 		}
 		if selected_units[i] { draw_selection_ring(u.position, 0.78) }
+	}
+	// Guarding combat drones render representationally: one cube per 10 drones
+	// (ceil(count / 10)), so fleets stay readable. Rosters, tracking and
+	// selection still use the real unit list.
+	for p in 0..<PLANET_COUNT {
+		visible := 0
+		for i := 0; i < unit_count; i += 1 {
+			u := units[i]
+			if u.kind == .COMBAT && u.affiliation == p && u.state == .GUARDING { visible += 1 }
+		}
+		visible = (visible + 9) / 10
+		drawn := 0
+		for i := 0; i < unit_count; i += 1 {
+			u := units[i]
+			if u.kind != .COMBAT || u.affiliation != p || u.state != .GUARDING { continue }
+			if drawn >= visible { break }
+			rl.DrawCubeV(u.position, {0.7, 0.32, 0.7}, rl.RED)
+			drawn += 1
+		}
 	}
 	// The transit lines make dispatches visibly physical rather than teleporting.
 	for i := 0; i < unit_count; i += 1 {
@@ -389,8 +442,12 @@ draw_world :: proc() {
 	for p in 0..<PLANET_COUNT {
 		pos := rl.GetWorldToScreen(planets[p].position, camera)
 		if pos.x < f32(viewport_w) && pos.x > 0 && pos.y > 0 && pos.y < f32(rl.GetScreenHeight()) {
-			if p == selected_planet { rl.DrawRectangle(c.int(pos.x - 42), c.int(pos.y - planets[p].radius * 5 - 18), 84, 22, rl.Color{110, 85, 25, 230}) }
-			rl.DrawText(planets[p].name, c.int(pos.x - 28), c.int(pos.y - planets[p].radius * 5 - 14), 14, p == selected_planet ? rl.GOLD : rl.WHITE)
+			label := rl.TextFormat("%s  //  MPS %.1f", planets[p].name, planet_mps(p))
+			if p == selected_planet {
+				w := rl.MeasureText(label, 14)
+				rl.DrawRectangle(c.int(pos.x) - w/2 - 6, c.int(pos.y - planets[p].radius * 5 - 18), w + 12, 22, rl.Color{110, 85, 25, 230})
+			}
+			rl.DrawText(label, c.int(pos.x - 28), c.int(pos.y - planets[p].radius * 5 - 14), 14, p == selected_planet ? rl.GOLD : rl.WHITE)
 		}
 	}
 	status := rl.TextFormat("FPS %d   RIGHT CLICK: GROUP ORDER   CTRL+CLICK: MULTI-SELECT", rl.GetFPS())
@@ -415,6 +472,7 @@ draw_inspector :: proc() {
 		rl.DrawRectangleRec(pip_rect, pip_color)
 		rl.DrawRectangleLinesEx(pip_rect, 1, rl.Color{90, 105, 125, 255})
 	}
+	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(selected_planet)), c.int(x + 236), 79, 13, rl.SKYBLUE)
 
 	base_button := rl.Rectangle{x + 18, 106, 294, 32}
 	rl.DrawRectangleRec(base_button, rl.Color{35, 56, 78, 255})
@@ -503,9 +561,14 @@ roster_count :: proc(kind: Unit_Type) -> int {
 	return count
 }
 
+// Y of the first unit-tile row for a kind, derived so the MINING DRONES header
+// and tiles always sit below every build queue row: the queue grid is
+// base_counts rows tall (capacity = bases * MAX_BASES slots, 5 per row, 22px
+// pitch) and must be cleared even with a full queue. Used by rendering, tile
+// rects and click hitboxes alike, so they can never drift apart.
 unit_tile_y :: proc(kind: Unit_Type) -> int {
 	mining_rows := (roster_count(.MINING) + TILES_PER_ROW - 1) / TILES_PER_ROW
-	y := production_orders_y() + 88
+	y := production_orders_y() + 116 + (base_counts[selected_planet] - 1) * 22
 	if kind == .COMBAT { y += 26 + mining_rows * (TILE_SIZE + TILE_GAP) }
 	return y
 }
