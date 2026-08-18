@@ -1189,6 +1189,89 @@ last_known_intel_survives_fog :: proc(t: ^testing.T) {
 	testing.expect(t, last_known_intel[JUPITER].fighters == 4 && last_known_intel[JUPITER].miners == 3 && last_known_intel[JUPITER].base_hp == GARRISON_BASE_HP[JUPITER], "stale snapshot preserved")
 }
 
+// ---- Control-group squads -----------------------------------------------
+
+@(test)
+squad_save_and_recall :: proc(t: ^testing.T) {
+	reset_world()
+	for i in 0..<5 { add_guarding_fighter(EARTH, false) }
+	for i in 0..<5 { selected_units[i] = true }
+	save_squad(3)
+	testing.expect(t, squad_count(3) == 5, "squad holds the 5 selected fighters")
+	testing.expect(t, squad_count(1) == 0, "other squads empty")
+	clear_selection()
+	testing.expect(t, selection_count() == 0, "selection cleared")
+	n := recall_squad(3)
+	testing.expect(t, n == 5 && selection_count() == 5, "recall reselects the squad")
+	// Re-save with fewer units replaces the membership.
+	clear_selection()
+	selected_units[0] = true
+	save_squad(3)
+	testing.expect(t, squad_count(3) == 1, "re-save replaces squad membership")
+	// Save with no selection clears the group.
+	clear_selection()
+	save_squad(3)
+	testing.expect(t, squad_count(3) == 0, "saving an empty selection clears the squad")
+	n = recall_squad(3)
+	testing.expect(t, n == 0 && selection_count() == 0, "recalling an empty squad selects nothing")
+	// Digit keys read false headless (no key events), so the binding predicate
+	// never fires in tests; the squad procs are exercised directly instead.
+	testing.expect(t, squad_key_pressed() == 0, "no digit keys headless")
+}
+
+@(test)
+squad_prunes_destroyed_units :: proc(t: ^testing.T) {
+	reset_world()
+	for i in 0..<4 { add_guarding_fighter(MARS, false) }
+	for i in 0..<4 { selected_units[i] = true }
+	save_squad(2)
+	// Two squad members die: removal shifts the array, so the survivors keep
+	// their squad assignment (it rides on the Unit struct, not the index).
+	remove_unit_at(0)
+	remove_unit_at(0)
+	testing.expect(t, squad_count(2) == 2, "destroyed members pruned from the squad")
+	n := recall_squad(2)
+	testing.expect(t, n == 2, "recall selects only living members")
+	// All members dead: the squad is empty and recall selects nothing cleanly.
+	remove_unit_at(0)
+	remove_unit_at(0)
+	testing.expect(t, squad_count(2) == 0, "empty squad after all members die")
+	n = recall_squad(2)
+	testing.expect(t, n == 0 && selection_count() == 0, "recall on a dead squad selects nothing cleanly")
+}
+
+// ---- Completed base picks up the pending queue --------------------------
+
+@(test)
+completed_base_picks_up_pending_queue_immediately :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	minerals = 2000
+	// One base, one active line, two items waiting in the pending queue.
+	queue_unit(.MINING)
+	queue_unit(.COMBAT)
+	queue_unit(.COMBAT)
+	testing.expect(t, production[EARTH][0].active && production[EARTH][0].kind == .MINING, "single line active")
+	testing.expect(t, pending_count[EARTH] == 2, "two items wait pending")
+	// Build the second base with a full crew.
+	start_base_construction()
+	for i in 0..<BASE_CONSTRUCT_MINERS {
+		add_miner(EARTH)
+		units[unit_count - 1].state = .CONSTRUCTING
+	}
+	// Park the base clock just under completion without running production
+	// (a long dt would also finish line 0 and muddy the pending count), then
+	// step exactly over the boundary so only the base completes this tick.
+	base_build_progress = BASE_CONSTRUCT_TIME - 0.1
+	update_production(0.1)
+	testing.expect(t, base_counts[EARTH] == 2 && base_build_planet == -1, "second base completed")
+	// The new line must have pulled the first pending item with no new order.
+	testing.expect(t, production[EARTH][1].active && production[EARTH][1].kind == .COMBAT, "new base's line picked up the pending COMBAT")
+	testing.expect(t, pending_count[EARTH] == 1, "one item still pending")
+	// And it is genuinely building: progress advanced on this very tick.
+	testing.expect(t, production[EARTH][1].progress > 0, "picked-up line starts building immediately")
+}
+
 @(test)
 unscouted_planet_has_no_intel :: proc(t: ^testing.T) {
 	reset_world()

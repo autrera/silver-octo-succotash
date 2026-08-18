@@ -102,6 +102,9 @@ Unit :: struct {
 	enemy: bool,
 	progress: f32,
 	orbit_angle: f32,
+	// Control-group assignment: 0 = none, 1..9 = squad number. Living on the
+	// unit itself keeps squads pruned as units are destroyed and shifted.
+	squad: int,
 }
 
 planets := [PLANET_COUNT]Planet{
@@ -205,6 +208,8 @@ initialize_game :: proc() {
 	unit_count += 1
 	units[unit_count] = Unit{kind = .COMBAT, state = .GUARDING, position = {0, 3.8, 0}, home_planet = EARTH, affiliation = EARTH, target_planet = EARTH, orbit_angle = 0.5}
 	unit_count += 1
+	// Space backdrop: deterministic starfield (independent of the wave RNG).
+	generate_stars()
 	// Every non-Earth planet opens occupied: the farther out, the stronger
 	// the garrison (GARRISON_* tables scale with distance from Earth).
 	for p in 0..<PLANET_COUNT {
@@ -274,6 +279,11 @@ update_input :: proc() {
 	if rl.IsKeyPressed(.C) { queue_unit(.COMBAT) }
 	// Spacebar is a shortcut to select Earth in the inspector.
 	if rl.IsKeyPressed(.SPACE) { select_earth() }
+	// Squad control groups: Shift+digit saves the selection, digit recalls it.
+	// IsKeyPressed is edge-triggered, so held-key repeat never re-triggers.
+	if group := squad_key_pressed(); group > 0 {
+		if shift_down() { save_squad(group) } else { recall_squad(group) }
+	}
 	// Debug: force the next enemy wave immediately (verify combat without waiting 3 minutes).
 	if rl.IsKeyPressed(.N) { spawn_enemy_wave() }
 	mouse := rl.GetMousePosition()
@@ -308,6 +318,20 @@ ctrl_down :: proc() -> bool {
 
 // SPACE in update_input jumps the inspector straight to Earth.
 select_earth :: proc() { selected_planet = EARTH }
+
+// Digit keys 1..9 map to control groups; 0 = no squad key this frame.
+squad_key_pressed :: proc() -> int {
+	if rl.IsKeyPressed(.ONE) { return 1 }
+	if rl.IsKeyPressed(.TWO) { return 2 }
+	if rl.IsKeyPressed(.THREE) { return 3 }
+	if rl.IsKeyPressed(.FOUR) { return 4 }
+	if rl.IsKeyPressed(.FIVE) { return 5 }
+	if rl.IsKeyPressed(.SIX) { return 6 }
+	if rl.IsKeyPressed(.SEVEN) { return 7 }
+	if rl.IsKeyPressed(.EIGHT) { return 8 }
+	if rl.IsKeyPressed(.NINE) { return 9 }
+	return 0
+}
 
 clear_selection :: proc() {
 	for i := 0; i < MAX_UNITS; i += 1 { selected_units[i] = false }
@@ -534,10 +558,14 @@ update_production :: proc(dt: f32) {
 			base_build_progress += dt
 		}
 		if base_build_progress >= BASE_CONSTRUCT_TIME {
-			base_counts[base_build_planet] += 1
-			resume_constructing_miners(base_build_planet)
+			p := base_build_planet
+			base_counts[p] += 1
+			resume_constructing_miners(p)
 			base_build_planet = -1
 			base_build_progress = 0
+			// The new base's production line picks up waiting queue items at
+			// once, without a new unit being queued.
+			fill_production_lines(p)
 		}
 	}
 	for p := 0; p < PLANET_COUNT; p += 1 {
@@ -557,6 +585,22 @@ update_production :: proc(dt: f32) {
 				} else { line.active = false }
 			}
 		}
+	}
+}
+
+// Move pending queue items into idle production lines: a line freed by a
+// newly completed base starts building immediately instead of waiting for
+// the next queue_unit call.
+fill_production_lines :: proc(p: int) {
+	for b := 0; b < base_counts[p]; b += 1 {
+		if pending_count[p] == 0 { return }
+		line := &production[p][b]
+		if line.active { continue }
+		line.kind = pending[p][0]
+		line.active = true
+		line.progress = 0
+		for q := 1; q < pending_count[p]; q += 1 { pending[p][q-1] = pending[p][q] }
+		pending_count[p] -= 1
 	}
 }
 
@@ -964,20 +1008,19 @@ travel :: proc(u: ^Unit, target: rl.Vector3, amount: f32) {
 
 draw_world :: proc() {
 	viewport_w := rl.GetScreenWidth() - SCREEN_PANEL_WIDTH
+	// Stars project to screen space before the 3D pass, so they sit behind
+	// every planet and unit.
+	draw_starfield()
 	rl.BeginMode3D(camera)
-	rl.DrawGrid(40, 1)
-	rl.DrawLine3D({-40, 0, 0}, {40, 0, 0}, rl.Color{40, 45, 65, 255})
 	for p in 0..<PLANET_COUNT {
 		planet := planets[p]
 		surface := planet.color
-		wire := rl.Color{220, 230, 245, 180}
 		if !has_vision(p) {
 			// Fog of war: planets the player has no presence at render shadowed.
 			surface = rl.Color{58, 62, 74, 255}
-			wire = rl.Color{95, 100, 118, 120}
 		}
+		// Clean solid spheres: no wireframe overlay, no grid beneath.
 		rl.DrawSphere(planet.position, planet.radius, surface)
-		rl.DrawSphereWires(planet.position, planet.radius + 0.04, 12, 16, wire)
 		if p == selected_planet {
 			rl.DrawCircle3D(planet.position, planet.radius + 0.35, {0, 1, 0}, 90, rl.GOLD)
 			rl.DrawCircle3D(planet.position, planet.radius + 0.55, {0, 1, 0}, 90, rl.SKYBLUE)
@@ -1047,9 +1090,17 @@ draw_world :: proc() {
 			rl.DrawText(label, c.int(pos.x - 28), c.int(pos.y - planets[p].radius * 5 - 14), 14, p == selected_planet ? rl.GOLD : rl.WHITE)
 		}
 	}
-	status := rl.TextFormat("FPS %d   RIGHT CLICK: GROUP ORDER   CTRL+CLICK: MULTI-SELECT   P/F10: PAUSE   ESC: CANCEL BUILD   N: ENEMY WAVE (DEBUG)", rl.GetFPS())
-	rl.DrawRectangle(12, 12, 230, 34, rl.Color{20, 32, 45, 235})
-	rl.DrawText(rl.TextFormat("◆ MINERALS: %d", minerals), 22, 20, 18, rl.GOLD)
+	status := rl.TextFormat("FPS %d   RIGHT-CLICK: ORDER   SHIFT+#: SAVE SQUAD   #: RECALL   P: PAUSE   ESC: CANCEL   N: WAVE", rl.GetFPS())
+	// Top bar: minerals plus the empire-wide MPS so income is visible without
+	// opening Earth's inspector.
+	min_text := rl.TextFormat("◆ MINERALS: %d", minerals)
+	mps_text := rl.TextFormat("MPS %.1f", global_mps())
+	min_w := rl.MeasureText(min_text, 18)
+	bar_w := min_w + rl.MeasureText(mps_text, 18) + 34
+	rl.DrawRectangle(12, 12, bar_w, 34, rl.Color{20, 32, 45, 235})
+	rl.DrawText(min_text, 22, 20, 18, rl.GOLD)
+	rl.DrawText(mps_text, 22 + min_w + 12, 20, 18, rl.SKYBLUE)
+	draw_squad_hud()
 	rl.DrawText(status, 18, rl.GetScreenHeight() - 28, 14, rl.Color{155, 170, 195, 255})
 	zoom_text := rl.TextFormat("ZOOM %d%% // ALTITUDE %.0f", zoom_percent(), camera.position.y)
 	rl.DrawText(zoom_text, viewport_w - 208, rl.GetScreenHeight() - 28, 14, rl.Color{155, 170, 195, 255})
@@ -1418,6 +1469,95 @@ selection_count :: proc() -> int {
 	count := 0
 	for i := 0; i < unit_count; i += 1 { if selected_units[i] { count += 1 } }
 	return count
+}
+
+// ---- Starfield ----------------------------------------------------------
+
+STAR_COUNT :: 280
+
+stars: [STAR_COUNT]rl.Vector3
+star_sizes: [STAR_COUNT]f32
+star_alphas: [STAR_COUNT]f32
+
+// Deterministic sky: a wide disc well below the play plane, so panning and
+// zooming parallax-scrolls it. A tiny LCG keeps the starfield identical every
+// run and independent of the gameplay RNG.
+generate_stars :: proc() {
+	seed := u32(0x5F3759DF)
+	for i in 0..<STAR_COUNT {
+		seed = seed * 1664525 + 1013904223
+		angle := f32((seed >> 8) & 0xFFFF) / f32(0xFFFF) * 2 * math.PI
+		seed = seed * 1664525 + 1013904223
+		dist := 20.0 + f32((seed >> 8) & 0xFFFF) / f32(0xFFFF) * 420.0
+		seed = seed * 1664525 + 1013904223
+		depth := f32((seed >> 8) & 0xFFFF) / f32(0xFFFF)
+		stars[i] = {math.cos(angle) * dist, -14.0 - depth * 60.0, math.sin(angle) * dist}
+		seed = seed * 1664525 + 1013904223
+		star_sizes[i] = 0.9 + f32((seed >> 8) & 0xFFFF) / f32(0xFFFF) * 1.1
+		seed = seed * 1664525 + 1013904223
+		star_alphas[i] = 0.35 + f32((seed >> 8) & 0xFFFF) / f32(0xFFFF) * 0.6
+	}
+}
+
+// White pixel stars in screen space, drawn before the 3D pass so they stay
+// behind everything. The >= bounds form also discards NaN projections of
+// points behind the camera.
+draw_starfield :: proc() {
+	w := f32(rl.GetScreenWidth())
+	h := f32(rl.GetScreenHeight())
+	for i in 0..<STAR_COUNT {
+		pos := rl.GetWorldToScreen(stars[i], camera)
+		if !(pos.x >= 0 && pos.x <= w && pos.y >= 0 && pos.y <= h) { continue }
+		rl.DrawCircleV(pos, star_sizes[i], rl.Fade(rl.WHITE, star_alphas[i]))
+	}
+}
+
+// ---- Control-group squads ------------------------------------------------
+
+SQUAD_COUNT :: 9
+
+// Save the current selection as control group `group` (1..9), releasing the
+// group's previous members. Saving with nothing selected clears the group.
+save_squad :: proc(group: int) {
+	for i := 0; i < unit_count; i += 1 {
+		if units[i].squad == group { units[i].squad = 0 }
+		if selected_units[i] && !units[i].enemy { units[i].squad = group }
+	}
+}
+
+// Recall a control group: replaces the selection with the group's living
+// members (dead members were pruned on removal). Returns the selected count;
+// 0 means an empty/dead squad cleanly selects nothing.
+recall_squad :: proc(group: int) -> int {
+	clear_selection()
+	count := 0
+	for i := 0; i < unit_count; i += 1 {
+		if units[i].squad == group && !units[i].enemy {
+			selected_units[i] = true
+			count += 1
+		}
+	}
+	return count
+}
+
+squad_count :: proc(group: int) -> int {
+	count := 0
+	for i := 0; i < unit_count; i += 1 {
+		if units[i].squad == group && !units[i].enemy { count += 1 }
+	}
+	return count
+}
+
+// Global HUD squad badges: `[n: count]` per assigned squad, under the top bar.
+draw_squad_hud :: proc() {
+	x := f32(22)
+	for g in 1..=SQUAD_COUNT {
+		count := squad_count(g)
+		if count == 0 { continue }
+		label := rl.TextFormat("[%d: %d]", g, count)
+		rl.DrawText(label, c.int(x), 50, 13, rl.Color{205, 215, 235, 255})
+		x += f32(rl.MeasureText(label, 13)) + 12
+	}
 }
 
 // ---- Pause menu ----------------------------------------------------------
