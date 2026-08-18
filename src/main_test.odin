@@ -206,20 +206,20 @@ five_v_five_battle_lasts_ten_seconds_1_to_1 :: proc(t: ^testing.T) {
 }
 
 @(test)
-miners_die_every_two_seconds_without_defenders :: proc(t: ^testing.T) {
+miners_die_every_second_without_defenders :: proc(t: ^testing.T) {
 	reset_world()
 	add_guarding_fighter(MARS, true)
 	add_miner(MARS)
 	add_miner(MARS)
 	add_miner(MARS)
+	update_enemy_waves(0.5)
+	testing.expect(t, unit_count == 4, "no miner hit before the 1s mark")
+	update_enemy_waves(0.5)
+	testing.expect(t, unit_count == 3, "first miner destroyed at 1s")
 	update_enemy_waves(1.0)
-	testing.expect(t, unit_count == 4, "no miner hit before the 2s mark")
+	testing.expect(t, unit_count == 2, "second miner destroyed at 2s")
 	update_enemy_waves(1.0)
-	testing.expect(t, unit_count == 3, "first miner destroyed at 2s")
-	update_enemy_waves(2.0)
-	testing.expect(t, unit_count == 2, "second miner destroyed at 4s")
-	update_enemy_waves(2.0)
-	testing.expect(t, unit_count == 1 && units[0].enemy, "third miner destroyed at 6s; only the enemy attacker survives")
+	testing.expect(t, unit_count == 1 && units[0].enemy, "third miner destroyed at 3s; only the enemy attacker survives")
 }
 
 @(test)
@@ -863,31 +863,31 @@ earth_mines_at_standard_rate :: proc(t: ^testing.T) {
 
 @(test)
 planet_mining_caps_limit_effective_miners :: proc(t: ^testing.T) {
-	testing.expect(t, planet_mining_cap(EARTH) == 30, "Earth cap 30")
-	testing.expect(t, planet_mining_cap(MERCURY) == 25, "Mercury cap 25")
-	testing.expect(t, planet_mining_cap(VENUS) == 25, "Venus cap 25")
-	testing.expect(t, planet_mining_cap(MARS) == 25, "Mars cap 25")
+	testing.expect(t, planet_mining_cap(EARTH) == 10, "Earth cap 10")
+	testing.expect(t, planet_mining_cap(MERCURY) == 15, "Mercury cap 15")
+	testing.expect(t, planet_mining_cap(VENUS) == 35, "Venus cap 35")
+	testing.expect(t, planet_mining_cap(MARS) == 50, "Mars cap 50")
 	testing.expect(t, planet_mining_cap(JUPITER) == 100, "Jupiter cap 100")
 
 	reset_world()
-	for i in 0..<40 { add_miner(EARTH) }
+	for i in 0..<20 { add_miner(EARTH) }
 	earth_cycle: f32 = MINING_DURATION + DEPOSIT_DURATION
 	expected := f32(planet_mining_cap(EARTH)) * f32(mining_rate(EARTH)) / earth_cycle
-	testing.expectf(t, abs(planet_mps(EARTH) - expected) < 0.001, "Earth MPS caps at 30 effective miners: %.3f != %.3f", planet_mps(EARTH), expected)
-	// Payout follows the same cap: 40 depositors, only the first 30 get paid.
+	testing.expectf(t, abs(planet_mps(EARTH) - expected) < 0.001, "Earth MPS caps at 10 effective miners: %.3f != %.3f", planet_mps(EARTH), expected)
+	// Payout follows the same cap: 20 depositors, only the first 10 get paid.
 	for i in 0..<unit_count {
 		units[i].state = .DEPOSITING
 		units[i].progress = DEPOSIT_DURATION - 0.01
 	}
 	minerals = 0
 	for i in 0..<unit_count { update_miner(&units[i], i, 0.02) }
-	testing.expect(t, minerals == planet_mining_cap(EARTH) * mining_rate(EARTH), "only the first 30 Earth miners are paid")
+	testing.expect(t, minerals == planet_mining_cap(EARTH) * mining_rate(EARTH), "only the first 10 Earth miners are paid")
 
 	reset_world()
-	for i in 0..<30 { add_miner(MARS) }
+	for i in 0..<60 { add_miner(MARS) }
 	mars_cycle: f32 = MINING_DURATION + DEPOSIT_DURATION + 2.0 * distance(planets[MARS].position, planets[EARTH].position) / MINING_TRANSIT_SPEED
 	expected = f32(planet_mining_cap(MARS)) * f32(mining_rate(MARS)) / mars_cycle
-	testing.expect(t, abs(planet_mps(MARS) - expected) < 0.001, "Mars MPS caps at 25 effective miners")
+	testing.expect(t, abs(planet_mps(MARS) - expected) < 0.001, "Mars MPS caps at 50 effective miners")
 
 	reset_world()
 	for i in 0..<110 { add_miner(JUPITER) }

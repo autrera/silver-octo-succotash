@@ -8,7 +8,7 @@ SCREEN_PANEL_WIDTH :: 330
 MAX_BASES :: 5
 // Garrison drones alone number ~420, so the pool holds them plus a full
 // late-game player fleet with headroom.
-MAX_UNITS :: 1024
+MAX_UNITS :: 2048
 // The system in solar order: Earth — the player's only starter planet — sits
 // at index 2, so every hardcoded 0/1/2 planet index is gone.
 PLANET_COUNT :: 8
@@ -22,7 +22,7 @@ URANUS :: 6
 NEPTUNE :: 7
 
 // Combat pacing: one 1:1 kill trade per side every COMBAT_TICK seconds.
-COMBAT_TICK :: 2
+COMBAT_TICK :: 1
 // Enemy attack waves: first at the 3-minute mark, then every 2 minutes.
 WAVE_FIRST_DELAY :: 180
 WAVE_INTERVAL :: 120
@@ -100,14 +100,14 @@ Unit :: struct {
 }
 
 planets := [PLANET_COUNT]Planet{
-	{name = "MERCURY", position = {-28, 2, 13}, radius = 1.6, color = rl.Color{150, 148, 145, 255}, minerals = 120},
-	{name = "VENUS", position = {13, 0.8, -8.4}, radius = 2.6, color = rl.Color{230, 200, 130, 255}, minerals = 100},
+	{name = "MERCURY", position = {-30, 2, 8}, radius = 1.6, color = rl.Color{150, 148, 145, 255}, minerals = 120},
+	{name = "VENUS", position = {-15, 0.8, -4}, radius = 2.6, color = rl.Color{230, 200, 130, 255}, minerals = 100},
 	{name = "EARTH", position = {0, 0, 0}, radius = 3.0, color = rl.Color{45, 125, 220, 255}, minerals = 80},
-	{name = "MARS", position = {21, 1, -9}, radius = 2.2, color = rl.Color{215, 80, 55, 255}, minerals = 150},
-	{name = "JUPITER", position = {48, 2.5, -18}, radius = 4.2, color = rl.Color{215, 175, 110, 255}, minerals = 300},
-	{name = "SATURN", position = {74, 3, -35}, radius = 3.8, color = rl.Color{225, 205, 155, 255}, minerals = 350},
-	{name = "URANUS", position = {102, 4, -46}, radius = 3.0, color = rl.Color{170, 225, 230, 255}, minerals = 400},
-	{name = "NEPTUNE", position = {128, 5, -62}, radius = 2.9, color = rl.Color{80, 110, 220, 255}, minerals = 450},
+	{name = "MARS", position = {22, 1, 6}, radius = 2.2, color = rl.Color{215, 80, 55, 255}, minerals = 150},
+	{name = "JUPITER", position = {50, 2.5, -12}, radius = 4.2, color = rl.Color{215, 175, 110, 255}, minerals = 300},
+	{name = "SATURN", position = {80, 3, 18}, radius = 3.8, color = rl.Color{225, 205, 155, 255}, minerals = 350},
+	{name = "URANUS", position = {110, 4, -20}, radius = 3.0, color = rl.Color{170, 225, 230, 255}, minerals = 400},
+	{name = "NEPTUNE", position = {140, 5, 24}, radius = 2.9, color = rl.Color{80, 110, 220, 255}, minerals = 450},
 }
 
 units: [MAX_UNITS]Unit
@@ -775,9 +775,17 @@ mining_rate :: proc(planet: int) -> int {
 // Active mining drone cap per planet (planet size): only this many player
 // miners per planet count as effective and earn minerals.
 planet_mining_cap :: proc(planet: int) -> int {
-	if planet == EARTH { return 30 }
-	if planet == MERCURY || planet == VENUS || planet == MARS { return 25 }
-	return 100
+	switch planet {
+	case MERCURY: return 15
+	case VENUS: return 35
+	case EARTH: return 10
+	case MARS: return 50
+	case JUPITER: return 100
+	case SATURN: return 90
+	case URANUS: return 60
+	case NEPTUNE: return 60
+	}
+	return 10
 }
 
 // Per-planet hard cap on earning miners: only the first planet_mining_cap(p)
@@ -1018,7 +1026,7 @@ draw_inspector :: proc() {
 		draw_outpost_inspector(x)
 	}
 
-	rl.DrawText(rl.TextFormat("MINING DRONES (%d)", roster_count(.MINING)), c.int(x + 18), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
+	rl.DrawText(rl.TextFormat("MINING DRONES (%d/%d)", roster_count(.MINING), planet_mining_cap(selected_planet)), c.int(x + 18), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
 	for i := 0; i < unit_count; i += 1 {
 		if unit_in_roster(i, .MINING) { draw_unit_tile(i, x, roster_ordinal(i, .MINING)) }
 	}
