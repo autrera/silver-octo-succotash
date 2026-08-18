@@ -6,8 +6,20 @@ import rl "vendor:raylib"
 
 SCREEN_PANEL_WIDTH :: 330
 MAX_BASES :: 5
-MAX_UNITS :: 256
-PLANET_COUNT :: 3
+// Garrison drones alone number ~420, so the pool holds them plus a full
+// late-game player fleet with headroom.
+MAX_UNITS :: 1024
+// The system in solar order: Earth — the player's only starter planet — sits
+// at index 2, so every hardcoded 0/1/2 planet index is gone.
+PLANET_COUNT :: 8
+MERCURY :: 0
+VENUS :: 1
+EARTH :: 2
+MARS :: 3
+JUPITER :: 4
+SATURN :: 5
+URANUS :: 6
+NEPTUNE :: 7
 
 // Combat pacing: one 1:1 kill trade per side every COMBAT_TICK seconds.
 COMBAT_TICK :: 2
@@ -15,22 +27,27 @@ COMBAT_TICK :: 2
 WAVE_FIRST_DELAY :: 180
 WAVE_INTERVAL :: 120
 WAVE_SIZE :: 5
-// Standing enemy garrison: Jupiter is the sole enemy stronghold at game start.
-JUPITER_GARRISON_FIGHTERS :: 40
-JUPITER_GARRISON_MINERS :: 10
-JUPITER_BASE_HP :: 20
-// HP of an enemy command base wherever one is present (combat and tests).
-MARS_BASE_HP :: 10
+// Every planet except Earth opens occupied: garrison fighters, garrison
+// miners and enemy base HP all scale up with distance from Earth
+// (Venus 10/4/10 ... Neptune 95/22/60; indexed by planet).
+GARRISON_FIGHTERS := [PLANET_COUNT]int{30, 10, 0, 20, 45, 60, 75, 95}
+GARRISON_MINERS := [PLANET_COUNT]int{8, 4, 0, 6, 10, 14, 18, 22}
+GARRISON_BASE_HP := [PLANET_COUNT]int{20, 10, 0, 15, 30, 40, 50, 60}
+// Drone production per command base line (mining 6s, combat 10s).
+MINER_BUILD_TIME :: 6.0
+COMBAT_BUILD_TIME :: 10.0
 // A command base needs 5 mining drones present at the planet and takes one
 // full minute to build; those drones stop mining until it completes.
 BASE_CONSTRUCT_MINERS :: 5
 BASE_CONSTRUCT_TIME :: 60.0
 // Transit speeds run at 25% of the pre-warpace pace: slow enough that
-// dispatches are commitments.
+// dispatches are commitments. Mining transit dropped a further 25%
+// (1.75 -> 1.3125) in the war-economy rebalance.
 COMBAT_TRANSIT_SPEED :: 2.5
-MINING_TRANSIT_SPEED :: 1.75
+MINING_TRANSIT_SPEED :: 1.3125
 // Mining drone cycle timing (shared by the simulation and the MPS forecast).
-MINING_DURATION :: 3.0
+// On-site mining takes 4s (up 33% from 3s), for ~25% slower mining overall.
+MINING_DURATION :: 4.0
 DEPOSIT_DURATION :: 0.5
 // Scout survival: garrison defenses hold fire this long against a miner
 // freshly pinned at an occupied planet (.IDLE progress doubles as the clock).
@@ -83,17 +100,23 @@ Unit :: struct {
 }
 
 planets := [PLANET_COUNT]Planet{
+	{name = "MERCURY", position = {-28, 2, 13}, radius = 1.6, color = rl.Color{150, 148, 145, 255}, minerals = 120},
+	{name = "VENUS", position = {13, 0.8, -8.4}, radius = 2.6, color = rl.Color{230, 200, 130, 255}, minerals = 100},
 	{name = "EARTH", position = {0, 0, 0}, radius = 3.0, color = rl.Color{45, 125, 220, 255}, minerals = 80},
-	{name = "MARS", position = {15, 1, -5}, radius = 2.2, color = rl.Color{215, 80, 55, 255}, minerals = 80},
-	{name = "JUPITER", position = {32, 2, -12}, radius = 4.2, color = rl.Color{215, 175, 110, 255}, minerals = 300},
+	{name = "MARS", position = {21, 1, -9}, radius = 2.2, color = rl.Color{215, 80, 55, 255}, minerals = 150},
+	{name = "JUPITER", position = {48, 2.5, -18}, radius = 4.2, color = rl.Color{215, 175, 110, 255}, minerals = 300},
+	{name = "SATURN", position = {74, 3, -35}, radius = 3.8, color = rl.Color{225, 205, 155, 255}, minerals = 350},
+	{name = "URANUS", position = {102, 4, -46}, radius = 3.0, color = rl.Color{170, 225, 230, 255}, minerals = 400},
+	{name = "NEPTUNE", position = {128, 5, -62}, radius = 2.9, color = rl.Color{80, 110, 220, 255}, minerals = 450},
 }
 
 units: [MAX_UNITS]Unit
 unit_count: int
 selected_units: [MAX_UNITS]bool
-selected_planet := 0
+selected_planet := EARTH
 minerals := 350
-base_counts := [PLANET_COUNT]int{1, 0, 0} // Player command bases exist only on Earth.
+// Player command bases exist only on Earth; set by initialize_game/reset_world.
+base_counts: [PLANET_COUNT]int
 production: [PLANET_COUNT][MAX_BASES]Production
 pending: [PLANET_COUNT][MAX_PENDING]Unit_Type
 pending_count: [PLANET_COUNT]int
@@ -106,10 +129,11 @@ CAMERA_START_Y :: 200.0 - 185.0 * 0.85
 inspector_drag_start: rl.Vector2
 inspector_drag_active: bool
 
-// Enemy occupation: per-planet base HP. Only Jupiter starts with an enemy
-// base; Mars is liberated at start. A planet is liberated once its base is
+// Enemy occupation: per-planet base HP. Every planet except Earth starts
+// with an enemy command base; a planet is liberated once its base is
 // destroyed (and, by the combat rules, all enemy drones are gone).
-enemy_base_hp: [PLANET_COUNT]int = {0, 0, JUPITER_BASE_HP}
+// Initialized from GARRISON_BASE_HP by initialize_game and reset_world.
+enemy_base_hp: [PLANET_COUNT]int
 enemy_wave_timer: f32
 wave_started: bool
 // Per-planet combat pacing: 1:1 fighter trades, miner sweeps and base damage
@@ -120,7 +144,10 @@ base_timer: [PLANET_COUNT]f32
 
 game_paused := false
 quit_requested := false
-earth_rally := 0
+// Earth rally point: NO_RALLY (-1) means no rally set. (Earth used to double
+// as the 0 sentinel before the planet reindex.)
+NO_RALLY :: -1
+earth_rally := NO_RALLY
 // Fog-of-war intel memory: per-planet snapshot plus a scouted-at-least-once bit.
 last_known_intel: [PLANET_COUNT]Intel
 intel_recorded: [PLANET_COUNT]bool
@@ -162,13 +189,23 @@ main :: proc() {
 }
 
 initialize_game :: proc() {
-	unit_count = 2
-	units[0] = Unit{kind = .MINING, state = .MINING, position = {3.8, 0.4, 0}, home_planet = 0, affiliation = 0, target_planet = 0}
-	units[1] = Unit{kind = .COMBAT, state = .GUARDING, position = {0, 3.8, 0}, home_planet = 0, affiliation = 0, target_planet = 0, orbit_angle = 0.5}
-	spawn_garrison(2, JUPITER_GARRISON_FIGHTERS, JUPITER_GARRISON_MINERS)
+	base_counts = {}
+	base_counts[EARTH] = 1
+	enemy_base_hp = GARRISON_BASE_HP
+	unit_count = 0
+	units[unit_count] = Unit{kind = .MINING, state = .MINING, position = {3.8, 0.4, 0}, home_planet = EARTH, affiliation = EARTH, target_planet = EARTH}
+	unit_count += 1
+	units[unit_count] = Unit{kind = .COMBAT, state = .GUARDING, position = {0, 3.8, 0}, home_planet = EARTH, affiliation = EARTH, target_planet = EARTH, orbit_angle = 0.5}
+	unit_count += 1
+	// Every non-Earth planet opens occupied: the farther out, the stronger
+	// the garrison (GARRISON_* tables scale with distance from Earth).
+	for p in 0..<PLANET_COUNT {
+		if p == EARTH { continue }
+		spawn_garrison(p, GARRISON_FIGHTERS[p], GARRISON_MINERS[p])
+	}
 }
 
-// Jupiter opens as the enemy stronghold: standing fighting and mining drones
+// Each occupied planet opens with standing fighting and mining drones
 // orbiting it, plus an enemy base. Enemy miners are static garrison units;
 // they mine nothing.
 // ponytail: no enemy economy, revisit if waves should scale with looted minerals
@@ -262,7 +299,7 @@ ctrl_down :: proc() -> bool {
 }
 
 // SPACE in update_input jumps the inspector straight to Earth.
-select_earth :: proc() { selected_planet = 0 }
+select_earth :: proc() { selected_planet = EARTH }
 
 clear_selection :: proc() {
 	for i := 0; i < MAX_UNITS; i += 1 { selected_units[i] = false }
@@ -272,7 +309,7 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 	// The two production buttons and base button are deliberately ordinary rectangles,
 	// keeping the inspector usable even when raygui styles are unavailable.
 	// Base construction and unit production exist only on Earth.
-	if selected_planet == 0 {
+	if selected_planet == EARTH {
 		if rl.CheckCollisionPointRec(mouse, {panel_x + 18, 106, 294, 32}) {
 			// The hidden button still swallows the click: nothing happens at cap.
 			if base_button_visible() { start_base_construction() }
@@ -288,9 +325,9 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 			return
 		}
 		// Clicking an occupied build-queue slot cancels that unit (refund included).
-		for slot := 0; slot < queued_count(0); slot += 1 {
+		for slot := 0; slot < queued_count(EARTH); slot += 1 {
 			if rl.CheckCollisionPointRec(mouse, queue_slot_rect(panel_x, slot)) {
-				cancel_queued_at(0, slot)
+				cancel_queued_at(EARTH, slot)
 				return
 			}
 		}
@@ -349,7 +386,7 @@ click_unit_tiles :: proc(mouse: rl.Vector2, panel_x: f32, kind: Unit_Type) -> bo
 // The construct-base button disappears once Earth holds MAX_BASES bases and
 // none is under construction; a lost base brings it back.
 base_button_visible :: proc() -> bool {
-	return base_counts[0] < MAX_BASES || base_build_planet == 0
+	return base_counts[EARTH] < MAX_BASES || base_build_planet == EARTH
 }
 
 // A command base needs a liberated Earth and 200 minerals; it queues with no
@@ -357,7 +394,7 @@ base_button_visible :: proc() -> bool {
 // they finish depositing on Earth (update_miner). The BASE_CONSTRUCT_TIME
 // clock runs only with a full crew, and everyone resumes mining after.
 start_base_construction :: proc() {
-	if selected_planet != 0 { return } // Command bases build on Earth only.
+	if selected_planet != EARTH { return } // Command bases build on Earth only.
 	if base_counts[selected_planet] >= MAX_BASES || base_build_planet >= 0 || minerals < 200 { return }
 	if !planet_liberated(selected_planet) { return }
 	minerals -= 200
@@ -416,7 +453,7 @@ unit_cost :: proc(kind: Unit_Type) -> int {
 }
 
 queue_unit :: proc(kind: Unit_Type) {
-	if selected_planet != 0 { return } // All production happens at Earth command bases.
+	if selected_planet != EARTH { return } // All production happens at Earth command bases.
 	cost := unit_cost(kind)
 	if minerals < cost || queued_count(selected_planet) >= base_counts[selected_planet] * 5 { return }
 	minerals -= cost
@@ -478,8 +515,8 @@ cancel_queued_at :: proc(planet, index: int) -> bool {
 // ESC handler: cancels the most recently queued unit — the tail of pending,
 // else the newest active production line — with a full refund.
 cancel_last_queued :: proc() -> bool {
-	if queued_count(0) == 0 { return false }
-	return cancel_queued_at(0, queued_count(0) - 1)
+	if queued_count(EARTH) == 0 { return false }
+	return cancel_queued_at(EARTH, queued_count(EARTH) - 1)
 }
 
 update_production :: proc(dt: f32) {
@@ -499,8 +536,8 @@ update_production :: proc(dt: f32) {
 		for b := 0; b < base_counts[p]; b += 1 {
 			line := &production[p][b]
 			if !line.active { continue }
-			build_time: f32 = 3.0
-			if line.kind == .COMBAT { build_time = 5.0 }
+			build_time: f32 = MINER_BUILD_TIME
+			if line.kind == .COMBAT { build_time = COMBAT_BUILD_TIME }
 			line.progress += dt
 			if line.progress >= build_time {
 				spawn_unit(line.kind, p)
@@ -527,7 +564,7 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 	if kind == .COMBAT { state = .GUARDING }
 	if kind == .MINING { state = .MINING }
 	// Earth's rally point: newly produced units auto-dispatch to the rally world.
-	if planet == 0 && earth_rally != 0 {
+	if planet == EARTH && earth_rally != NO_RALLY {
 		target_planet = earth_rally
 		state = .TRANSIT
 	}
@@ -600,15 +637,15 @@ update_planet_combat :: proc(dt: f32, p: int) {
 spawn_enemy_wave :: proc() {
 	spawn_count := min(WAVE_SIZE, MAX_UNITS - unit_count)
 	if spawn_count <= 0 { return }
-	// Every wave picks its target at random: Earth, Mars or Jupiter.
-	target := int(rl.GetRandomValue(0, 2))
-	spawn_pos := planets[2].position + rl.Vector3{40, 0.5, -25}
+	// Every wave picks its target at random among all eight planets.
+	target := int(rl.GetRandomValue(0, PLANET_COUNT - 1))
+	spawn_pos := planets[JUPITER].position + rl.Vector3{40, 0.5, -25}
 	for i in 0..<spawn_count {
 		angle := f32(i) * 1.26
 		pos := spawn_pos + rl.Vector3{math.cos(angle) * 1.5, 0, math.sin(angle) * 1.5}
 		units[unit_count] = Unit{
 			kind = .COMBAT, state = .TRANSIT, position = pos,
-			home_planet = 2, affiliation = target, target_planet = target,
+			home_planet = JUPITER, affiliation = target, target_planet = target,
 			enemy = true, orbit_angle = angle,
 		}
 		unit_count += 1
@@ -693,7 +730,7 @@ remove_unit_at :: proc(index: int) {
 handle_planet_right_click :: proc(planet: int) {
 	if selection_count() > 0 {
 		issue_group_order(planet)
-	} else if selected_planet == 0 {
+	} else if selected_planet == EARTH {
 		set_earth_rally(planet)
 	}
 }
@@ -727,18 +764,19 @@ update_units :: proc(dt: f32) {
 	}
 }
 
-// Minerals delivered per mining cycle at a planet. Earth and Mars share the
-// standard 10; Jupiter is the richest prize. (No Earth penalty.)
+// Minerals delivered per mining cycle at a planet. The inner planets
+// (Mercury, Venus, Earth, Mars) pay the standard 10; the gas giants and
+// beyond pay 25 — the richer prize for pushing outward. (No Earth penalty.)
 mining_rate :: proc(planet: int) -> int {
-	if planet == 2 { return 25 }
+	if planet >= JUPITER { return 25 }
 	return 10
 }
 
 // Active mining drone cap per planet (planet size): only this many player
 // miners per planet count as effective and earn minerals.
 planet_mining_cap :: proc(planet: int) -> int {
-	if planet == 0 { return 30 }
-	if planet == 1 { return 25 }
+	if planet == EARTH { return 30 }
+	if planet == MERCURY || planet == VENUS || planet == MARS { return 25 }
 	return 100
 }
 
@@ -770,7 +808,7 @@ planet_mps :: proc(planet: int) -> f32 {
 			effective += 1
 		}
 	}
-	round_trip := 2.0 * distance(planets[planet].position, planets[0].position)
+	round_trip := 2.0 * distance(planets[planet].position, planets[EARTH].position)
 	travel_time := round_trip / MINING_TRANSIT_SPEED
 	cycle_time := MINING_DURATION + DEPOSIT_DURATION + travel_time
 	return f32(effective) * f32(mining_rate(planet)) / cycle_time
@@ -802,7 +840,7 @@ update_combat :: proc(u: ^Unit, dt: f32) {
 
 update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 	target := planets[u.target_planet].position
-	earth := planets[0].position
+	earth := planets[EARTH].position
 	switch u.state {
 	case .TRANSIT:
 		travel(u, target, MINING_TRANSIT_SPEED * dt)
@@ -827,7 +865,7 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 		}
 	case .RETURNING:
 		travel(u, earth, MINING_TRANSIT_SPEED * dt)
-		if distance(u.position, earth) <= planets[0].radius + 1.0 {
+		if distance(u.position, earth) <= planets[EARTH].radius + 1.0 {
 			u.position = earth
 			u.state = .DEPOSITING
 			u.progress = 0
@@ -840,10 +878,10 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 			u.state = .TRANSIT
 			// A queued Earth base soaks up returning miners: after the payout
 			// they join the build crew instead of transiting back out.
-			if base_build_planet == 0 && !u.enemy && constructing_miners(0) < BASE_CONSTRUCT_MINERS {
+			if base_build_planet == EARTH && !u.enemy && constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS {
 				u.state = .CONSTRUCTING
-				u.target_planet = 0
-				u.affiliation = 0
+				u.target_planet = EARTH
+				u.affiliation = EARTH
 			}
 		}
 	case .IDLE:
@@ -974,7 +1012,7 @@ draw_inspector :: proc() {
 	rl.DrawText("PLANET INSPECTOR", c.int(x + 18), 18, 20, rl.WHITE)
 	planet := &planets[selected_planet]
 	rl.DrawText(rl.TextFormat("%s  //  MINERALS %03d", planet.name, planet.minerals), c.int(x + 18), 48, 15, rl.SKYBLUE)
-	if selected_planet == 0 {
+	if selected_planet == EARTH {
 		draw_earth_inspector(x)
 	} else {
 		draw_outpost_inspector(x)
@@ -1003,20 +1041,20 @@ draw_earth_inspector :: proc(x: f32) {
 	rl.DrawText("BASES", c.int(x + 18), 76, 14, rl.WHITE)
 	for pip := 0; pip < MAX_BASES; pip += 1 {
 		pip_color := rl.Color{43, 51, 64, 255}
-		if pip < base_counts[0] { pip_color = rl.Color{55, 190, 105, 255} }
+		if pip < base_counts[EARTH] { pip_color = rl.Color{55, 190, 105, 255} }
 		pip_rect := rl.Rectangle{x + 76 + f32(pip * 22), 75, 18, 18}
 		rl.DrawRectangleRec(pip_rect, pip_color)
 		rl.DrawRectangleLinesEx(pip_rect, 1, rl.Color{90, 105, 125, 255})
 	}
-	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(0)), c.int(x + 236), 70, 13, rl.SKYBLUE)
+	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(EARTH)), c.int(x + 236), 70, 13, rl.SKYBLUE)
 	rl.DrawText(rl.TextFormat("GLOBAL %.1f", global_mps()), c.int(x + 236), 86, 13, rl.GOLD)
 
 	if base_button_visible() {
 		base_button := rl.Rectangle{x + 18, 106, 294, 32}
-		if base_build_planet == 0 {
+		if base_build_planet == EARTH {
 			rl.DrawRectangleRec(base_button, rl.Color{30, 40, 55, 255})
-			if constructing_miners(0) < BASE_CONSTRUCT_MINERS {
-				rl.DrawText(rl.TextFormat("CREW %d/%d  //  MINERS AUTO-JOIN ON DEPOSIT", constructing_miners(0), BASE_CONSTRUCT_MINERS), c.int(x + 24), 115, 11, rl.GOLD)
+			if constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS {
+				rl.DrawText(rl.TextFormat("CREW %d/%d  //  MINERS AUTO-JOIN ON DEPOSIT", constructing_miners(EARTH), BASE_CONSTRUCT_MINERS), c.int(x + 24), 115, 11, rl.GOLD)
 			} else {
 				rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + 28), 115, 14, rl.GOLD)
 				draw_progress({x + 18, 142, 294, 7}, base_build_progress / BASE_CONSTRUCT_TIME, rl.GOLD)
@@ -1030,13 +1068,13 @@ draw_earth_inspector :: proc(x: f32) {
 	}
 
 	rl.DrawText("PRODUCTION LINES", c.int(x + 18), 166, 13, rl.Color{130, 150, 175, 255})
-	for b := 0; b < base_counts[0]; b += 1 {
-		line := production[0][b]
+	for b := 0; b < base_counts[EARTH]; b += 1 {
+		line := production[EARTH][b]
 		y := f32(180 + b * 30)
 		if line.active {
 			name := "MINING DRONE"
-			total := f32(3)
-			if line.kind == .COMBAT { name = "COMBAT DRONE"; total = 5 }
+			total: f32 = MINER_BUILD_TIME
+			if line.kind == .COMBAT { name = "COMBAT DRONE"; total = COMBAT_BUILD_TIME }
 			rl.DrawText(rl.TextFormat("BASE %d  %s", b + 1, name), c.int(x + 18), c.int(y), 12, rl.WHITE)
 			draw_progress({x + 18, y + 17, 185, 7}, line.progress / total, rl.SKYBLUE)
 		} else {
@@ -1050,13 +1088,13 @@ draw_earth_inspector :: proc(x: f32) {
 	draw_button({x + 171, f32(orders_y), 141, 34}, "[C] COMBAT (125)", rl.Color{78, 48, 55, 255})
 
 	queue_y := production_orders_y() + 45
-	queue_capacity := base_counts[0] * MAX_BASES
-	queue_total := queued_count(0)
+	queue_capacity := base_counts[EARTH] * MAX_BASES
+	queue_total := queued_count(EARTH)
 	rl.DrawText(rl.TextFormat("BUILD QUEUE  (%d/%d)", queue_total, queue_capacity), c.int(x + 18), c.int(queue_y), 12, rl.Color{130, 150, 175, 255})
 	for slot := 0; slot < queue_capacity; slot += 1 {
 		queued := slot < queue_total
 		kind := Unit_Type.MINING
-		if queued { kind = queue_kind_at(0, slot) }
+		if queued { kind = queue_kind_at(EARTH, slot) }
 		draw_queue_slot(queue_slot_rect(x, slot), queued, kind)
 	}
 }
@@ -1097,7 +1135,7 @@ draw_outpost_inspector :: proc(x: f32) {
 		rl.DrawText("LAST KNOWN INTEL", c.int(x + 28), 112, 13, amber)
 		rl.DrawText(rl.TextFormat("ENEMY FIGHTERS: %d", intel.fighters), c.int(x + 28), 128, 10, grey)
 		rl.DrawText(rl.TextFormat("ENEMY MINERS: %d", intel.miners), c.int(x + 28), 141, 10, grey)
-		rl.DrawText(rl.TextFormat("BASE HP: %d/%d", intel.base_hp, JUPITER_BASE_HP), c.int(x + 28), 154, 10, grey)
+		rl.DrawText(rl.TextFormat("BASE HP: %d/%d", intel.base_hp, GARRISON_BASE_HP[selected_planet]), c.int(x + 28), 154, 10, grey)
 	} else {
 		// Never scouted: no intel exists at all.
 		rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
@@ -1150,7 +1188,7 @@ unit_tile_y :: proc(kind: Unit_Type) -> int {
 	// Outpost inspectors have no base/production/queue sections, so rosters
 	// sit at a fixed height; on Earth they flow below the build queue.
 	y := 196
-	if selected_planet == 0 {
+	if selected_planet == EARTH {
 		y = production_orders_y() + 116 + (base_counts[selected_planet] - 1) * 22
 	}
 	if kind == .COMBAT { y += 26 + mining_rows * (TILE_SIZE + TILE_GAP) }
@@ -1417,7 +1455,7 @@ draw_pause_menu :: proc() {
 // (retreat, destruction, or a transit leg) puts the planet straight back
 // under fog.
 has_vision :: proc(p: int) -> bool {
-	if p == 0 { return true }
+	if p == EARTH { return true }
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.enemy { continue }
@@ -1440,14 +1478,18 @@ is_concealed :: proc(u: ^Unit) -> bool {
 
 // ---- Earth rally point ---------------------------------------------------
 
-set_earth_rally :: proc(target: int) { earth_rally = target }
+// Right-clicking Earth itself clears the rally: rallying to the home world
+// is the same as having no rally at all.
+set_earth_rally :: proc(target: int) {
+	if target == EARTH { earth_rally = NO_RALLY } else { earth_rally = target }
+}
 
 // Planet the rally flag flies over; 0 = no rally point set.
 rally_flag_planet :: proc() -> int { return earth_rally }
 
 // 3D rally flag (pole + pennant) above the rally world.
 draw_rally_flag :: proc() {
-	if earth_rally == 0 { return }
+	if earth_rally == NO_RALLY { return }
 	p := planets[earth_rally]
 	base := rl.Vector3{p.position.x, p.position.y + p.radius, p.position.z}
 	top := rl.Vector3{p.position.x, p.position.y + p.radius + 3.4, p.position.z}
