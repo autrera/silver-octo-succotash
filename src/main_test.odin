@@ -22,6 +22,7 @@ reset_world :: proc() {
 	minerals = 350
 	enemy_wave_timer = 0
 	wave_started = false
+	mega_wave_timer = 0
 	selected_planet = EARTH
 	production = {}
 	pending_count = {}
@@ -100,6 +101,93 @@ wave_timer_first_at_180_seconds_then_every_120 :: proc(t: ^testing.T) {
 	testing.expect(t, unit_count == WAVE_SIZE, "no extra wave before 2 minutes elapse")
 	update_enemy_waves(0.2)
 	testing.expect(t, unit_count == 2 * WAVE_SIZE, "second wave spawns 2 minutes after the first")
+}
+
+@(test)
+mined_planet_count_counts_distinct_planets_with_player_miners :: proc(t: ^testing.T) {
+	reset_world()
+	testing.expect(t, mined_planet_count() == 0, "nothing mined at start")
+	add_miner(EARTH)
+	testing.expect(t, mined_planet_count() == 1, "one Earth miner = one mined planet")
+	add_miner(EARTH)
+	add_miner(MARS)
+	testing.expect(t, mined_planet_count() == 2, "two Earth miners still count Earth once")
+	// Enemy miners and constructing player miners never count.
+	add_enemy_miner(JUPITER)
+	testing.expect(t, mined_planet_count() == 2, "enemy miners do not count")
+	units[1].state = .CONSTRUCTING
+	testing.expect(t, mined_planet_count() == 2, "constructing miner does not count its planet")
+	// Transit, returning and idle-scout states all count as actively mining.
+	units[0].state = .RETURNING
+	units[1].state = .IDLE
+	units[1].target_planet = JUPITER
+	units[1].state = .MINING
+	testing.expect(t, mined_planet_count() == 3, "returning/idle miners count their targets")
+}
+
+@(test)
+regular_wave_spawns_one_wave_per_mined_planet :: proc(t: ^testing.T) {
+	reset_world()
+	// unit_count includes the miners we seeded, so compare against the pre-wave count.
+	add_miner(EARTH)
+	add_miner(MARS)
+	before := unit_count
+	update_enemy_waves(f32(WAVE_FIRST_DELAY))
+	testing.expect(t, unit_count - before == 2 * WAVE_SIZE, "two mined planets spawn two waves")
+	// 0 mined planets still spawns at least one default wave.
+	reset_world()
+	update_enemy_waves(f32(WAVE_FIRST_DELAY))
+	testing.expect(t, unit_count == WAVE_SIZE, "no mining spawns one default wave")
+	reset_world()
+	add_miner(EARTH)
+	add_miner(MARS)
+	add_miner(JUPITER)
+	before = unit_count
+	update_enemy_waves(f32(WAVE_FIRST_DELAY))
+	testing.expect(t, unit_count - before == 3 * WAVE_SIZE, "three mined planets spawn three waves")
+}
+
+@(test)
+mega_wave_advances_and_spawns_at_five_mined_planets :: proc(t: ^testing.T) {
+	reset_world()
+	// Below the 5-planet threshold: the mega clock does not advance (stays 0).
+	add_miner(EARTH); add_miner(MARS); add_miner(JUPITER); add_miner(SATURN)
+	update_enemy_waves(50.0)
+	testing.expect(t, mega_wave_timer == 0, "mega clock frozen below 5 mined planets")
+	// At 5+ mined planets the clock advances.
+	add_miner(URANUS)
+	update_enemy_waves(10.0)
+	testing.expect(t, mega_wave_timer == 10.0, "mega clock advances at >=5 mined planets")
+	// Spawns 100 fighters at 300s. Drive the mega clock to just under 300 and
+	// step over with the regular timer parked below its next boundary, so only
+	// the mega wave fires on this tick.
+	mega_wave_timer = MEGA_WAVE_INTERVAL_SECONDS - 0.1
+	wave_started = true
+	enemy_wave_timer = 0
+	before := unit_count
+	update_enemy_waves(0.1)
+	testing.expect(t, unit_count - before == MEGA_WAVE_SIZE, "mega wave spawns 100 fighters at 300s")
+	testing.expect(t, mega_wave_timer == 0, "mega clock resets after the assault")
+}
+
+@(test)
+mega_wave_resets_when_mined_planets_drop_below_five :: proc(t: ^testing.T) {
+	reset_world()
+	add_miner(EARTH); add_miner(MARS); add_miner(JUPITER); add_miner(SATURN); add_miner(URANUS)
+	// Park the regular timer below its next boundary so short steps never fire
+	// a regular wave and muddy the mega-clock assertions.
+	wave_started = true
+	enemy_wave_timer = 0
+	update_enemy_waves(100.0)
+	testing.expect(t, mega_wave_timer == 100.0, "clock advances while >=5 mined planets")
+	// Player stops mining one planet: clock resets to 0 immediately.
+	units[0].state = .CONSTRUCTING
+	update_enemy_waves(1.0)
+	testing.expect(t, mega_wave_timer == 0, "clock resets when mined planets drop below 5")
+	// Re-expanding restarts it from 0 (not from the previous 100s).
+	units[0].state = .MINING
+	update_enemy_waves(10.0)
+	testing.expect(t, mega_wave_timer == 10.0, "clock restarts fresh from 0 on re-expansion")
 }
 
 @(test)
