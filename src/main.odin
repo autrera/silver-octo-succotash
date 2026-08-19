@@ -27,6 +27,8 @@ COMBAT_TICK :: 1
 WAVE_FIRST_DELAY :: 180
 WAVE_INTERVAL :: 120
 WAVE_SIZE :: 5
+// Each attack wave doubles to 10 fighters once the player mines this many worlds.
+WAVE_DOUBLE_MIN_MINED_PLANETS :: 4
 // Mega boss assault wave: only while the player mines from at least this many
 // planets, every 5 minutes a 100-fighter assault force strikes a random world.
 MEGA_WAVE_MIN_MINED_PLANETS :: 5
@@ -626,19 +628,23 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 	unit_count += 1
 }
 
-// Enemy waves: every 2 minutes (first at the 3-minute mark) WAVE_SIZE fighters
-// lift off from Jupiter space and strike Earth, Mars or Jupiter at random.
-// Combat
-// pacing is planet-general: while both sides have guarding fighters at a
+// Enemy waves: every 2 minutes (first at the 3-minute mark) fighters lift off
+// from Jupiter space. One wave strikes each actively mined planet (distinct
+// targets, so the player's mining operations each take pressure); with
+// nothing mined a single default wave hits a random planet. Each wave is
+// WAVE_SIZE fighters, doubled to 10 while the player mines
+// WAVE_DOUBLE_MIN_MINED_PLANETS or more worlds.
+// Combat pacing is planet-general: while both sides have guarding fighters at a
 // planet, one drone on each side is destroyed every COMBAT_TICK seconds. With
 // no player defenders left, enemies destroy one mining drone every COMBAT_TICK.
 // Player fleets sweeping an occupied planet kill its garrison miners first,
 // then damage the enemy base by one per player fighter per tick until it falls.
 // Distinct planets currently being mined by the player: a planet counts if
 // at least one non-enemy mining drone is targeting it (any non-CONSTRUCTING
-// state — transit, idle scout, mining, returning or depositing).
-mined_planet_count :: proc() -> int {
-	seen := [PLANET_COUNT]bool{}
+// state — transit, idle scout, mining, returning or depositing). mined_planets
+// fills `seen` so the wave loop can strike each mined world exactly once.
+mined_planets :: proc(seen: ^[PLANET_COUNT]bool) -> int {
+	for p in 0..<PLANET_COUNT { seen[p] = false }
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.kind != .MINING || u.enemy || u.state == .CONSTRUCTING { continue }
@@ -649,16 +655,27 @@ mined_planet_count :: proc() -> int {
 	return count
 }
 
+mined_planet_count :: proc() -> int {
+	seen := [PLANET_COUNT]bool{}
+	return mined_planets(&seen)
+}
+
 update_enemy_waves :: proc(dt: f32) {
 	enemy_wave_timer += dt
 	interval := f32(WAVE_FIRST_DELAY)
 	if wave_started { interval = f32(WAVE_INTERVAL) }
 	if enemy_wave_timer >= interval {
 		// Regular waves scale with active mining: one wave per mined planet,
-		// at least one default wave when nothing is being mined.
-		waves := mined_planet_count()
-		if waves < 1 { waves = 1 }
-		for i in 0..<waves { spawn_enemy_wave() }
+		// each striking its own mined world (distinct targets); at least one
+		// default wave on a random planet when nothing is being mined.
+		seen := [PLANET_COUNT]bool{}
+		waves := mined_planets(&seen)
+		size := attack_wave_size()
+		if waves == 0 {
+			spawn_n_enemies(size)
+		} else {
+			for p in 0..<PLANET_COUNT { if seen[p] { spawn_n_enemies_to(p, size) } }
+		}
 		enemy_wave_timer = 0
 		wave_started = true
 	}
@@ -716,16 +733,26 @@ update_planet_combat :: proc(dt: f32, p: int) {
 	}
 }
 
-spawn_enemy_wave :: proc() { spawn_n_enemies(WAVE_SIZE) }
+// Regular attack wave size: WAVE_SIZE fighters, doubled to 10 while the
+// player mines WAVE_DOUBLE_MIN_MINED_PLANETS or more worlds.
+attack_wave_size :: proc() -> int {
+	return WAVE_SIZE * (mined_planet_count() >= WAVE_DOUBLE_MIN_MINED_PLANETS ? 2 : 1)
+}
+
+spawn_enemy_wave :: proc() { spawn_n_enemies(attack_wave_size()) }
 
 // Spawns `count` enemy fighters (capped by free unit slots) lifting off from
-// Jupiter space toward one random target planet. spawn_enemy_wave is the
-// regular-wave default (WAVE_SIZE); the mega boss assault passes MEGA_WAVE_SIZE.
+// Jupiter space toward a random target planet. spawn_enemy_wave is the
+// regular-wave default (attack_wave_size); the mega boss assault passes
+// MEGA_WAVE_SIZE. The wave loop calls spawn_n_enemies_to so each mined world
+// receives its own wave instead of every wave stacking on one random target.
 spawn_n_enemies :: proc(count: int) {
+	spawn_n_enemies_to(int(rl.GetRandomValue(0, PLANET_COUNT - 1)), count)
+}
+
+spawn_n_enemies_to :: proc(target: int, count: int) {
 	spawn_count := min(count, MAX_UNITS - unit_count)
 	if spawn_count <= 0 { return }
-	// Every wave picks its target at random among all eight planets.
-	target := int(rl.GetRandomValue(0, PLANET_COUNT - 1))
 	spawn_pos := planets[JUPITER].position + rl.Vector3{40, 0.5, -25}
 	for i in 0..<spawn_count {
 		angle := f32(i) * 1.26

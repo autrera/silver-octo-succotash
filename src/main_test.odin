@@ -117,12 +117,15 @@ mined_planet_count_counts_distinct_planets_with_player_miners :: proc(t: ^testin
 	testing.expect(t, mined_planet_count() == 2, "enemy miners do not count")
 	units[1].state = .CONSTRUCTING
 	testing.expect(t, mined_planet_count() == 2, "constructing miner does not count its planet")
-	// Transit, returning and idle-scout states all count as actively mining.
+	// Every cycle phase counts: transit, mining, returning, depositing, idle scout.
 	units[0].state = .RETURNING
 	units[1].state = .IDLE
 	units[1].target_planet = JUPITER
 	units[1].state = .MINING
 	testing.expect(t, mined_planet_count() == 3, "returning/idle miners count their targets")
+	units[0].state = .TRANSIT
+	units[2].state = .DEPOSITING
+	testing.expect(t, mined_planet_count() == 3, "transit and depositing miners count their targets")
 }
 
 @(test)
@@ -145,6 +148,51 @@ regular_wave_spawns_one_wave_per_mined_planet :: proc(t: ^testing.T) {
 	before = unit_count
 	update_enemy_waves(f32(WAVE_FIRST_DELAY))
 	testing.expect(t, unit_count - before == 3 * WAVE_SIZE, "three mined planets spawn three waves")
+}
+
+@(test)
+attack_wave_size_doubles_at_four_mined_planets :: proc(t: ^testing.T) {
+	testing.expect(t, WAVE_SIZE == 5, "standard wave is 5 fighters")
+	testing.expect(t, WAVE_DOUBLE_MIN_MINED_PLANETS == 4, "doubling threshold is 4 mined planets")
+	reset_world()
+	testing.expect(t, attack_wave_size() == WAVE_SIZE, "0 mined: standard wave")
+	add_miner(MERCURY)
+	testing.expect(t, attack_wave_size() == WAVE_SIZE, "1 mined: standard wave")
+	add_miner(VENUS)
+	testing.expect(t, attack_wave_size() == WAVE_SIZE, "2 mined: standard wave")
+	add_miner(MARS)
+	testing.expect(t, attack_wave_size() == WAVE_SIZE, "3 mined: standard wave")
+	add_miner(JUPITER)
+	testing.expect(t, attack_wave_size() == 2 * WAVE_SIZE, "4 mined: doubled wave")
+	testing.expect(t, 2 * WAVE_SIZE == 10, "doubled wave is 10 fighters")
+	add_miner(SATURN); add_miner(URANUS); add_miner(NEPTUNE)
+	testing.expect(t, attack_wave_size() == 2 * WAVE_SIZE, "8 mined: still doubled wave")
+}
+
+@(test)
+four_mined_planets_spawn_four_doubled_waves :: proc(t: ^testing.T) {
+	reset_world()
+	add_miner(MERCURY); add_miner(MARS); add_miner(JUPITER); add_miner(NEPTUNE)
+	before := unit_count
+	update_enemy_waves(f32(WAVE_FIRST_DELAY))
+	testing.expect(t, unit_count - before == 4 * 2 * WAVE_SIZE, "4 mined planets -> 4 waves of 10")
+}
+
+@(test)
+waves_strike_each_mined_planet_once :: proc(t: ^testing.T) {
+	reset_world()
+	add_miner(VENUS); add_miner(SATURN); add_miner(URANUS)
+	before := unit_count
+	update_enemy_waves(f32(WAVE_FIRST_DELAY))
+	testing.expect(t, unit_count - before == 3 * WAVE_SIZE, "three mined planets, three standard waves")
+	// Each wave is a contiguous block sharing one target; collect the targets.
+	targets := [PLANET_COUNT]int{}
+	for i := before; i < unit_count; i += WAVE_SIZE {
+		target := units[i].target_planet
+		testing.expect(t, target == VENUS || target == SATURN || target == URANUS, "wave targets a mined planet")
+		targets[target] += 1
+	}
+	testing.expect(t, targets[VENUS] == 1 && targets[SATURN] == 1 && targets[URANUS] == 1, "each mined planet struck exactly once")
 }
 
 @(test)
@@ -510,8 +558,8 @@ queue_unit_is_earth_only :: proc(t: ^testing.T) {
 
 @(test)
 enemy_waves_target_any_planet :: proc(t: ^testing.T) {
-	// Every wave picks a seeded random target among all eight planets; each
-	// one must show up across seeds.
+	// The default/debug wave (nothing mined) picks a seeded random target
+	// among all eight planets; each one must show up across seeds.
 	seen := [PLANET_COUNT]bool{}
 	for seed in 0..<200 {
 		reset_world()
