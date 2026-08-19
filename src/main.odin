@@ -43,6 +43,13 @@ GARRISON_BASE_HP := [PLANET_COUNT]int{20, 10, 0, 15, 30, 40, 50, 60}
 // Drone production per command base line (mining 6s, combat 10s).
 MINER_BUILD_TIME :: 6.0
 COMBAT_BUILD_TIME :: 10.0
+// Command base construction price, deducted up front when the build queues.
+BASE_COST :: 500
+// Drone build-speed upgrade: 5000 minerals per level; each level builds
+// drones 20% faster (compounding), five levels max (~33% of base time).
+DRONE_SPEED_UPGRADE_COST :: 5000
+DRONE_SPEED_UPGRADE_MAX :: 5
+DRONE_SPEED_UPGRADE_FACTOR :: 0.8
 // A command base needs 5 mining drones present at the planet and takes one
 // full minute to build; those drones stop mining until it completes.
 BASE_CONSTRUCT_MINERS :: 5
@@ -125,6 +132,8 @@ unit_count: int
 selected_units: [MAX_UNITS]bool
 selected_planet := EARTH
 minerals := 350
+// Drone build-speed upgrade level (0..DRONE_SPEED_UPGRADE_MAX).
+drone_speed_level := 0
 // Player command bases exist only on Earth; set by initialize_game/reset_world.
 base_counts: [PLANET_COUNT]int
 production: [PLANET_COUNT][MAX_BASES]Production
@@ -279,6 +288,8 @@ update_input :: proc() {
 	// Build shortcuts use the same validation path as the inspector buttons.
 	if rl.IsKeyPressed(.M) { queue_unit(.MINING) }
 	if rl.IsKeyPressed(.C) { queue_unit(.COMBAT) }
+	// [U] buys the next drone build-speed upgrade level (Earth only).
+	if rl.IsKeyPressed(.U) { purchase_drone_speed_upgrade() }
 	// Spacebar is a shortcut to select Earth in the inspector.
 	if rl.IsKeyPressed(.SPACE) { select_earth() }
 	// Squad control groups: Shift+digit saves the selection, digit recalls it.
@@ -358,6 +369,10 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 			queue_unit(.COMBAT)
 			return
 		}
+		if rl.CheckCollisionPointRec(mouse, drone_speed_button_rect(panel_x)) {
+			purchase_drone_speed_upgrade()
+			return
+		}
 		// Clicking an occupied build-queue slot cancels that unit (refund included).
 		for slot := 0; slot < queued_count(EARTH); slot += 1 {
 			if rl.CheckCollisionPointRec(mouse, queue_slot_rect(panel_x, slot)) {
@@ -423,15 +438,16 @@ base_button_visible :: proc() -> bool {
 	return base_counts[EARTH] < MAX_BASES || base_build_planet == EARTH
 }
 
-// A command base needs a liberated Earth and 200 minerals; it queues with no
-// crew. Miners already mining Earth join immediately; the rest auto-join as
-// they finish depositing on Earth (update_miner). The BASE_CONSTRUCT_TIME
-// clock runs only with a full crew, and everyone resumes mining after.
+// A command base needs a liberated Earth and BASE_COST minerals; it queues
+// with no crew. Miners already mining Earth join immediately; the rest
+// auto-join as they finish depositing on Earth (update_miner). The
+// BASE_CONSTRUCT_TIME clock runs only with a full crew, and everyone resumes
+// mining after.
 start_base_construction :: proc() {
 	if selected_planet != EARTH { return } // Command bases build on Earth only.
-	if base_counts[selected_planet] >= MAX_BASES || base_build_planet >= 0 || minerals < 200 { return }
+	if base_counts[selected_planet] >= MAX_BASES || base_build_planet >= 0 || minerals < BASE_COST { return }
 	if !planet_liberated(selected_planet) { return }
-	minerals -= 200
+	minerals -= BASE_COST
 	base_build_planet = selected_planet
 	base_build_progress = 0
 }
@@ -486,6 +502,24 @@ unit_cost :: proc(kind: Unit_Type) -> int {
 	return 50
 }
 
+// Effective drone build time at the current upgrade level: every level
+// multiplies the base time by DRONE_SPEED_UPGRADE_FACTOR.
+drone_build_time :: proc(kind: Unit_Type) -> f32 {
+	base: f32 = MINER_BUILD_TIME
+	if kind == .COMBAT { base = COMBAT_BUILD_TIME }
+	return base * math.pow(DRONE_SPEED_UPGRADE_FACTOR, f32(drone_speed_level))
+}
+
+// Buy the next drone build-speed level: 5000 minerals, capped at
+// DRONE_SPEED_UPGRADE_MAX. Purchases live in the Earth inspector.
+purchase_drone_speed_upgrade :: proc() -> bool {
+	if selected_planet != EARTH { return false }
+	if drone_speed_level >= DRONE_SPEED_UPGRADE_MAX || minerals < DRONE_SPEED_UPGRADE_COST { return false }
+	minerals -= DRONE_SPEED_UPGRADE_COST
+	drone_speed_level += 1
+	return true
+}
+
 queue_unit :: proc(kind: Unit_Type) {
 	if selected_planet != EARTH { return } // All production happens at Earth command bases.
 	cost := unit_cost(kind)
@@ -501,11 +535,17 @@ queue_unit :: proc(kind: Unit_Type) {
 	pending_count[selected_planet] += 1
 }
 
+// Screen rect of the drone build-speed upgrade button. Shared by the
+// render and the click hitbox so they cannot drift apart.
+drone_speed_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
+	return rl.Rectangle{panel_x + 18, f32(production_orders_y() + 38), 294, 26}
+}
+
 // Screen rect of build-queue slot `slot` (0 = queue head: active production
 // lines in base order, then pending items). Shared by the queue rendering and
 // the cancel-click hitboxes so they cannot drift apart.
 queue_slot_rect :: proc(panel_x: f32, slot: int) -> rl.Rectangle {
-	queue_y := f32(production_orders_y() + 45)
+	queue_y := f32(production_orders_y() + 76)
 	row := slot / MAX_BASES
 	column := slot % MAX_BASES
 	return rl.Rectangle{panel_x + 18 + f32(column * 22), queue_y + 17 + f32(row * 22), 18, 18}
@@ -574,8 +614,7 @@ update_production :: proc(dt: f32) {
 		for b := 0; b < base_counts[p]; b += 1 {
 			line := &production[p][b]
 			if !line.active { continue }
-			build_time: f32 = MINER_BUILD_TIME
-			if line.kind == .COMBAT { build_time = COMBAT_BUILD_TIME }
+			build_time := drone_build_time(line.kind)
 			line.progress += dt
 			if line.progress >= build_time {
 				spawn_unit(line.kind, p)
@@ -1122,11 +1161,15 @@ draw_world :: proc() {
 	// opening Earth's inspector.
 	min_text := rl.TextFormat("◆ MINERALS: %d", minerals)
 	mps_text := rl.TextFormat("MPS %.1f", global_mps())
+	speed_text := rl.TextFormat("SPEED LVL %d/%d", drone_speed_level, DRONE_SPEED_UPGRADE_MAX)
 	min_w := rl.MeasureText(min_text, 18)
-	bar_w := min_w + rl.MeasureText(mps_text, 18) + 34
+	mps_w := rl.MeasureText(mps_text, 18)
+	speed_w := rl.MeasureText(speed_text, 18)
+	bar_w := min_w + mps_w + speed_w + 46
 	rl.DrawRectangle(12, 12, bar_w, 34, rl.Color{20, 32, 45, 235})
 	rl.DrawText(min_text, 22, 20, 18, rl.GOLD)
 	rl.DrawText(mps_text, 22 + min_w + 12, 20, 18, rl.SKYBLUE)
+	rl.DrawText(speed_text, 22 + min_w + 12 + mps_w + 12, 20, 18, rl.Color{120, 220, 160, 255})
 	// Draw status BEFORE the squad badges: rl.TextFormat serves every caller
 	// from a small rotating pool of static buffers, so each badge label
 	// overwrites an earlier one — with a second saved squad the badges
@@ -1215,7 +1258,7 @@ draw_earth_inspector :: proc(x: f32) {
 		} else {
 			rl.DrawRectangleRec(base_button, rl.Color{35, 56, 78, 255})
 			rl.DrawRectangleLinesEx(base_button, 1, rl.Color{85, 125, 155, 255})
-			rl.DrawText("Construct Command Base (200 Minerals)", c.int(x + 28), 115, 14, rl.WHITE)
+			rl.DrawText("Construct Command Base (500 Minerals)", c.int(x + 28), 115, 14, rl.WHITE)
 		}
 	}
 
@@ -1225,8 +1268,8 @@ draw_earth_inspector :: proc(x: f32) {
 		y := f32(180 + b * 30)
 		if line.active {
 			name := "MINING DRONE"
-			total: f32 = MINER_BUILD_TIME
-			if line.kind == .COMBAT { name = "COMBAT DRONE"; total = COMBAT_BUILD_TIME }
+			total := drone_build_time(line.kind)
+			if line.kind == .COMBAT { name = "COMBAT DRONE" }
 			rl.DrawText(rl.TextFormat("BASE %d  %s", b + 1, name), c.int(x + 18), c.int(y), 12, rl.WHITE)
 			draw_progress({x + 18, y + 17, 185, 7}, line.progress / total, rl.SKYBLUE)
 		} else {
@@ -1238,8 +1281,15 @@ draw_earth_inspector :: proc(x: f32) {
 	rl.DrawText("BUILD", c.int(x + 18), c.int(orders_y - 16), 13, rl.Color{130, 150, 175, 255})
 	draw_button({x + 18, f32(orders_y), 141, 34}, "[M] MINER  (50)", rl.Color{38, 72, 75, 255})
 	draw_button({x + 171, f32(orders_y), 141, 34}, "[C] COMBAT (125)", rl.Color{78, 48, 55, 255})
+	// Drone build-speed upgrade: one button below the BUILD row. At the cap it
+	// shows MAX and the click handler is a no-op.
+	if drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
+		draw_button(drone_speed_button_rect(x), rl.TextFormat("DRONE BUILD SPEED  LVL %d/%d (MAX)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX), rl.Color{45, 58, 48, 255})
+	} else {
+		draw_button(drone_speed_button_rect(x), rl.TextFormat("[U] DRONE BUILD SPEED  LVL %d/%d (%d)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX, DRONE_SPEED_UPGRADE_COST), rl.Color{52, 58, 78, 255})
+	}
 
-	queue_y := production_orders_y() + 45
+	queue_y := production_orders_y() + 76
 	queue_capacity := base_counts[EARTH] * MAX_BASES
 	queue_total := queued_count(EARTH)
 	rl.DrawText(rl.TextFormat("BUILD QUEUE  (%d/%d)", queue_total, queue_capacity), c.int(x + 18), c.int(queue_y), 12, rl.Color{130, 150, 175, 255})
@@ -1341,7 +1391,7 @@ unit_tile_y :: proc(kind: Unit_Type) -> int {
 	// sit at a fixed height; on Earth they flow below the build queue.
 	y := 196
 	if selected_planet == EARTH {
-		y = production_orders_y() + 116 + (base_counts[selected_planet] - 1) * 22
+		y = production_orders_y() + 147 + (base_counts[selected_planet] - 1) * 22
 	}
 	if kind == .COMBAT { y += 26 + mining_rows * (TILE_SIZE + TILE_GAP) }
 	return y

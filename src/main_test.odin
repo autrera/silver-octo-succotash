@@ -29,6 +29,7 @@ reset_world :: proc() {
 	last_known_intel = {}
 	intel_recorded = {}
 	laser_anim_time = 0
+	drone_speed_level = 0
 	rl.SetRandomSeed(7)
 }
 
@@ -428,16 +429,16 @@ base_construction_is_earth_only :: proc(t: ^testing.T) {
 	testing.expect(t, base_build_planet != JUPITER && minerals == 350, "liberated Jupiter refuses construction")
 
 	reset_world()
-	// Earth queues immediately even with no miners on hand: the 200 mineral
+	// Earth queues immediately even with no miners on hand: the 500 mineral
 	// cost is deducted up front and miners assemble onto the site later.
 	selected_planet = EARTH
-	minerals = 100
+	minerals = 499
 	start_base_construction()
-	testing.expect(t, base_build_planet != EARTH, "Earth without 200 minerals blocks construction")
-	minerals = 350
+	testing.expect(t, base_build_planet != EARTH, "Earth without 500 minerals blocks construction")
+	minerals = 500
 	start_base_construction()
 	testing.expect(t, base_build_planet == EARTH, "Earth queues the build with no miners on site")
-	testing.expect(t, minerals == 150, "construction costs 200 minerals")
+	testing.expect(t, minerals == 0, "construction costs 500 minerals")
 }
 
 @(test)
@@ -448,6 +449,7 @@ construction_miners_stop_mining_and_resume :: proc(t: ^testing.T) {
 	earth_cycle: f32 = MINING_DURATION + DEPOSIT_DURATION
 	full_mps := f32(5) * f32(mining_rate(EARTH)) / earth_cycle
 	testing.expect(t, abs(planet_mps(EARTH) - full_mps) < 0.001, "5 miners mine at full rate before construction")
+	minerals = 500
 	start_base_construction()
 	for i in 0..<unit_count {
 		units[i].state = .DEPOSITING
@@ -969,6 +971,7 @@ rally_only_redirects_earth_spawns :: proc(t: ^testing.T) {
 deposit_auto_assigns_miners_to_queued_base_construction :: proc(t: ^testing.T) {
 	reset_world()
 	selected_planet = EARTH
+	minerals = 500
 	start_base_construction()
 	testing.expect(t, base_build_planet == EARTH, "build queues with no crew")
 	// The build clock is frozen until the crew of 5 has gathered.
@@ -1443,4 +1446,76 @@ unscouted_planet_has_no_intel :: proc(t: ^testing.T) {
 	testing.expect(t, !has_vision(JUPITER), "no player presence at Jupiter")
 	update_intel()
 	testing.expect(t, !intel_recorded[JUPITER], "still no intel without vision")
+}
+
+// ---- Base cost (500) & drone build-speed upgrades ----------------------
+
+@(test)
+base_construction_costs_500_minerals :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	// One mineral short of the 500 cost blocks the build and spends nothing.
+	minerals = 499
+	start_base_construction()
+	testing.expect(t, base_build_planet != EARTH, "below 500 minerals blocks construction")
+	testing.expect(t, minerals == 499, "blocked build spends no minerals")
+	// Exactly 500 queues the build and deducts the full cost.
+	minerals = 500
+	start_base_construction()
+	testing.expect(t, base_build_planet == EARTH, "500 minerals queues the build")
+	testing.expect(t, minerals == 0, "construction deducts 500 minerals")
+}
+
+@(test)
+drone_speed_upgrade_purchase :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	// Below the 5000 cost the purchase is refused and the level is unchanged.
+	minerals = 4999
+	testing.expect(t, purchase_drone_speed_upgrade() == false, "purchase refuses below 5000 minerals")
+	testing.expect(t, drone_speed_level == 0, "level unchanged on refusal")
+	testing.expect(t, minerals == 4999, "refused purchase spends nothing")
+	// 5000 minerals buys exactly one level and deducts the cost.
+	minerals = DRONE_SPEED_UPGRADE_COST
+	testing.expect(t, purchase_drone_speed_upgrade() == true, "purchase succeeds at 5000")
+	testing.expect(t, minerals == 0, "purchase deducts 5000")
+	testing.expect(t, drone_speed_level == 1, "level increments to 1")
+	// The cap at DRONE_SPEED_UPGRADE_MAX is enforced: the final level is
+	// reachable, but a further purchase is refused and does not charge.
+	drone_speed_level = DRONE_SPEED_UPGRADE_MAX - 1
+	minerals = DRONE_SPEED_UPGRADE_COST
+	testing.expect(t, purchase_drone_speed_upgrade() == true, "final level is reachable")
+	testing.expect(t, drone_speed_level == DRONE_SPEED_UPGRADE_MAX, "level caps at the max")
+	testing.expect(t, purchase_drone_speed_upgrade() == false, "purchase refuses past the cap")
+	testing.expect(t, minerals == 0, "capped purchase does not double-charge")
+	// The upgrade is an Earth-only affordance: off-Earth it is unavailable.
+	selected_planet = MARS
+	minerals = 10000
+	testing.expect(t, purchase_drone_speed_upgrade() == false, "upgrade is Earth-only")
+	testing.expect(t, drone_speed_level == DRONE_SPEED_UPGRADE_MAX, "off-Earth purchase leaves the level untouched")
+}
+
+@(test)
+drone_build_times_scale_with_upgrade :: proc(t: ^testing.T) {
+	reset_world()
+	// Level 0 keeps the base build times for both drone kinds.
+	testing.expect(t, drone_build_time(.MINING) == MINER_BUILD_TIME, "level 0 keeps the base miner time")
+	testing.expect(t, drone_build_time(.COMBAT) == COMBAT_BUILD_TIME, "level 0 keeps the base combat time")
+	// Each level compounds to 80% of the previous time.
+	drone_speed_level = 1
+	testing.expect(t, abs(drone_build_time(.MINING) - MINER_BUILD_TIME * 0.8) < 0.0001, "one level cuts miner time 20%")
+	testing.expect(t, abs(drone_build_time(.COMBAT) - COMBAT_BUILD_TIME * 0.8) < 0.0001, "one level cuts combat time 20%")
+	drone_speed_level = 2
+	testing.expect(t, abs(drone_build_time(.MINING) - MINER_BUILD_TIME * 0.64) < 0.0001, "two levels compound to 64%")
+	// Five levels compound to ~33% of the base time, never reaching zero.
+	drone_speed_level = DRONE_SPEED_UPGRADE_MAX
+	testing.expect(t, drone_build_time(.MINING) < MINER_BUILD_TIME * 0.33, "five levels compound to ~33% of base")
+	testing.expect(t, drone_build_time(.MINING) > 0.0, "build time never reaches zero")
+}
+
+@(test)
+reset_world_restores_drone_speed_level :: proc(t: ^testing.T) {
+	drone_speed_level = 3
+	reset_world()
+	testing.expect(t, drone_speed_level == 0, "reset restores the upgrade level to 0")
 }
