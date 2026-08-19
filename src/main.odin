@@ -1100,8 +1100,13 @@ draw_world :: proc() {
 	rl.DrawRectangle(12, 12, bar_w, 34, rl.Color{20, 32, 45, 235})
 	rl.DrawText(min_text, 22, 20, 18, rl.GOLD)
 	rl.DrawText(mps_text, 22 + min_w + 12, 20, 18, rl.SKYBLUE)
-	draw_squad_hud()
+	// Draw status BEFORE the squad badges: rl.TextFormat serves every caller
+	// from a small rotating pool of static buffers, so each badge label
+	// overwrites an earlier one — with a second saved squad the badges
+	// clobbered this line (FPS/controls vanished from the bottom HUD).
+	// zoom_text is safe: it is formatted and drawn immediately.
 	rl.DrawText(status, 18, rl.GetScreenHeight() - 28, 14, rl.Color{155, 170, 195, 255})
+	draw_squad_hud()
 	zoom_text := rl.TextFormat("ZOOM %d%% // ALTITUDE %.0f", zoom_percent(), camera.position.y)
 	rl.DrawText(zoom_text, viewport_w - 208, rl.GetScreenHeight() - 28, 14, rl.Color{155, 170, 195, 255})
 }
@@ -1122,11 +1127,29 @@ draw_inspector :: proc() {
 
 	rl.DrawText(rl.TextFormat("MINING DRONES (%d/%d)", roster_count(.MINING), planet_mining_cap(selected_planet)), c.int(x + 18), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
 	for i := 0; i < unit_count; i += 1 {
-		if unit_in_roster(i, .MINING) { draw_unit_tile(i, x, roster_ordinal(i, .MINING)) }
+		if unit_in_roster(i, .MINING) { draw_unit_tile(i, x, unit_tile_y(.MINING), roster_ordinal(i, .MINING), false) }
 	}
 	rl.DrawText(rl.TextFormat("FIGHTING DRONES (%d)", roster_count(.COMBAT)), c.int(x + 18), c.int(unit_tile_y(.COMBAT) - 18), 13, rl.SKYBLUE)
 	for i := 0; i < unit_count; i += 1 {
-		if unit_in_roster(i, .COMBAT) { draw_unit_tile(i, x, roster_ordinal(i, .COMBAT)) }
+		if unit_in_roster(i, .COMBAT) { draw_unit_tile(i, x, unit_tile_y(.COMBAT), roster_ordinal(i, .COMBAT), false) }
+	}
+	// Enemy rosters mirror the player sections but only render while the
+	// planet is scouted (fog of war) and enemies are actually present there —
+	// garrison drones at an occupied world or an attacking wave (even inbound).
+	if has_vision(selected_planet) {
+		enemy_header := rl.Color{235, 110, 110, 255}
+		if enemy_roster_count(.MINING) > 0 {
+			rl.DrawText(rl.TextFormat("ENEMY MINING DRONES (%d)", enemy_roster_count(.MINING)), c.int(x + 18), c.int(enemy_tile_y(.MINING) - 18), 13, enemy_header)
+			for i := 0; i < unit_count; i += 1 {
+				if enemy_in_roster(i, .MINING) { draw_unit_tile(i, x, enemy_tile_y(.MINING), enemy_roster_ordinal(i, .MINING), true) }
+			}
+		}
+		if enemy_roster_count(.COMBAT) > 0 {
+			rl.DrawText(rl.TextFormat("ENEMY FIGHTING DRONES (%d)", enemy_roster_count(.COMBAT)), c.int(x + 18), c.int(enemy_tile_y(.COMBAT) - 18), 13, enemy_header)
+			for i := 0; i < unit_count; i += 1 {
+				if enemy_in_roster(i, .COMBAT) { draw_unit_tile(i, x, enemy_tile_y(.COMBAT), enemy_roster_ordinal(i, .COMBAT), true) }
+			}
+		}
 	}
 	if h > 700 { rl.DrawText(rl.TextFormat("SELECTED UNITS: %d", selection_count()), c.int(x + 18), rl.GetScreenHeight() - 34, 13, rl.GOLD) }
 	// Live drag rectangle for the inspector box-select.
@@ -1303,22 +1326,59 @@ roster_ordinal :: proc(index: int, kind: Unit_Type) -> int {
 	return ordinal
 }
 
+// Enemy mirror of the roster predicates: garrison drones and attackers bound
+// for the selected planet, counted for the ENEMY inspector sections.
+enemy_in_roster :: proc(index: int, kind: Unit_Type) -> bool {
+	u := &units[index]
+	if !u.enemy || u.kind != kind { return false }
+	if kind == .MINING { return u.target_planet == selected_planet }
+	return u.affiliation == selected_planet
+}
+
+enemy_roster_count :: proc(kind: Unit_Type) -> int {
+	count := 0
+	for i := 0; i < unit_count; i += 1 { if enemy_in_roster(i, kind) { count += 1 } }
+	return count
+}
+
+enemy_roster_ordinal :: proc(index: int, kind: Unit_Type) -> int {
+	ordinal := 0
+	for i := 0; i < index; i += 1 { if enemy_in_roster(i, kind) { ordinal += 1 } }
+	return ordinal
+}
+
+// Y of the enemy unit-tile rows: directly below the player fighting roster,
+// with the enemy mining section (when present) stacked above the fighters.
+enemy_tile_y :: proc(kind: Unit_Type) -> int {
+	combat_rows := (roster_count(.COMBAT) + TILES_PER_ROW - 1) / TILES_PER_ROW
+	y := unit_tile_y(.COMBAT) + 26 + combat_rows * (TILE_SIZE + TILE_GAP)
+	if kind == .COMBAT {
+		enemy_mining_rows := (enemy_roster_count(.MINING) + TILES_PER_ROW - 1) / TILES_PER_ROW
+		y += 26 + enemy_mining_rows * (TILE_SIZE + TILE_GAP)
+	}
+	return y
+}
+
 unit_tile_rect :: proc(x: f32, y: int, ordinal: int) -> rl.Rectangle {
 	column := ordinal % TILES_PER_ROW
 	row := ordinal / TILES_PER_ROW
 	return rl.Rectangle{x + 18 + f32(column * (TILE_SIZE + TILE_GAP)), f32(y + row * (TILE_SIZE + TILE_GAP)), TILE_SIZE, TILE_SIZE}
 }
 
-draw_unit_tile :: proc(index: int, x: f32, ordinal: int) {
-	rect := unit_tile_rect(x, unit_tile_y(units[index].kind), ordinal)
+draw_unit_tile :: proc(index: int, x: f32, y: int, ordinal: int, enemy: bool) {
+	rect := unit_tile_rect(x, y, ordinal)
 	fill := rl.Color{38, 55, 78, 255}
 	border := rl.Color{91, 113, 140, 255}
-	if selected_units[index] { fill = rl.Color{123, 94, 26, 255}; border = rl.GOLD }
+	if enemy {
+		fill = rl.Color{58, 32, 36, 255}
+		border = rl.Color{140, 72, 78, 255}
+	} else if selected_units[index] { fill = rl.Color{123, 94, 26, 255}; border = rl.GOLD }
 	rl.DrawRectangleRec(rect, fill)
 	rl.DrawRectangleLinesEx(rect, 1, border)
 	symbol: cstring = "M"
 	accent := rl.ORANGE
 	if units[index].kind == .COMBAT { symbol = "C"; accent = rl.SKYBLUE }
+	if enemy { accent = rl.Color{235, 130, 130, 255} }
 	rl.DrawText(symbol, c.int(rect.x + 8), c.int(rect.y + 7), 12, accent)
 	rl.DrawCircle(c.int(rect.x + rect.width - 5), c.int(rect.y + 5), 3, state_color(units[index].state))
 }
@@ -1567,7 +1627,25 @@ pause_key_pressed :: proc() -> bool {
 	return rl.IsKeyPressed(.P) || rl.IsKeyPressed(.F10)
 }
 
-toggle_pause :: proc() { game_paused = !game_paused }
+// Keyboard focus for the pause menu: 0 = CONTINUE, 1 = QUIT. Reopening the
+// menu always resets focus to CONTINUE.
+PAUSE_MENU_OPTIONS :: 2
+pause_menu_selection := 0
+
+toggle_pause :: proc() {
+	game_paused = !game_paused
+	if game_paused { pause_menu_selection = 0 }
+}
+
+// Arrow-key focus movement: dir -1 = up, +1 = down, wrapping around.
+advance_pause_selection :: proc(dir: int) {
+	pause_menu_selection = (pause_menu_selection + dir + PAUSE_MENU_OPTIONS) % PAUSE_MENU_OPTIONS
+}
+
+// ENTER/KP_ENTER on the focused option — the same actions the mouse path takes.
+activate_pause_selection :: proc() {
+	if pause_menu_selection == 0 { game_paused = false } else { quit_requested = true }
+}
 
 // One unpaused simulation tick. The main loop skips this entirely while the
 // pause menu is open, freezing camera, input, production and units.
@@ -1594,10 +1672,13 @@ update_intel :: proc() {
 	}
 }
 
+// Shared by the box autosizing and the render so the label never drifts.
+PAUSE_STATUS :: "SIMULATION FROZEN // P/F10 RESUME // ARROWS NAVIGATE + ENTER SELECT"
+
 pause_menu_rects :: proc() -> (box, continue_rect, quit_rect: rl.Rectangle) {
 	w := f32(rl.GetScreenWidth())
 	h := f32(rl.GetScreenHeight())
-	status: cstring = "SIMULATION FROZEN // P/F10 OR CONTINUE TO RESUME"
+	status: cstring = PAUSE_STATUS
 	status_w := f32(rl.MeasureText(status, 14))
 	title_w := f32(rl.MeasureText("PAUSED", 36))
 	// Dialog is sized to the widest label plus balanced 28px padding, so no
@@ -1611,6 +1692,12 @@ pause_menu_rects :: proc() -> (box, continue_rect, quit_rect: rl.Rectangle) {
 }
 
 update_pause_menu :: proc() {
+	if rl.IsKeyPressed(.UP) { advance_pause_selection(-1) }
+	if rl.IsKeyPressed(.DOWN) { advance_pause_selection(1) }
+	if rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) {
+		activate_pause_selection()
+		return
+	}
 	if !rl.IsMouseButtonPressed(.LEFT) { return }
 	_, continue_rect, quit_rect := pause_menu_rects()
 	mouse := rl.GetMousePosition()
@@ -1631,11 +1718,20 @@ draw_pause_menu :: proc() {
 	title: cstring = "PAUSED"
 	title_w := f32(rl.MeasureText(title, 36))
 	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 30), 36, rl.WHITE)
-	status: cstring = "SIMULATION FROZEN // P/F10 OR CONTINUE TO RESUME"
+	status: cstring = PAUSE_STATUS
 	status_w := f32(rl.MeasureText(status, 14))
 	rl.DrawText(status, c.int(box.x + (box.width - status_w) / 2), c.int(box.y + 76), 14, rl.Color{130, 150, 175, 255})
 	draw_button(continue_rect, "CONTINUE", rl.Color{38, 92, 60, 255})
 	draw_button(quit_rect, "QUIT", rl.Color{92, 42, 42, 255})
+	draw_pause_focus(pause_menu_selection == 0 ? continue_rect : quit_rect)
+}
+
+// Keyboard focus highlight: a gold ring just outside the focused button plus
+// a ">" marker — distinct from draw_button's mouse-hover border.
+draw_pause_focus :: proc(rect: rl.Rectangle) {
+	ring := rl.Rectangle{rect.x - 4, rect.y - 4, rect.width + 8, rect.height + 8}
+	rl.DrawRectangleLinesEx(ring, 2, rl.GOLD)
+	rl.DrawText(">", c.int(rect.x - 18), c.int(rect.y + rect.height / 2 - 7), 14, rl.GOLD)
 }
 
 // ---- Fog of war ----------------------------------------------------------

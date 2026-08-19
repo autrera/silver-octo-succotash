@@ -672,6 +672,65 @@ paused_game_skips_simulation_step :: proc(t: ^testing.T) {
 }
 
 @(test)
+pause_menu_keyboard_navigation_wraps :: proc(t: ^testing.T) {
+	// Arrow keys read false headless (no key events), so the navigation
+	// predicate advance_pause_selection is exercised directly.
+	game_paused = true
+	pause_menu_selection = 0
+	advance_pause_selection(1)
+	testing.expect(t, pause_menu_selection == 1, "DOWN moves focus to QUIT")
+	advance_pause_selection(1)
+	testing.expect(t, pause_menu_selection == 0, "DOWN wraps back to CONTINUE")
+	advance_pause_selection(-1)
+	testing.expect(t, pause_menu_selection == 1, "UP wraps to QUIT")
+	advance_pause_selection(-1)
+	testing.expect(t, pause_menu_selection == 0, "UP returns to CONTINUE")
+	game_paused = false
+}
+
+@(test)
+pause_menu_enter_activates_focused_option :: proc(t: ^testing.T) {
+	game_paused = true
+	quit_requested = false
+	pause_menu_selection = 0
+	activate_pause_selection()
+	testing.expect(t, !game_paused, "ENTER on CONTINUE resumes")
+	testing.expect(t, !quit_requested, "ENTER on CONTINUE never quits")
+	game_paused = true
+	pause_menu_selection = 1
+	activate_pause_selection()
+	testing.expect(t, game_paused, "ENTER on QUIT leaves the pause flag alone")
+	testing.expect(t, quit_requested, "ENTER on QUIT requests exit")
+	game_paused = false
+	quit_requested = false
+}
+
+@(test)
+pause_menu_opens_with_continue_focused :: proc(t: ^testing.T) {
+	game_paused = false
+	pause_menu_selection = 1
+	toggle_pause()
+	testing.expect(t, game_paused, "toggle pauses")
+	testing.expect(t, pause_menu_selection == 0, "focus resets to CONTINUE on open")
+	toggle_pause()
+	testing.expect(t, !game_paused, "toggle resumes")
+	game_paused = false
+}
+
+@(test)
+headless_pause_menu_update_is_idle :: proc(t: ^testing.T) {
+	// No key/mouse events headless: update_pause_menu must change nothing.
+	game_paused = true
+	pause_menu_selection = 0
+	quit_requested = false
+	update_pause_menu()
+	testing.expect(t, game_paused, "still paused")
+	testing.expect(t, pause_menu_selection == 0, "focus unmoved")
+	testing.expect(t, !quit_requested, "no quit requested")
+	game_paused = false
+}
+
+@(test)
 spacebar_shortcut_selects_earth :: proc(t: ^testing.T) {
 	// update_input binds SPACE to select_earth; the action itself sets the
 	// inspector selection back to Earth from any planet.
@@ -1238,6 +1297,61 @@ squad_prunes_destroyed_units :: proc(t: ^testing.T) {
 	testing.expect(t, squad_count(2) == 0, "empty squad after all members die")
 	n = recall_squad(2)
 	testing.expect(t, n == 0 && selection_count() == 0, "recall on a dead squad selects nothing cleanly")
+}
+
+// Regression for the squad-HUD text bug: multiple saved squads must keep
+// independent counts (each feeds one bottom-HUD badge).
+@(test)
+saving_a_second_squad_keeps_both_hud_counts :: proc(t: ^testing.T) {
+	reset_world()
+	for i in 0..<3 { add_guarding_fighter(EARTH, false) }
+	for i in 0..<3 { selected_units[i] = true }
+	save_squad(1)
+	clear_selection()
+	for i in 3..<5 { add_guarding_fighter(EARTH, false) }
+	selected_units[3] = true
+	selected_units[4] = true
+	save_squad(2)
+	testing.expect(t, squad_count(1) == 3, "first squad intact after saving a second")
+	testing.expect(t, squad_count(2) == 2, "second squad saved")
+	non_empty := 0
+	for g in 1..=SQUAD_COUNT { if squad_count(g) > 0 { non_empty += 1 } }
+	testing.expect(t, non_empty == 2, "exactly two squads feed the HUD badges")
+}
+
+// ---- Enemy forces in the planet inspector --------------------------------
+
+@(test)
+enemy_roster_counts_garrison_at_selected_planet :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = VENUS
+	spawn_garrison(VENUS, GARRISON_FIGHTERS[VENUS], GARRISON_MINERS[VENUS])
+	testing.expect(t, enemy_roster_count(.COMBAT) == GARRISON_FIGHTERS[VENUS], "garrison fighters counted")
+	testing.expect(t, enemy_roster_count(.MINING) == GARRISON_MINERS[VENUS], "garrison miners counted")
+	testing.expect(t, roster_count(.COMBAT) == 0 && roster_count(.MINING) == 0, "player rosters exclude enemies")
+	// Player units mixed in never leak into the enemy roster.
+	add_guarding_fighter(VENUS, false)
+	testing.expect(t, enemy_roster_count(.COMBAT) == GARRISON_FIGHTERS[VENUS], "player fighters stay out of the enemy roster")
+	testing.expect(t, enemy_roster_ordinal(0, .COMBAT) == 0, "first garrison fighter is ordinal 0")
+	// Enemies elsewhere never show: rosters are per selected planet.
+	selected_planet = MARS
+	testing.expect(t, enemy_roster_count(.COMBAT) == 0 && enemy_roster_count(.MINING) == 0, "no enemy section at a clean planet")
+	selected_planet = EARTH
+}
+
+@(test)
+enemy_attackers_appear_in_target_roster :: proc(t: ^testing.T) {
+	reset_world()
+	// A wave bound for a planet joins that planet's enemy roster, so the
+	// inspector shows inbound attackers (wave fighters carry the target as
+	// their affiliation from the moment they lift off).
+	before := unit_count
+	spawn_enemy_wave()
+	target := units[before].target_planet
+	selected_planet = target
+	testing.expect(t, enemy_roster_count(.COMBAT) == WAVE_SIZE, "wave fighters count in the target roster")
+	testing.expect(t, enemy_roster_ordinal(before, .COMBAT) == 0, "first attacker is ordinal 0")
+	selected_planet = EARTH
 }
 
 // ---- Completed base picks up the pending queue --------------------------
