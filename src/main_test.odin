@@ -3,39 +3,12 @@ package main
 import "core:testing"
 import rl "vendor:raylib"
 
-reset_world :: proc() {
-	unit_count = 0
-	for i := 0; i < MAX_UNITS; i += 1 {
-		units[i] = {}
-		selected_units[i] = false
-	}
-	for p in 0..<PLANET_COUNT {
-		combat_timer[p] = 0
-		miner_timer[p] = 0
-		base_timer[p] = 0
-	}
-	enemy_base_hp = GARRISON_BASE_HP
-	base_counts = {}
-	base_counts[EARTH] = 1
-	base_build_planet = -1
-	base_build_progress = 0
-	minerals = 350
-	enemy_wave_timer = 0
-	wave_started = false
-	mega_wave_timer = 0
-	selected_planet = EARTH
-	production = {}
-	pending_count = {}
-	last_known_intel = {}
-	intel_recorded = {}
-	laser_anim_time = 0
-	drone_speed_level = 0
-	rl.SetRandomSeed(7)
-}
+// reset_world lives in main.odin now: the victory-restart path shares it
+// with the test suite (same package).
 
 add_guarding_fighter :: proc(p: int, enemy: bool) {
 	units[unit_count] = Unit{
-		kind = .COMBAT, state = .GUARDING, position = planets[p].position,
+		kind = .COMBAT, state = .GUARDING, position = sector_pos(p),
 		home_planet = p, affiliation = p, target_planet = p, enemy = enemy,
 	}
 	unit_count += 1
@@ -43,7 +16,7 @@ add_guarding_fighter :: proc(p: int, enemy: bool) {
 
 add_miner :: proc(planet: int) {
 	units[unit_count] = Unit{
-		kind = .MINING, state = .MINING, position = planets[planet].position,
+		kind = .MINING, state = .MINING, position = sector_pos(planet),
 		home_planet = planet, affiliation = planet, target_planet = planet,
 	}
 	unit_count += 1
@@ -51,7 +24,7 @@ add_miner :: proc(planet: int) {
 
 add_enemy_miner :: proc(p: int) {
 	units[unit_count] = Unit{
-		kind = .MINING, state = .GUARDING, position = planets[p].position,
+		kind = .MINING, state = .GUARDING, position = sector_pos(p),
 		home_planet = p, affiliation = p, target_planet = p, enemy = true,
 	}
 	unit_count += 1
@@ -74,18 +47,17 @@ earth_miner_mines_earth_immediately :: proc(t: ^testing.T) {
 }
 
 @(test)
-enemy_wave_spawns_five_attackers_from_jupiter :: proc(t: ^testing.T) {
+enemy_wave_spawns_from_enemy_hq :: proc(t: ^testing.T) {
 	reset_world()
 	spawn_enemy_wave()
 	testing.expect(t, unit_count == WAVE_SIZE, "wave size")
-	jump_off := planets[JUPITER].position + rl.Vector3{40, 0.5, -25}
 	target := units[0].target_planet
 	testing.expect(t, target >= 0 && target < PLANET_COUNT, "wave targets a valid planet")
 	for i in 0..<unit_count {
 		testing.expect(t, units[i].kind == .COMBAT, "enemy is combat")
 		testing.expect(t, units[i].enemy, "enemy flag set")
 		testing.expect(t, units[i].target_planet == target && units[i].affiliation == target, "wave shares one target")
-		testing.expect(t, distance(units[i].position, jump_off) < 3, "wave lifts off from Jupiter space")
+		testing.expect(t, distance(units[i].position, ENEMY_HQ_POSITION) < 3, "wave lifts off from the enemy HQ")
 	}
 	selected_planet = target
 	testing.expect(t, roster_count(.COMBAT) == 0, "enemies never appear in the player roster")
@@ -588,6 +560,7 @@ representational_rendering_one_cube_per_ten :: proc(t: ^testing.T) {
 	for n in 11..=20 { testing.expect(t, rep_count(n) == 2, "11-20 render as 2 cubes") }
 	testing.expect(t, rep_count(GARRISON_FIGHTERS[JUPITER]) == 5, "45 garrison fighters render as 5 cubes")
 	testing.expect(t, rep_count(GARRISON_FIGHTERS[NEPTUNE]) == 10, "95 garrison fighters render as 10 cubes")
+	testing.expect(t, rep_count(ENEMY_HQ_GARRISON) == 50, "500-fighter HQ garrison renders as 50 cubes")
 }
 
 @(test)
@@ -648,7 +621,7 @@ all_non_earth_planets_start_occupied :: proc(t: ^testing.T) {
 	}
 	// Resistance escalates strictly with distance from Earth.
 	by_distance := [7]int{VENUS, MARS, MERCURY, JUPITER, SATURN, URANUS, NEPTUNE}
-	spec_dist := [PLANET_COUNT]f32{31.0, 15.5, 0, 22.8, 51.4, 82.0, 111.8, 142.0}
+	spec_dist := [PLANET_COUNT]f32{31.0, 15.5, 0, 22.8, 51.4, 57.9, 87.4, 117.6}
 	for i in 0..<7 {
 		p := by_distance[i]
 		testing.expectf(t, abs(distance(planets[p].position, planets[EARTH].position) - spec_dist[p]) < 1.0,
@@ -1518,4 +1491,162 @@ reset_world_restores_drone_speed_level :: proc(t: ^testing.T) {
 	drone_speed_level = 3
 	reset_world()
 	testing.expect(t, drone_speed_level == 0, "reset restores the upgrade level to 0")
+}
+
+// ---- Repositioned outer planets ----------------------------------------
+
+@(test)
+outer_planets_moved_closer_to_earth :: proc(t: ^testing.T) {
+	// Saturn/Uranus/Neptune shifted left (X) toward Earth to cut round-trip
+	// transit times, keeping ~30 units of spacing and their solar order.
+	testing.expect(t, planets[SATURN].position.x == 55, "Saturn shifted to x=55")
+	testing.expect(t, planets[URANUS].position.x == 85, "Uranus shifted to x=85")
+	testing.expect(t, planets[NEPTUNE].position.x == 115, "Neptune shifted to x=115")
+	testing.expect(t, planets[URANUS].position.x - planets[SATURN].position.x == 30, "Saturn->Uranus spacing kept at ~30")
+	testing.expect(t, planets[NEPTUNE].position.x - planets[URANUS].position.x == 30, "Uranus->Neptune spacing kept at ~30")
+	d_jupiter := distance(planets[JUPITER].position, planets[EARTH].position)
+	testing.expect(t, distance(planets[SATURN].position, planets[EARTH].position) > d_jupiter, "solar order kept: Saturn still beyond Jupiter")
+	testing.expect(t, distance(planets[EARTH].position, planets[NEPTUNE].position) < 142.0, "Neptune round trip shorter than the old 142-unit orbit")
+	// The enemy HQ sits where Neptune used to be (the original outer orbit).
+	testing.expect(t, abs(distance(ENEMY_HQ_POSITION, rl.Vector3{140, 5, 24})) < 0.001, "HQ at the old Neptune orbit")
+}
+
+// ---- Enemy HQ garrison & combat -----------------------------------------
+
+@(test)
+enemy_hq_holds_five_hundred_fighter_garrison :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+	testing.expect(t, ENEMY_HQ_GARRISON == 500 && GARRISON_FIGHTERS[ENEMY_HOME] == 500, "HQ garrison is 500 fighters")
+	testing.expect(t, ENEMY_HQ_BASE_HP == 500 && GARRISON_BASE_HP[ENEMY_HOME] == 500, "HQ base HP is 500")
+	testing.expect(t, enemy_base_hp[ENEMY_HOME] == ENEMY_HQ_BASE_HP, "HQ starts at full structural HP")
+	_, garrison := planet_combatants(ENEMY_HOME)
+	testing.expect(t, garrison == ENEMY_HQ_GARRISON, "HQ spawns its 500-fighter garrison")
+	testing.expect(t, !planet_liberated(ENEMY_HOME) && !enemy_hq_destroyed(), "HQ starts intact")
+}
+
+@(test)
+enemy_hq_falls_after_garrison_trade :: proc(t: ^testing.T) {
+	reset_world()
+	// Trimmed HP so the full flow runs without 500-tick loops.
+	enemy_base_hp[ENEMY_HOME] = 3
+	for i in 0..<6 { add_guarding_fighter(ENEMY_HOME, true) }
+	for i in 0..<10 { add_guarding_fighter(ENEMY_HOME, false) }
+	// 10v6 trade: 6 ticks kill the garrison, 4 player fighters survive.
+	_, enemies := planet_combatants(ENEMY_HOME)
+	for enemies > 0 {
+		update_enemy_waves(f32(COMBAT_TICK))
+		_, enemies = planet_combatants(ENEMY_HOME)
+	}
+	players, _ := planet_combatants(ENEMY_HOME)
+	testing.expect(t, players == 4, "4 player fighters survive the HQ garrison trade")
+	// Survivors then breach the base: one HP per fighter per tick.
+	update_enemy_waves(f32(COMBAT_TICK))
+	testing.expect(t, enemy_base_hp[ENEMY_HOME] == 0, "HQ base takes damage per fighter per tick")
+	testing.expect(t, planet_liberated(ENEMY_HOME) && enemy_hq_destroyed(), "HQ falls once its HP hits 0")
+	// A destroyed HQ never launches another wave, ever.
+	wave_started = false
+	enemy_wave_timer = 0
+	before := unit_count
+	update_enemy_waves(f32(WAVE_FIRST_DELAY))
+	testing.expect(t, unit_count == before, "no waves launch from a destroyed HQ")
+}
+
+// ---- Wave stop rule at 5 mined planets ----------------------------------
+
+@(test)
+regular_waves_stop_completely_at_five_mined_planets :: proc(t: ^testing.T) {
+	reset_world()
+	add_miner(MERCURY); add_miner(VENUS); add_miner(MARS); add_miner(JUPITER); add_miner(SATURN)
+	base := unit_count
+	// Well past every regular boundary: nothing may launch at 5 mined planets.
+	update_enemy_waves(MEGA_WAVE_INTERVAL_SECONDS - 1.0)
+	testing.expect(t, unit_count == base, "no regular wave at 5 mined planets")
+	testing.expect(t, enemy_wave_timer == 0, "regular clock frozen while >= 5 mined planets")
+	// Only the mega boss assault (100 fighters) strikes at the 5-minute mark.
+	update_enemy_waves(1.0)
+	testing.expect(t, unit_count == base + MEGA_WAVE_SIZE, "only the mega assault strikes at 5 mined planets")
+	testing.expect(t, mega_wave_timer == 0, "mega clock resets after the assault")
+	// Dropping back below 5 resumes regular waves on the normal schedule.
+	units[0].state = .CONSTRUCTING
+	update_enemy_waves(f32(WAVE_FIRST_DELAY) - 0.1)
+	testing.expect(t, unit_count == base + MEGA_WAVE_SIZE, "still no new wave before the schedule boundary")
+	update_enemy_waves(0.2)
+	// 4 mined planets now -> 4 doubled waves (attack_wave_size doubles at 4).
+	testing.expect(t, unit_count == base + MEGA_WAVE_SIZE + 4 * 2 * WAVE_SIZE, "regular waves resume below 5 mined planets")
+}
+
+// ---- Victory condition & restart ----------------------------------------
+
+@(test)
+victory_requires_liberated_planets_and_dead_hq :: proc(t: ^testing.T) {
+	reset_world()
+	testing.expect(t, !victory_achieved(), "no victory at the start")
+	// A dead HQ alone is not victory while planets stay occupied.
+	enemy_base_hp[ENEMY_HOME] = 0
+	testing.expect(t, !victory_achieved(), "dead HQ alone is not victory while planets are occupied")
+	// Liberated planets alone are not victory while the HQ stands.
+	enemy_base_hp = GARRISON_BASE_HP
+	for p in 0..<PLANET_COUNT { enemy_base_hp[p] = 0 }
+	testing.expect(t, !victory_achieved(), "liberated planets alone are not victory while the HQ stands")
+	// Both: victory.
+	enemy_base_hp[ENEMY_HOME] = 0
+	testing.expect(t, victory_achieved(), "all planets + HQ destroyed is victory")
+}
+
+@(test)
+step_simulation_latches_victory :: proc(t: ^testing.T) {
+	reset_world()
+	for p in 0..<SECTOR_COUNT { enemy_base_hp[p] = 0 }
+	step_simulation(0.01)
+	testing.expect(t, victory, "victory latches during play")
+	testing.expect(t, victory_achieved(), "victory condition holds after latching")
+}
+
+@(test)
+restart_game_resets_the_world :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+	minerals = 99999
+	drone_speed_level = 3
+	victory = true
+	for p in 0..<SECTOR_COUNT { enemy_base_hp[p] = 0 }
+	restart_game()
+	testing.expect(t, !victory, "restart clears the victory overlay")
+	testing.expect(t, minerals == 350, "restart restores starting minerals")
+	testing.expect(t, drone_speed_level == 0, "restart clears upgrades")
+	testing.expect(t, enemy_base_hp == GARRISON_BASE_HP, "restart restores every garrison base incl. the HQ")
+	_, garrison := planet_combatants(ENEMY_HOME)
+	testing.expect(t, garrison == ENEMY_HQ_GARRISON, "restart restores the HQ garrison")
+}
+
+@(test)
+headless_victory_overlay_update_is_idle :: proc(t: ^testing.T) {
+	// No key/mouse events headless: update_victory_overlay must restart nothing.
+	victory = true
+	quit_requested = false
+	update_victory_overlay()
+	testing.expect(t, victory, "still victorious (no restart fired)")
+	testing.expect(t, !quit_requested, "overlay never quits")
+	victory = false
+}
+
+// ---- HQ orders: fighters only, no rally ---------------------------------
+
+@(test)
+hq_orders_apply_to_fighters_only :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	add_guarding_fighter(EARTH, false)
+	selected_units[0] = true
+	units[unit_count] = Unit{kind = .MINING, state = .MINING, position = planets[MARS].position, home_planet = EARTH, affiliation = MARS, target_planet = MARS}
+	unit_count += 1
+	selected_units[1] = true
+	handle_planet_right_click(ENEMY_HOME)
+	testing.expect(t, units[0].target_planet == ENEMY_HOME && units[0].state == .TRANSIT, "fighters sortie to the HQ")
+	testing.expect(t, units[1].target_planet == MARS && units[1].state == .MINING, "miners ignore HQ orders")
+	// The HQ is not a valid mining rally either.
+	set_earth_rally(ENEMY_HOME)
+	testing.expect(t, earth_rally == NO_RALLY, "HQ cannot be a rally point")
+	earth_rally = NO_RALLY
 }

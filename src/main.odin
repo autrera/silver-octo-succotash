@@ -6,9 +6,9 @@ import rl "vendor:raylib"
 
 SCREEN_PANEL_WIDTH :: 330
 MAX_BASES :: 5
-// Garrison drones alone number ~420, so the pool holds them plus a full
-// late-game player fleet with headroom.
-MAX_UNITS :: 2048
+// Standing garrisons number ~420 planetside plus the enemy HQ's 500
+// fighters, so the pool holds those plus a full late-game player fleet.
+MAX_UNITS :: 2560
 // The system in solar order: Earth — the player's only starter planet — sits
 // at index 2, so every hardcoded 0/1/2 planet index is gone.
 PLANET_COUNT :: 8
@@ -20,6 +20,21 @@ JUPITER :: 4
 SATURN :: 5
 URANUS :: 6
 NEPTUNE :: 7
+
+// Sectors extend the planet list by one: sector ENEMY_HOME is the enemy HQ
+// fortress (not a planet), so the per-planet combat tables (timers, base
+// HP) cover it too and the combat procs work on it unchanged.
+SECTOR_COUNT :: PLANET_COUNT + 1
+ENEMY_HOME :: PLANET_COUNT
+
+// The enemy HQ: a fortress at Neptune's ORIGINAL orbit {140, 5, 24} (before
+// the outer planets moved in), defended by 500 fighter drones with 500
+// structural HP. Every attack wave launches from here; destroying it — plus
+// liberating every planet — wins the game.
+ENEMY_HQ_POSITION := rl.Vector3{140, 5, 24}
+ENEMY_HQ_RADIUS :: 2.6
+ENEMY_HQ_GARRISON :: 500
+ENEMY_HQ_BASE_HP :: 500
 
 // Combat pacing: one 1:1 kill trade per side every COMBAT_TICK seconds.
 COMBAT_TICK :: 1
@@ -36,10 +51,11 @@ MEGA_WAVE_INTERVAL_SECONDS :: 300.0
 MEGA_WAVE_SIZE :: 100
 // Every planet except Earth opens occupied: garrison fighters, garrison
 // miners and enemy base HP all scale up with distance from Earth
-// (Venus 10/4/10 ... Neptune 95/22/60; indexed by planet).
-GARRISON_FIGHTERS := [PLANET_COUNT]int{30, 10, 0, 20, 45, 60, 75, 95}
-GARRISON_MINERS := [PLANET_COUNT]int{8, 4, 0, 6, 10, 14, 18, 22}
-GARRISON_BASE_HP := [PLANET_COUNT]int{20, 10, 0, 15, 30, 40, 50, 60}
+// (Venus 10/4/10 ... Neptune 95/22/60; indexed by sector, with the enemy HQ
+// as the last, heaviest entry).
+GARRISON_FIGHTERS := [SECTOR_COUNT]int{30, 10, 0, 20, 45, 60, 75, 95, ENEMY_HQ_GARRISON}
+GARRISON_MINERS := [SECTOR_COUNT]int{8, 4, 0, 6, 10, 14, 18, 22, 0}
+GARRISON_BASE_HP := [SECTOR_COUNT]int{20, 10, 0, 15, 30, 40, 50, 60, ENEMY_HQ_BASE_HP}
 // Drone production per command base line (mining 6s, combat 10s).
 MINER_BUILD_TIME :: 6.0
 COMBAT_BUILD_TIME :: 10.0
@@ -122,9 +138,9 @@ planets := [PLANET_COUNT]Planet{
 	{name = "EARTH", position = {0, 0, 0}, radius = 3.0, color = rl.Color{45, 125, 220, 255}, minerals = 80},
 	{name = "MARS", position = {22, 1, 6}, radius = 2.2, color = rl.Color{215, 80, 55, 255}, minerals = 150},
 	{name = "JUPITER", position = {50, 2.5, -12}, radius = 4.2, color = rl.Color{215, 175, 110, 255}, minerals = 300},
-	{name = "SATURN", position = {80, 3, 18}, radius = 3.8, color = rl.Color{225, 205, 155, 255}, minerals = 350},
-	{name = "URANUS", position = {110, 4, -20}, radius = 3.0, color = rl.Color{170, 225, 230, 255}, minerals = 400},
-	{name = "NEPTUNE", position = {140, 5, 24}, radius = 2.9, color = rl.Color{80, 110, 220, 255}, minerals = 450},
+	{name = "SATURN", position = {55, 3, 18}, radius = 3.8, color = rl.Color{225, 205, 155, 255}, minerals = 350},
+	{name = "URANUS", position = {85, 4, -20}, radius = 3.0, color = rl.Color{170, 225, 230, 255}, minerals = 400},
+	{name = "NEPTUNE", position = {115, 5, 24}, radius = 2.9, color = rl.Color{80, 110, 220, 255}, minerals = 450},
 }
 
 units: [MAX_UNITS]Unit
@@ -148,11 +164,12 @@ CAMERA_START_Y :: 200.0 - 185.0 * 0.85
 inspector_drag_start: rl.Vector2
 inspector_drag_active: bool
 
-// Enemy occupation: per-planet base HP. Every planet except Earth starts
+// Enemy occupation: per-sector base HP. Every planet except Earth starts
 // with an enemy command base; a planet is liberated once its base is
-// destroyed (and, by the combat rules, all enemy drones are gone).
-// Initialized from GARRISON_BASE_HP by initialize_game and reset_world.
-enemy_base_hp: [PLANET_COUNT]int
+// destroyed (and, by the combat rules, all enemy drones are gone). The last
+// entry is the enemy HQ's structural HP. Initialized from GARRISON_BASE_HP
+// by initialize_game and reset_world.
+enemy_base_hp: [SECTOR_COUNT]int
 enemy_wave_timer: f32
 wave_started: bool
 // Mega boss assault wave clock: advances only while mined_planet_count() >=
@@ -160,12 +177,15 @@ wave_started: bool
 mega_wave_timer: f32
 // Per-planet combat pacing: 1:1 fighter trades, miner sweeps and base damage
 // all tick on COMBAT_TICK.
-combat_timer: [PLANET_COUNT]f32
-miner_timer: [PLANET_COUNT]f32
-base_timer: [PLANET_COUNT]f32
+combat_timer: [SECTOR_COUNT]f32
+miner_timer: [SECTOR_COUNT]f32
+base_timer: [SECTOR_COUNT]f32
 
 game_paused := false
 quit_requested := false
+// Victory: latched once every planet is liberated AND the enemy HQ falls;
+// freezes the sim behind the victory overlay until restart.
+victory := false
 // Earth rally point: NO_RALLY (-1) means no rally set. (Earth used to double
 // as the 0 sentinel before the planet reindex.)
 NO_RALLY :: -1
@@ -194,18 +214,24 @@ main :: proc() {
 
 	for !rl.WindowShouldClose() && !quit_requested {
 		dt := rl.GetFrameTime()
-		if pause_key_pressed() { toggle_pause() }
-		if game_paused {
-			update_pause_menu()
+		if victory {
+			update_victory_overlay()
 		} else {
-			step_simulation(dt)
+			if pause_key_pressed() { toggle_pause() }
+			if game_paused {
+				update_pause_menu()
+			} else {
+				step_simulation(dt)
+			}
 		}
 
 		rl.BeginDrawing()
 		rl.ClearBackground(rl.Color{8, 12, 24, 255})
 		draw_world()
 		draw_inspector()
-		if game_paused { draw_pause_menu() }
+		if victory {
+			draw_victory_overlay()
+		} else if game_paused { draw_pause_menu() }
 		rl.EndDrawing()
 	}
 }
@@ -221,12 +247,49 @@ initialize_game :: proc() {
 	unit_count += 1
 	// Space backdrop: deterministic starfield (independent of the wave RNG).
 	generate_stars()
-	// Every non-Earth planet opens occupied: the farther out, the stronger
-	// the garrison (GARRISON_* tables scale with distance from Earth).
-	for p in 0..<PLANET_COUNT {
+	// Every non-Earth sector opens occupied: the farther out, the stronger
+	// the garrison (GARRISON_* tables scale with distance from Earth); the
+	// final sector is the enemy HQ with its 500-fighter garrison.
+	for p in 0..<SECTOR_COUNT {
 		if p == EARTH { continue }
 		spawn_garrison(p, GARRISON_FIGHTERS[p], GARRISON_MINERS[p])
 	}
+}
+
+// Clean-slate reset shared by the victory-restart path and the test suite
+// (tests call it to isolate scenarios). initialize_game rebuilds the world
+// on top of this zeroed state.
+reset_world :: proc() {
+	unit_count = 0
+	for i := 0; i < MAX_UNITS; i += 1 {
+		units[i] = {}
+		selected_units[i] = false
+	}
+	for p in 0..<SECTOR_COUNT {
+		combat_timer[p] = 0
+		miner_timer[p] = 0
+		base_timer[p] = 0
+	}
+	enemy_base_hp = GARRISON_BASE_HP
+	base_counts = {}
+	base_counts[EARTH] = 1
+	base_build_planet = -1
+	base_build_progress = 0
+	minerals = 350
+	enemy_wave_timer = 0
+	wave_started = false
+	mega_wave_timer = 0
+	selected_planet = EARTH
+	production = {}
+	pending_count = {}
+	last_known_intel = {}
+	intel_recorded = {}
+	laser_anim_time = 0
+	drone_speed_level = 0
+	earth_rally = NO_RALLY
+	victory = false
+	game_paused = false
+	rl.SetRandomSeed(7)
 }
 
 // Each occupied planet opens with standing fighting and mining drones
@@ -237,7 +300,7 @@ spawn_garrison :: proc(p, fighters, miners: int) {
 	for i in 0..<fighters {
 		angle := f32(i) * (2 * math.PI / f32(fighters))
 		units[unit_count] = Unit{
-			kind = .COMBAT, state = .GUARDING, position = orbit_pos(p, angle),
+			kind = .COMBAT, state = .GUARDING, position = orbit_pos(sector_pos(p), sector_radius(p), angle),
 			home_planet = p, affiliation = p, target_planet = p,
 			enemy = true, orbit_angle = angle,
 		}
@@ -246,7 +309,7 @@ spawn_garrison :: proc(p, fighters, miners: int) {
 	for i in 0..<miners {
 		angle := f32(i) * (2 * math.PI / f32(miners)) + 0.3
 		units[unit_count] = Unit{
-			kind = .MINING, state = .GUARDING, position = orbit_pos(p, angle),
+			kind = .MINING, state = .GUARDING, position = orbit_pos(sector_pos(p), sector_radius(p), angle),
 			home_planet = p, affiliation = p, target_planet = p,
 			enemy = true, orbit_angle = angle,
 		}
@@ -254,9 +317,20 @@ spawn_garrison :: proc(p, fighters, miners: int) {
 	}
 }
 
-orbit_pos :: proc(p: int, angle: f32) -> rl.Vector3 {
-	center := planets[p].position
-	return {center.x + math.cos(angle) * (planets[p].radius + 1.5), center.y + 1.0, center.z + math.sin(angle) * (planets[p].radius + 1.5)}
+// Position on the guarding orbit ring around any sector center (a planet
+// or the enemy HQ).
+sector_pos :: proc(s: int) -> rl.Vector3 {
+	if s == ENEMY_HOME { return ENEMY_HQ_POSITION }
+	return planets[s].position
+}
+
+sector_radius :: proc(s: int) -> f32 {
+	if s == ENEMY_HOME { return ENEMY_HQ_RADIUS }
+	return planets[s].radius
+}
+
+orbit_pos :: proc(center: rl.Vector3, radius, angle: f32) -> rl.Vector3 {
+	return {center.x + math.cos(angle) * (radius + 1.5), center.y + 1.0, center.z + math.sin(angle) * (radius + 1.5)}
 }
 
 update_camera :: proc(dt: f32) {
@@ -321,6 +395,8 @@ update_input :: proc() {
 	if rl.IsMouseButtonPressed(.RIGHT) && mouse.x < panel_x {
 		if planet := pick_planet(mouse); planet >= 0 {
 			handle_planet_right_click(planet)
+		} else if hq_picked(mouse) {
+			handle_planet_right_click(ENEMY_HOME)
 		}
 	}
 }
@@ -668,7 +744,9 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 }
 
 // Enemy waves: every 2 minutes (first at the 3-minute mark) fighters lift off
-// from Jupiter space. One wave strikes each actively mined planet (distinct
+// from the enemy HQ (the old Neptune orbit). Regular waves stop COMPLETELY
+// once the player actively mines MEGA_WAVE_MIN_MINED_PLANETS (5) worlds —
+// from there on only the mega boss assault strikes. One wave strikes each actively mined planet (distinct
 // targets, so the player's mining operations each take pressure); with
 // nothing mined a single default wave hits a random planet. Each wave is
 // WAVE_SIZE fighters, doubled to 10 while the player mines
@@ -700,23 +778,28 @@ mined_planet_count :: proc() -> int {
 }
 
 update_enemy_waves :: proc(dt: f32) {
-	enemy_wave_timer += dt
-	interval := f32(WAVE_FIRST_DELAY)
-	if wave_started { interval = f32(WAVE_INTERVAL) }
-	if enemy_wave_timer >= interval {
-		// Regular waves scale with active mining: one wave per mined planet,
-		// each striking its own mined world (distinct targets); at least one
-		// default wave on a random planet when nothing is being mined.
-		seen := [PLANET_COUNT]bool{}
-		waves := mined_planets(&seen)
-		size := attack_wave_size()
-		if waves == 0 {
-			spawn_n_enemies(size)
-		} else {
-			for p in 0..<PLANET_COUNT { if seen[p] { spawn_n_enemies_to(p, size) } }
+	// Regular waves stop completely at MEGA_WAVE_MIN_MINED_PLANETS actively
+	// mined worlds: the clock only advances below that threshold, so nothing
+	// regular ever launches from there on.
+	if mined_planet_count() < MEGA_WAVE_MIN_MINED_PLANETS {
+		enemy_wave_timer += dt
+		interval := f32(WAVE_FIRST_DELAY)
+		if wave_started { interval = f32(WAVE_INTERVAL) }
+		if enemy_wave_timer >= interval {
+			// Regular waves scale with active mining: one wave per mined planet,
+			// each striking its own mined world (distinct targets); at least one
+			// default wave on a random planet when nothing is being mined.
+			seen := [PLANET_COUNT]bool{}
+			waves := mined_planets(&seen)
+			size := attack_wave_size()
+			if waves == 0 {
+				spawn_n_enemies(size)
+			} else {
+				for p in 0..<PLANET_COUNT { if seen[p] { spawn_n_enemies_to(p, size) } }
+			}
+			enemy_wave_timer = 0
+			wave_started = true
 		}
-		enemy_wave_timer = 0
-		wave_started = true
 	}
 	// Mega boss assault wave: the clock only runs while the player mines from
 	// MEGA_WAVE_MIN_MINED_PLANETS or more worlds; falling below resets it to 0.
@@ -729,7 +812,7 @@ update_enemy_waves :: proc(dt: f32) {
 	} else {
 		mega_wave_timer = 0
 	}
-	for p in 0..<PLANET_COUNT { update_planet_combat(dt, p) }
+	for p in 0..<SECTOR_COUNT { update_planet_combat(dt, p) }
 }
 
 update_planet_combat :: proc(dt: f32, p: int) {
@@ -781,7 +864,7 @@ attack_wave_size :: proc() -> int {
 spawn_enemy_wave :: proc() { spawn_n_enemies(attack_wave_size()) }
 
 // Spawns `count` enemy fighters (capped by free unit slots) lifting off from
-// Jupiter space toward a random target planet. spawn_enemy_wave is the
+// the enemy HQ toward a random target planet. spawn_enemy_wave is the
 // regular-wave default (attack_wave_size); the mega boss assault passes
 // MEGA_WAVE_SIZE. The wave loop calls spawn_n_enemies_to so each mined world
 // receives its own wave instead of every wave stacking on one random target.
@@ -790,15 +873,17 @@ spawn_n_enemies :: proc(count: int) {
 }
 
 spawn_n_enemies_to :: proc(target: int, count: int) {
+	if enemy_hq_destroyed() { return } // A destroyed HQ launches nothing, ever.
 	spawn_count := min(count, MAX_UNITS - unit_count)
 	if spawn_count <= 0 { return }
-	spawn_pos := planets[JUPITER].position + rl.Vector3{40, 0.5, -25}
+	// Every wave lifts off from the enemy HQ (the old Neptune orbit) — no
+	// longer from Jupiter space.
 	for i in 0..<spawn_count {
 		angle := f32(i) * 1.26
-		pos := spawn_pos + rl.Vector3{math.cos(angle) * 1.5, 0, math.sin(angle) * 1.5}
+		pos := ENEMY_HQ_POSITION + rl.Vector3{math.cos(angle) * 1.5, 0.5, math.sin(angle) * 1.5}
 		units[unit_count] = Unit{
 			kind = .COMBAT, state = .TRANSIT, position = pos,
-			home_planet = JUPITER, affiliation = target, target_planet = target,
+			home_planet = NEPTUNE, affiliation = target, target_planet = target,
 			enemy = true, orbit_angle = angle,
 		}
 		unit_count += 1
@@ -891,13 +976,16 @@ handle_planet_right_click :: proc(planet: int) {
 issue_group_order :: proc(planet: int) {
 	for i := 0; i < unit_count; i += 1 {
 		if !selected_units[i] { continue }
+		// The enemy HQ is a combat target only: mining drones never sortie
+		// there (nothing to mine, and the sector is not a planet).
+		if units[i].kind == .MINING && planet == ENEMY_HOME { continue }
 		units[i].target_planet = planet
 		units[i].affiliation = planet
 		units[i].progress = 0
 		if units[i].kind == .MINING {
 			units[i].state = .TRANSIT
 		} else {
-			if distance(units[i].position, planets[planet].position) < planets[planet].radius + 1.5 {
+			if distance(units[i].position, sector_pos(planet)) < sector_radius(planet) + 1.5 {
 				units[i].state = .GUARDING
 			} else {
 				units[i].state = .TRANSIT
@@ -984,18 +1072,16 @@ global_mps :: proc() -> f32 {
 
 update_combat :: proc(u: ^Unit, dt: f32) {
 	if u.state == .TRANSIT {
-		target := planets[u.target_planet].position
+		target := sector_pos(u.target_planet)
 		travel(u, target, COMBAT_TRANSIT_SPEED * dt)
-		if distance(u.position, target) <= planets[u.target_planet].radius + 1.4 {
+		if distance(u.position, target) <= sector_radius(u.target_planet) + 1.4 {
 			u.state = .GUARDING
 			u.orbit_angle = 0
-			center := planets[u.target_planet].position
-			u.position = {center.x + math.cos(u.orbit_angle) * (planets[u.target_planet].radius + 1.5), center.y + 1.0, center.z + math.sin(u.orbit_angle) * (planets[u.target_planet].radius + 1.5)}
+			u.position = orbit_pos(sector_pos(u.affiliation), sector_radius(u.affiliation), u.orbit_angle)
 		}
 	} else if u.state == .GUARDING {
 		u.orbit_angle += dt * 0.9
-		center := planets[u.affiliation].position
-		u.position = {center.x + math.cos(u.orbit_angle) * (planets[u.affiliation].radius + 1.5), center.y + 1.0, center.z + math.sin(u.orbit_angle) * (planets[u.affiliation].radius + 1.5)}
+		u.position = orbit_pos(sector_pos(u.affiliation), sector_radius(u.affiliation), u.orbit_angle)
 	}
 }
 
@@ -1092,6 +1178,15 @@ draw_world :: proc() {
 			rl.DrawCircle3D(planet.position, planet.radius + 0.55, {0, 1, 0}, 90, rl.SKYBLUE)
 		}
 	}
+	// The enemy HQ fortress at Neptune's old orbit: dark red (bright once
+	// scouted), a dead grey husk once destroyed.
+	hq_color := rl.Color{96, 34, 40, 255}
+	if enemy_hq_destroyed() {
+		hq_color = rl.Color{58, 60, 66, 255}
+	} else if has_vision(ENEMY_HOME) {
+		hq_color = rl.Color{205, 50, 58, 255}
+	}
+	rl.DrawCubeV(ENEMY_HQ_POSITION, {3.6, 3.6, 3.6}, hq_color)
 	draw_rally_flag()
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
@@ -1108,7 +1203,7 @@ draw_world :: proc() {
 	// transit shows as one red cube and the 40-strong Jupiter garrison as
 	// four. This applies in orbit (guarding) and in transit (per target
 	// planet). Rosters, tracking and selection still use the real unit list.
-	for p in 0..<PLANET_COUNT {
+	for p in 0..<SECTOR_COUNT {
 		if !has_vision(p) { continue } // Enemy garrison under fog renders nothing.
 		player_spots: [MAX_UNITS]rl.Vector3
 		enemy_spots: [MAX_UNITS]rl.Vector3
@@ -1122,7 +1217,7 @@ draw_world :: proc() {
 		for d in 0..<rep_count(ec) { draw_fighter(enemy_spots[d], true) }
 		draw_combat_lasers(p, player_spots[:], enemy_spots[:], pc, ec)
 	}
-	for p in 0..<PLANET_COUNT {
+	for p in 0..<SECTOR_COUNT {
 		for side in 0..<2 {
 			enemy := side == 1
 			if enemy && !has_vision(p) { continue } // Enemy transits to a dark planet are hidden.
@@ -1140,7 +1235,7 @@ draw_world :: proc() {
 	// The transit lines make dispatches visibly physical rather than teleporting.
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
-		if u.state == .TRANSIT && !is_concealed(u) { rl.DrawLine3D(u.position, planets[u.target_planet].position, rl.Color{255, 210, 80, 100}) }
+		if u.state == .TRANSIT && !is_concealed(u) { rl.DrawLine3D(u.position, sector_pos(u.target_planet), rl.Color{255, 210, 80, 100}) }
 	}
 	rl.EndMode3D()
 
@@ -1155,6 +1250,13 @@ draw_world :: proc() {
 			}
 			rl.DrawText(label, c.int(pos.x - 28), c.int(pos.y - planets[p].radius * 5 - 14), 14, p == selected_planet ? rl.GOLD : rl.WHITE)
 		}
+	}
+	// Enemy HQ label, anchored to the 3D position like the planet labels.
+	hq_screen := rl.GetWorldToScreen(ENEMY_HQ_POSITION, camera)
+	if hq_screen.x < f32(viewport_w) && hq_screen.x > 0 && hq_screen.y > 0 && hq_screen.y < f32(rl.GetScreenHeight()) {
+		hq_label: cstring = "ENEMY HQ"
+		if enemy_hq_destroyed() { hq_label = "ENEMY HQ (DESTROYED)" }
+		rl.DrawText(hq_label, c.int(hq_screen.x - 30), c.int(hq_screen.y - 26), 13, rl.Color{235, 120, 120, 255})
 	}
 	status := rl.TextFormat("FPS %d   RIGHT-CLICK: ORDER   SHIFT+#: SAVE SQUAD   #: RECALL   P: PAUSE   ESC: CANCEL   N: WAVE", rl.GetFPS())
 	// Top bar: minerals plus the empire-wide MPS so income is visible without
@@ -1497,7 +1599,7 @@ draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, 
 		if tc > 0 {
 			for i in 0..<pc { draw_laser_bolt(player_spots[i], target_spots[i % tc], f32(i) * 2.3, rl.SKYBLUE) }
 		} else if enemy_base_hp[p] > 0 {
-			base := planets[p].position + rl.Vector3{0, planets[p].radius * 0.6, 0}
+			base := sector_pos(p) + rl.Vector3{0, sector_radius(p) * 0.6, 0}
 			for i in 0..<pc { draw_laser_bolt(player_spots[i], base, f32(i) * 2.3, rl.SKYBLUE) }
 		}
 	}
@@ -1735,6 +1837,8 @@ step_simulation :: proc(dt: f32) {
 	update_intel()
 	// Wrapping the laser clock keeps f32 precision stable across long sessions.
 	laser_anim_time = math.mod(laser_anim_time + dt, 3600.0)
+	// Victory latch: every planet liberated AND the enemy HQ destroyed.
+	if !victory && victory_achieved() { victory = true }
 }
 
 // Fog-of-war intel memory: while a planet is lit, keep snapshotting its
@@ -1811,6 +1915,56 @@ draw_pause_focus :: proc(rect: rl.Rectangle) {
 	rl.DrawText(">", c.int(rect.x - 18), c.int(rect.y + rect.height / 2 - 7), 14, rl.GOLD)
 }
 
+// ---- Victory & restart --------------------------------------------------
+
+// The enemy HQ falls once its structural HP hits 0 (planet_liberated covers
+// planets; the HQ is a separate sector).
+enemy_hq_destroyed :: proc() -> bool { return enemy_base_hp[ENEMY_HOME] <= 0 }
+
+// The game is won once every planet is liberated AND the enemy HQ falls.
+victory_achieved :: proc() -> bool {
+	if !enemy_hq_destroyed() { return false }
+	for p in 0..<PLANET_COUNT { if !planet_liberated(p) { return false } }
+	return true
+}
+
+// Full clean restart: reset_world zeroes every global, initialize_game
+// rebuilds the starting layout (Earth drones, garrisons, enemy HQ).
+restart_game :: proc() {
+	reset_world()
+	initialize_game()
+}
+
+// Shared by the render and the click hitbox so they cannot drift apart.
+victory_button_rect :: proc() -> rl.Rectangle {
+	return rl.Rectangle{f32(rl.GetScreenWidth() / 2 - 140), f32(rl.GetScreenHeight() / 2 + 66), 280, 44}
+}
+
+// R / ENTER / click the button to play again; restart_game clears victory.
+update_victory_overlay :: proc() {
+	if rl.IsKeyPressed(.R) || rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) { restart_game(); return }
+	if rl.IsMouseButtonPressed(.LEFT) && rl.CheckCollisionPointRec(rl.GetMousePosition(), victory_button_rect()) { restart_game() }
+}
+
+draw_victory_overlay :: proc() {
+	rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), rl.Color{4, 8, 16, 215})
+	w := f32(rl.GetScreenWidth())
+	h := f32(rl.GetScreenHeight())
+	title: cstring = "CONGRATULATIONS!"
+	title_w := f32(rl.MeasureText(title, 40))
+	rl.DrawText(title, c.int(w/2 - title_w/2), c.int(h/2 - 96), 40, rl.GOLD)
+	sub: cstring = "YOU BEAT THE GAME!"
+	sub_w := f32(rl.MeasureText(sub, 26))
+	rl.DrawText(sub, c.int(w/2 - sub_w/2), c.int(h/2 - 42), 26, rl.WHITE)
+	stats := rl.TextFormat("ALL %d PLANETS LIBERATED  //  ENEMY HQ DESTROYED", PLANET_COUNT)
+	stats_w := f32(rl.MeasureText(stats, 14))
+	rl.DrawText(stats, c.int(w/2 - stats_w/2), c.int(h/2 + 2), 14, rl.Color{155, 170, 195, 255})
+	hint: cstring = "R / ENTER / CLICK BELOW TO PLAY AGAIN"
+	hint_w := f32(rl.MeasureText(hint, 12))
+	rl.DrawText(hint, c.int(w/2 - hint_w/2), c.int(h/2 + 126), 12, rl.Color{120, 130, 150, 255})
+	draw_button(victory_button_rect(), "[R] PLAY AGAIN", rl.Color{38, 92, 60, 255})
+}
+
 // ---- Fog of war ----------------------------------------------------------
 
 // Dynamic, presence-based vision: a planet is visible only while at least one
@@ -1823,7 +1977,7 @@ has_vision :: proc(p: int) -> bool {
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.enemy { continue }
-		if distance(u.position, planets[p].position) <= planets[p].radius + 2.0 {
+		if distance(u.position, sector_pos(p)) <= sector_radius(p) + 2.0 {
 			return true
 		}
 	}
@@ -1843,9 +1997,10 @@ is_concealed :: proc(u: ^Unit) -> bool {
 // ---- Earth rally point ---------------------------------------------------
 
 // Right-clicking Earth itself clears the rally: rallying to the home world
-// is the same as having no rally at all.
+// is the same as having no rally at all. The enemy HQ is never a rally
+// point (drones produced there would have nothing to do).
 set_earth_rally :: proc(target: int) {
-	if target == EARTH { earth_rally = NO_RALLY } else { earth_rally = target }
+	if target == EARTH { earth_rally = NO_RALLY } else if target != ENEMY_HOME { earth_rally = target }
 }
 
 // Planet the rally flag flies over; 0 = no rally point set.
@@ -1869,6 +2024,18 @@ draw_rally_flag :: proc() {
 // camera.position.y spans [15, 200] (clamped in update_camera); 15 = 100%.
 zoom_percent :: proc() -> int {
 	return int(clamp_f32((200 - camera.position.y) / 185.0 * 100.0, 0, 100))
+}
+
+// Right-click target test for the enemy HQ sphere (pick_planet covers
+// planets only; the HQ is never selectable in the inspector).
+hq_picked :: proc(mouse: rl.Vector2) -> bool {
+	ray := rl.GetScreenToWorldRay(mouse, camera)
+	oc := rl.Vector3{ray.position.x - ENEMY_HQ_POSITION.x, ray.position.y - ENEMY_HQ_POSITION.y, ray.position.z - ENEMY_HQ_POSITION.z}
+	b := rl.Vector3DotProduct(oc, ray.direction)
+	c := rl.Vector3DotProduct(oc, oc) - ENEMY_HQ_RADIUS * ENEMY_HQ_RADIUS
+	disc := b*b - c
+	if disc < 0 { return false }
+	return -b - math.sqrt(disc) >= 0
 }
 
 pick_planet :: proc(mouse: rl.Vector2) -> int {
