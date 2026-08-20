@@ -171,23 +171,24 @@ waves_strike_each_mined_planet_once :: proc(t: ^testing.T) {
 @(test)
 mega_wave_advances_and_spawns_at_five_mined_planets :: proc(t: ^testing.T) {
 	reset_world()
-	// Below the 5-planet threshold: the mega clock does not advance (stays 0).
+	// Below the 5-planet threshold: the mega clock does not advance (stays 0)
+	// and the invasion stays disarmed.
 	add_miner(EARTH); add_miner(MARS); add_miner(JUPITER); add_miner(SATURN)
 	update_enemy_waves(50.0)
-	testing.expect(t, mega_wave_timer == 0, "mega clock frozen below 5 mined planets")
-	// At 5+ mined planets the clock advances.
+	testing.expect(t, mega_wave_timer == 0 && !mega_wave_armed, "mega clock frozen below 5 mined planets")
+	// Crossing into 5 mined planets fires the first 100-fighter invasion
+	// immediately — no 300s wait.
 	add_miner(URANUS)
-	update_enemy_waves(10.0)
-	testing.expect(t, mega_wave_timer == 10.0, "mega clock advances at >=5 mined planets")
-	// Spawns 100 fighters at 300s. Drive the mega clock to just under 300 and
-	// step over with the regular timer parked below its next boundary, so only
-	// the mega wave fires on this tick.
-	mega_wave_timer = MEGA_WAVE_INTERVAL_SECONDS - 0.1
-	wave_started = true
-	enemy_wave_timer = 0
 	before := unit_count
 	update_enemy_waves(0.1)
-	testing.expect(t, unit_count - before == MEGA_WAVE_SIZE, "mega wave spawns 100 fighters at 300s")
+	testing.expect(t, unit_count - before == MEGA_WAVE_SIZE, "first mega wave fires immediately at the 5th mined planet")
+	testing.expect(t, mega_wave_armed, "transition arms the mega clock")
+	testing.expect(t, mega_wave_timer == 0, "clock starts from 0 after the immediate assault")
+	// Armed: the clock advances and the next 100-fighter assault strikes at 300s.
+	mega_wave_timer = MEGA_WAVE_INTERVAL_SECONDS - 0.1
+	before = unit_count
+	update_enemy_waves(0.1)
+	testing.expect(t, unit_count - before == MEGA_WAVE_SIZE, "subsequent mega wave spawns 100 fighters at 300s")
 	testing.expect(t, mega_wave_timer == 0, "mega clock resets after the assault")
 }
 
@@ -199,16 +200,25 @@ mega_wave_resets_when_mined_planets_drop_below_five :: proc(t: ^testing.T) {
 	// a regular wave and muddy the mega-clock assertions.
 	wave_started = true
 	enemy_wave_timer = 0
+	// Crossing into 5 mined planets fires the immediate invasion; afterwards
+	// the clock advances while the player stays at 5+.
+	before := unit_count
 	update_enemy_waves(100.0)
-	testing.expect(t, mega_wave_timer == 100.0, "clock advances while >=5 mined planets")
-	// Player stops mining one planet: clock resets to 0 immediately.
+	testing.expect(t, unit_count - before == MEGA_WAVE_SIZE, "immediate invasion on crossing 5 mined planets")
+	testing.expect(t, mega_wave_timer == 0, "clock starts from 0 after the immediate invasion")
+	update_enemy_waves(50.0)
+	testing.expect(t, mega_wave_timer == 50.0, "clock advances while >=5 mined planets")
+	// Player stops mining one planet: clock resets to 0 immediately and the
+	// invasion re-arms.
 	units[0].state = .CONSTRUCTING
 	update_enemy_waves(1.0)
-	testing.expect(t, mega_wave_timer == 0, "clock resets when mined planets drop below 5")
-	// Re-expanding restarts it from 0 (not from the previous 100s).
+	testing.expect(t, mega_wave_timer == 0 && !mega_wave_armed, "clock resets and re-arms when mined planets drop below 5")
+	// Re-expanding fires a fresh immediate invasion (not a 300s wait).
+	before = unit_count
 	units[0].state = .MINING
 	update_enemy_waves(10.0)
-	testing.expect(t, mega_wave_timer == 10.0, "clock restarts fresh from 0 on re-expansion")
+	testing.expect(t, unit_count - before == MEGA_WAVE_SIZE, "re-expansion fires the invasion again immediately")
+	testing.expect(t, mega_wave_timer == 0, "clock restarts fresh from 0 on re-expansion")
 }
 
 @(test)
@@ -316,20 +326,20 @@ five_v_five_battle_lasts_ten_seconds_1_to_1 :: proc(t: ^testing.T) {
 }
 
 @(test)
-miners_die_every_second_without_defenders :: proc(t: ^testing.T) {
+miners_die_every_combat_tick_without_defenders :: proc(t: ^testing.T) {
 	reset_world()
 	add_guarding_fighter(MARS, true)
 	add_miner(MARS)
 	add_miner(MARS)
 	add_miner(MARS)
-	update_enemy_waves(0.5)
-	testing.expect(t, unit_count == 4, "no miner hit before the 1s mark")
-	update_enemy_waves(0.5)
-	testing.expect(t, unit_count == 3, "first miner destroyed at 1s")
-	update_enemy_waves(1.0)
-	testing.expect(t, unit_count == 2, "second miner destroyed at 2s")
-	update_enemy_waves(1.0)
-	testing.expect(t, unit_count == 1 && units[0].enemy, "third miner destroyed at 3s; only the enemy attacker survives")
+	update_enemy_waves(0.1)
+	testing.expect(t, unit_count == 4, "no miner hit before the 0.2s tick")
+	update_enemy_waves(0.1)
+	testing.expect(t, unit_count == 3, "first miner destroyed at 0.2s")
+	update_enemy_waves(f32(COMBAT_TICK))
+	testing.expect(t, unit_count == 2, "second miner destroyed at 0.4s")
+	update_enemy_waves(f32(COMBAT_TICK))
+	testing.expect(t, unit_count == 1 && units[0].enemy, "third miner destroyed at 0.6s; only the enemy attacker survives")
 }
 
 @(test)
@@ -1575,21 +1585,24 @@ regular_waves_stop_completely_at_five_mined_planets :: proc(t: ^testing.T) {
 	reset_world()
 	add_miner(MERCURY); add_miner(VENUS); add_miner(MARS); add_miner(JUPITER); add_miner(SATURN)
 	base := unit_count
-	// Well past every regular boundary: nothing may launch at 5 mined planets.
+	// Crossing into 5 mined planets fires the first 100-fighter invasion at
+	// once; no regular wave ever launches past the boundary.
 	update_enemy_waves(MEGA_WAVE_INTERVAL_SECONDS - 1.0)
-	testing.expect(t, unit_count == base, "no regular wave at 5 mined planets")
+	testing.expect(t, unit_count == base + MEGA_WAVE_SIZE, "immediate mega assault fires at 5 mined planets")
 	testing.expect(t, enemy_wave_timer == 0, "regular clock frozen while >= 5 mined planets")
-	// Only the mega boss assault (100 fighters) strikes at the 5-minute mark.
+	testing.expect(t, mega_wave_timer == 0, "mega clock armed from 0 after the immediate assault")
+	// The next mega assault lands exactly 300s later (299s pass: nothing).
+	update_enemy_waves(MEGA_WAVE_INTERVAL_SECONDS - 1.0)
+	testing.expect(t, unit_count == base + MEGA_WAVE_SIZE, "no further assault before the 5-minute boundary")
 	update_enemy_waves(1.0)
-	testing.expect(t, unit_count == base + MEGA_WAVE_SIZE, "only the mega assault strikes at 5 mined planets")
-	testing.expect(t, mega_wave_timer == 0, "mega clock resets after the assault")
+	testing.expect(t, unit_count == base + 2 * MEGA_WAVE_SIZE, "second mega assault strikes at the 5-minute mark")
 	// Dropping back below 5 resumes regular waves on the normal schedule.
 	units[0].state = .CONSTRUCTING
 	update_enemy_waves(f32(WAVE_FIRST_DELAY) - 0.1)
-	testing.expect(t, unit_count == base + MEGA_WAVE_SIZE, "still no new wave before the schedule boundary")
+	testing.expect(t, unit_count == base + 2 * MEGA_WAVE_SIZE, "still no new wave before the schedule boundary")
 	update_enemy_waves(0.2)
 	// 4 mined planets now -> 4 doubled waves (attack_wave_size doubles at 4).
-	testing.expect(t, unit_count == base + MEGA_WAVE_SIZE + 4 * 2 * WAVE_SIZE, "regular waves resume below 5 mined planets")
+	testing.expect(t, unit_count == base + 2 * MEGA_WAVE_SIZE + 4 * 2 * WAVE_SIZE, "regular waves resume below 5 mined planets")
 }
 
 // ---- Victory condition & restart ----------------------------------------
@@ -1665,4 +1678,142 @@ hq_orders_apply_to_fighters_only :: proc(t: ^testing.T) {
 	set_earth_rally(ENEMY_HOME)
 	testing.expect(t, earth_rally == NO_RALLY, "HQ cannot be a rally point")
 	earth_rally = NO_RALLY
+}
+
+// ---- Combat tick acceleration to 0.2s ----------------------------------
+
+@(test)
+combat_tick_is_0_2_seconds :: proc(t: ^testing.T) {
+	// 5x faster than the old 1s tick: dogfights, base sieges and miner sweeps
+	// all resolve one trade per 0.2s.
+	testing.expect(t, COMBAT_TICK == 0.2, "combat tick is 0.2s")
+}
+
+@(test)
+hq_garrison_trade_resolves_five_times_faster :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[ENEMY_HOME] = 0
+	for i in 0..<50 { add_guarding_fighter(ENEMY_HOME, false) }
+	for i in 0..<50 { add_guarding_fighter(ENEMY_HOME, true) }
+	// 50:1 trades, one per 0.2s tick: the full dogfight clears in 50 ticks.
+	ticks := 0
+	players, enemies := planet_combatants(ENEMY_HOME)
+	for players > 0 && enemies > 0 {
+		update_enemy_waves(f32(COMBAT_TICK))
+		ticks += 1
+		players, enemies = planet_combatants(ENEMY_HOME)
+	}
+	testing.expect(t, players == 0 && enemies == 0, "50v50 HQ dogfight fully trades")
+	testing.expect(t, ticks == 50, "50 trades at 0.2s each = 10s (was 50s at the old 1s tick)")
+}
+
+// ---- Immediate 100-fighter invasion on the 5th mined planet --------------
+
+@(test)
+fifth_mined_planet_triggers_immediate_invasion :: proc(t: ^testing.T) {
+	reset_world()
+	// Four mined planets: no mega pressure at all.
+	add_miner(MERCURY); add_miner(VENUS); add_miner(MARS); add_miner(JUPITER)
+	wave_started = true
+	enemy_wave_timer = 0
+	base := unit_count
+	update_enemy_waves(1.0)
+	testing.expect(t, unit_count == base, "no mega wave at 4 mined planets")
+	testing.expect(t, !mega_wave_armed, "invasion disarmed below 5 mined planets")
+	// The 5th mined planet: the 100-fighter invasion fires immediately, not
+	// after the 300s mega-wave interval.
+	add_miner(SATURN)
+	base = unit_count
+	update_enemy_waves(0.01)
+	testing.expect(t, unit_count - base == MEGA_WAVE_SIZE, "100 fighters invade the instant the 5th planet is mined")
+	testing.expect(t, mega_wave_armed, "transition arms the mega clock")
+}
+
+// ---- Enemy HQ inspector & recall ---------------------------------------
+
+@(test)
+hq_left_click_selects_the_sector :: proc(t: ^testing.T) {
+	// Left-clicking the HQ in world space selects ENEMY_HOME so its inspector
+	// renders without indexing past the planet table.
+	reset_world()
+	selected_planet = EARTH
+	selected_planet = ENEMY_HOME
+	testing.expect(t, selected_planet == ENEMY_HOME, "HQ sector is selectable")
+	// The HQ roster counts player fighters stationed at the HQ (affiliation
+	// == ENEMY_HOME), and excludes miners (issue_group_order never sends
+	// miners to the HQ).
+	add_guarding_fighter(ENEMY_HOME, false)
+	add_guarding_fighter(ENEMY_HOME, false)
+	testing.expect(t, roster_count(.COMBAT) == 2, "stationed fighters appear in the HQ roster")
+	testing.expect(t, roster_count(.MINING) == 0, "no miners in the HQ roster")
+	testing.expect(t, enemy_roster_count(.COMBAT) == 0, "no enemy garrison spawned in this scenario")
+}
+
+@(test)
+hq_roster_tile_click_selects_and_recalls_unit :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = ENEMY_HOME
+	add_guarding_fighter(ENEMY_HOME, false) // a player fighter stationed at the HQ
+	// panel_x = 0: the first combat-roster tile is the stationed fighter.
+	rect := unit_tile_rect(0, unit_tile_y(.COMBAT), 0)
+	handle_inspector_click({rect.x + 1, rect.y + 1}, 0)
+	testing.expect(t, selection_count() == 1, "clicking an HQ roster tile selects the stationed fighter")
+	// Right-click Earth to recall the reselected fighter off the HQ.
+	handle_planet_right_click(EARTH)
+	testing.expect(t, units[0].target_planet == EARTH, "reselected fighter retargets Earth")
+	testing.expect(t, units[0].state == .TRANSIT, "fighter leaves the HQ for Earth in transit")
+	selected_planet = EARTH
+}
+
+@(test)
+hq_stationed_fighters_can_be_recalled :: proc(t: ^testing.T) {
+	// Fighters sent to the HQ (in transit or guarding) can be reselected from
+	// the HQ inspector and redirected to Earth via right-click.
+	reset_world()
+	selected_planet = EARTH
+	for i in 0..<3 { add_guarding_fighter(EARTH, false) }
+	for i in 0..<3 { selected_units[i] = true }
+	handle_planet_right_click(ENEMY_HOME)
+	for i in 0..<3 {
+		testing.expect(t, units[i].target_planet == ENEMY_HOME && units[i].state == .TRANSIT, "fighters sortie to the HQ")
+	}
+	// They arrive (guard the HQ), then the player reselects and recalls them.
+	for i in 0..<3 {
+		units[i].state = .GUARDING
+		units[i].position = ENEMY_HQ_POSITION
+		selected_units[i] = true
+	}
+	selected_planet = ENEMY_HOME
+	testing.expect(t, roster_count(.COMBAT) == 3, "guarding fighters show in the HQ roster")
+	handle_planet_right_click(EARTH)
+	for i in 0..<3 {
+		testing.expect(t, units[i].target_planet == EARTH, "reselected fighters are recalled to Earth")
+		testing.expect(t, units[i].state == .TRANSIT, "recalled fighters enter transit back to Earth")
+	}
+	selected_planet = EARTH
+}
+
+// ---- Victory overlay: Play Again + Quit --------------------------------
+
+@(test)
+victory_overlay_play_and_quit_buttons_never_overlap :: proc(t: ^testing.T) {
+	play, quit := victory_button_rects()
+	testing.expect(t, play.width > 0 && play.height > 0, "play button exists")
+	testing.expect(t, quit.width > 0 && quit.height > 0, "quit button exists")
+	testing.expect(t, !rl.CheckCollisionRecs(play, quit), "play and quit buttons never overlap")
+	testing.expect(t, play.x < quit.x, "play sits left of quit")
+}
+
+@(test)
+victory_quit_keybind_is_q_or_escape :: proc(t: ^testing.T) {
+	// No key events headless: the Q/ESC predicate reads false, so an open
+	// overlay never quits by itself; the binding lives in the predicate.
+	victory = true
+	quit_requested = false
+	testing.expect(t, !victory_quit_key_pressed(), "no Q/ESC events headless")
+	update_victory_overlay()
+	testing.expect(t, victory, "still victorious (no restart fired)")
+	testing.expect(t, !quit_requested, "idle overlay never quits")
+	victory = false
+	quit_requested = false
 }

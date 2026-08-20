@@ -36,8 +36,10 @@ ENEMY_HQ_RADIUS :: 2.6
 ENEMY_HQ_GARRISON :: 500
 ENEMY_HQ_BASE_HP :: 500
 
-// Combat pacing: one 1:1 kill trade per side every COMBAT_TICK seconds.
-COMBAT_TICK :: 1
+// Combat pacing: one 1:1 kill trade per side every COMBAT_TICK seconds. At
+// 0.2s the 500-drone HQ siege and every dogfight resolves 5x faster than the
+// old 1s tick.
+COMBAT_TICK :: 0.2
 // Enemy attack waves: first at the 3-minute mark, then every 2 minutes.
 WAVE_FIRST_DELAY :: 180
 WAVE_INTERVAL :: 120
@@ -45,7 +47,8 @@ WAVE_SIZE :: 5
 // Each attack wave doubles to 10 fighters once the player mines this many worlds.
 WAVE_DOUBLE_MIN_MINED_PLANETS :: 4
 // Mega boss assault wave: only while the player mines from at least this many
-// planets, every 5 minutes a 100-fighter assault force strikes a random world.
+// planets — crossing the threshold fires the first 100-fighter assault
+// immediately, then every 5 minutes thereafter.
 MEGA_WAVE_MIN_MINED_PLANETS :: 5
 MEGA_WAVE_INTERVAL_SECONDS :: 300.0
 MEGA_WAVE_SIZE :: 100
@@ -179,6 +182,11 @@ wave_started: bool
 // Mega boss assault wave clock: advances only while mined_planet_count() >=
 // MEGA_WAVE_MIN_MINED_PLANETS; resets to 0 the instant the player drops below.
 mega_wave_timer: f32
+// Mega-wave armed flag: false until the player first reaches 5 mined planets,
+// at which point the first 100-fighter invasion fires immediately (rather than
+// waiting 300s). Reset to false whenever the player drops below 5 so a
+// re-expansion fires fresh again.
+mega_wave_armed: bool
 // Per-planet combat pacing: 1:1 fighter trades, miner sweeps and base damage
 // all tick on COMBAT_TICK.
 combat_timer: [SECTOR_COUNT]f32
@@ -283,6 +291,7 @@ reset_world :: proc() {
 	enemy_wave_timer = 0
 	wave_started = false
 	mega_wave_timer = 0
+	mega_wave_armed = false
 	selected_planet = EARTH
 	production = {}
 	pending_count = {}
@@ -388,6 +397,8 @@ update_input :: proc() {
 		} else {
 			if planet := pick_planet(mouse); planet >= 0 {
 				selected_planet = planet
+			} else if hq_picked(mouse) {
+				selected_planet = ENEMY_HOME
 			} else if !ctrl_down() {
 				clear_selection()
 			}
@@ -806,15 +817,26 @@ update_enemy_waves :: proc(dt: f32) {
 		}
 	}
 	// Mega boss assault wave: the clock only runs while the player mines from
-	// MEGA_WAVE_MIN_MINED_PLANETS or more worlds; falling below resets it to 0.
+	// MEGA_WAVE_MIN_MINED_PLANETS or more worlds; crossing that threshold fires
+	// the first 100-fighter assault immediately; falling below resets the clock
+	// to 0 and disarms, so a re-expansion fires fresh again. The
+	// transition into 5+ mined planets fires the first 100-fighter invasion
+	// immediately instead of waiting the full 300s.
 	if mined_planet_count() >= MEGA_WAVE_MIN_MINED_PLANETS {
-		mega_wave_timer += dt
-		if mega_wave_timer >= MEGA_WAVE_INTERVAL_SECONDS {
+		if !mega_wave_armed {
 			spawn_n_enemies(MEGA_WAVE_SIZE)
+			mega_wave_armed = true
 			mega_wave_timer = 0
+		} else {
+			mega_wave_timer += dt
+			if mega_wave_timer >= MEGA_WAVE_INTERVAL_SECONDS {
+				spawn_n_enemies(MEGA_WAVE_SIZE)
+				mega_wave_timer = 0
+			}
 		}
 	} else {
 		mega_wave_timer = 0
+		mega_wave_armed = false
 	}
 	for p in 0..<SECTOR_COUNT { update_planet_combat(dt, p) }
 }
@@ -1191,6 +1213,9 @@ draw_world :: proc() {
 		hq_color = rl.Color{205, 50, 58, 255}
 	}
 	rl.DrawCubeV(ENEMY_HQ_POSITION, {3.6, 3.6, 3.6}, hq_color)
+	if selected_planet == ENEMY_HOME {
+		rl.DrawCubeWiresV(ENEMY_HQ_POSITION, {4.2, 4.2, 4.2}, rl.GOLD)
+	}
 	draw_rally_flag()
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
@@ -1294,14 +1319,24 @@ draw_inspector :: proc() {
 	rl.DrawRectangle(c.int(x), 0, 3, rl.GetScreenHeight(), rl.GOLD)
 	rl.DrawText("PLANET INSPECTOR", c.int(x + 18), 18, 20, rl.WHITE)
 	planet := &planets[selected_planet]
-	rl.DrawText(rl.TextFormat("%s  //  MINERALS %03d", planet.name, planet.minerals), c.int(x + 18), 48, 15, rl.SKYBLUE)
+	if selected_planet == ENEMY_HOME {
+		// The HQ is a sector, not a planet: a fortress header instead of the
+		// mineral readout (which would index past the planet table).
+		hq_title: cstring = "ENEMY FORTRESS"
+		if enemy_hq_destroyed() { hq_title = "ENEMY FORTRESS (DESTROYED)" }
+		rl.DrawText(hq_title, c.int(x + 18), 48, 15, rl.Color{235, 110, 110, 255})
+	} else {
+		rl.DrawText(rl.TextFormat("%s  //  MINERALS %03d", planet.name, planet.minerals), c.int(x + 18), 48, 15, rl.SKYBLUE)
+	}
 	if selected_planet == EARTH {
 		draw_earth_inspector(x)
+	} else if selected_planet == ENEMY_HOME {
+		draw_hq_inspector(x)
 	} else {
 		draw_outpost_inspector(x)
 	}
 
-	rl.DrawText(rl.TextFormat("MINING DRONES (%d/%d)", roster_count(.MINING), planet_mining_cap(selected_planet)), c.int(x + 18), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
+	rl.DrawText(rl.TextFormat("MINING DRONES (%d)", roster_count(.MINING)), c.int(x + 18), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
 	for i := 0; i < unit_count; i += 1 {
 		if unit_in_roster(i, .MINING) { draw_unit_tile(i, x, unit_tile_y(.MINING), roster_ordinal(i, .MINING), false) }
 	}
@@ -1404,6 +1439,29 @@ draw_earth_inspector :: proc(x: f32) {
 		kind := Unit_Type.MINING
 		if queued { kind = queue_kind_at(EARTH, slot) }
 		draw_queue_slot(queue_slot_rect(x, slot), queued, kind)
+	}
+}
+
+// The enemy HQ sector inspector: fortress status card plus the shared unit
+// rosters. Drawn for ENEMY_HOME instead of the outpost card.
+draw_hq_inspector :: proc(x: f32) {
+	card := rl.Rectangle{x + 18, 104, 294, 54}
+	if enemy_hq_destroyed() {
+		rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
+		rl.DrawRectangleLinesEx(card, 1, rl.Color{58, 60, 66, 255})
+		rl.DrawText("HUSK — SECTOR SILENCED", c.int(x + 28), 114, 14, rl.Color{120, 125, 135, 255})
+		rl.DrawText("NO WAVES LAUNCH FROM A DEAD HQ", c.int(x + 28), 133, 12, rl.Color{200, 200, 210, 255})
+	} else if has_vision(ENEMY_HOME) {
+		_, garrison := planet_combatants(ENEMY_HOME)
+		rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
+		rl.DrawRectangleLinesEx(card, 1, rl.Color{205, 50, 58, 255})
+		rl.DrawText("ENEMY FORTRESS", c.int(x + 28), 114, 14, rl.Color{235, 110, 110, 255})
+		rl.DrawText(rl.TextFormat("FIGHTERS %d  //  INTEGRITY %d/%d", garrison, enemy_base_hp[ENEMY_HOME], ENEMY_HQ_BASE_HP), c.int(x + 28), 133, 12, rl.Color{200, 200, 210, 255})
+	} else {
+		rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
+		rl.DrawRectangleLinesEx(card, 1, rl.Color{120, 120, 138, 255})
+		rl.DrawText("UNSCOUTED", c.int(x + 28), 114, 14, rl.Color{120, 120, 138, 255})
+		rl.DrawText("SEND COMBAT DRONES TO REVEAL", c.int(x + 28), 133, 12, rl.Color{200, 200, 210, 255})
 	}
 }
 
@@ -1939,15 +1997,35 @@ restart_game :: proc() {
 	initialize_game()
 }
 
-// Shared by the render and the click hitbox so they cannot drift apart.
-victory_button_rect :: proc() -> rl.Rectangle {
-	return rl.Rectangle{f32(rl.GetScreenWidth() / 2 - 140), f32(rl.GetScreenHeight() / 2 + 66), 280, 44}
+// Shared by the render and the click hitboxes so they cannot drift apart.
+// play = [R] PLAY AGAIN, quit = [Q] QUIT.
+victory_button_rects :: proc() -> (play, quit: rl.Rectangle) {
+	cy := f32(rl.GetScreenHeight() / 2 + 66)
+	play = rl.Rectangle{f32(rl.GetScreenWidth() / 2 - 144), cy, 140, 44}
+	quit = rl.Rectangle{f32(rl.GetScreenWidth() / 2 + 4), cy, 140, 44}
+	return
 }
 
-// R / ENTER / click the button to play again; restart_game clears victory.
+// Q / ESC on the victory overlay request a clean exit (ESC is the build-cancel
+// key during play, but the sim is frozen on victory so it is free to bind here).
+victory_quit_key_pressed :: proc() -> bool {
+	return rl.IsKeyPressed(.Q) || rl.IsKeyPressed(.ESCAPE)
+}
+
+// R / ENTER restart; Q / ESC quit. Clicks hit whichever button is under the
+// cursor (a miss is a no-op so a stray click cannot end the run).
 update_victory_overlay :: proc() {
 	if rl.IsKeyPressed(.R) || rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) { restart_game(); return }
-	if rl.IsMouseButtonPressed(.LEFT) && rl.CheckCollisionPointRec(rl.GetMousePosition(), victory_button_rect()) { restart_game() }
+	if victory_quit_key_pressed() { quit_requested = true; return }
+	if rl.IsMouseButtonPressed(.LEFT) {
+		play_rect, quit_rect := victory_button_rects()
+		mouse := rl.GetMousePosition()
+		if rl.CheckCollisionPointRec(mouse, play_rect) {
+			restart_game()
+		} else if rl.CheckCollisionPointRec(mouse, quit_rect) {
+			quit_requested = true
+		}
+	}
 }
 
 draw_victory_overlay :: proc() {
@@ -1963,10 +2041,12 @@ draw_victory_overlay :: proc() {
 	stats := rl.TextFormat("ALL %d PLANETS LIBERATED  //  ENEMY HQ DESTROYED", PLANET_COUNT)
 	stats_w := f32(rl.MeasureText(stats, 14))
 	rl.DrawText(stats, c.int(w/2 - stats_w/2), c.int(h/2 + 2), 14, rl.Color{155, 170, 195, 255})
-	hint: cstring = "R / ENTER / CLICK BELOW TO PLAY AGAIN"
+	hint: cstring = "R / ENTER: PLAY AGAIN   //   Q / ESC: QUIT"
 	hint_w := f32(rl.MeasureText(hint, 12))
 	rl.DrawText(hint, c.int(w/2 - hint_w/2), c.int(h/2 + 126), 12, rl.Color{120, 130, 150, 255})
-	draw_button(victory_button_rect(), "[R] PLAY AGAIN", rl.Color{38, 92, 60, 255})
+	play_rect, quit_rect := victory_button_rects()
+	draw_button(play_rect, "[R] PLAY AGAIN", rl.Color{38, 92, 60, 255})
+	draw_button(quit_rect, "[Q] QUIT", rl.Color{92, 42, 42, 255})
 }
 
 // ---- Fog of war ----------------------------------------------------------
@@ -2030,8 +2110,9 @@ zoom_percent :: proc() -> int {
 	return int(clamp_f32((200 - camera.position.y) / 185.0 * 100.0, 0, 100))
 }
 
-// Right-click target test for the enemy HQ sphere (pick_planet covers
-// planets only; the HQ is never selectable in the inspector).
+// Ray-sphere hit test for the enemy HQ (pick_planet covers planets only).
+// Left-click selects the HQ sector in the inspector; right-click issues
+// orders to it.
 hq_picked :: proc(mouse: rl.Vector2) -> bool {
 	ray := rl.GetScreenToWorldRay(mouse, camera)
 	oc := rl.Vector3{ray.position.x - ENEMY_HQ_POSITION.x, ray.position.y - ENEMY_HQ_POSITION.y, ray.position.z - ENEMY_HQ_POSITION.z}
