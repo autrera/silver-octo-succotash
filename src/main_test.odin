@@ -244,11 +244,12 @@ step_simulation_resolves_combat_at_jupiter :: proc(t: ^testing.T) {
 }
 
 @(test)
-initial_camera_zoom_is_85_percent :: proc(t: ^testing.T) {
-	// Startup altitude 200 - 185*0.85 = 42.75 maps zoom_percent() to exactly 85%.
-	testing.expect(t, abs(CAMERA_START_Y - 42.75) < 0.0001, "startup altitude is 42.75")
+initial_camera_zoom_is_60_percent :: proc(t: ^testing.T) {
+	// Startup altitude 200 - 185*0.60 = 89 maps zoom_percent() to exactly 60%,
+	// high enough to frame the whole repositioned system at open.
+	testing.expect(t, abs(CAMERA_START_Y - 89.0) < 0.0001, "startup altitude is 89")
 	camera.position = {camera_target.x, CAMERA_START_Y, camera_target.z + CAMERA_START_Y}
-	testing.expect(t, zoom_percent() == 85, "startup camera reads exactly 85% zoom")
+	testing.expect(t, zoom_percent() == 60, "startup camera reads exactly 60% zoom")
 	camera.position = {}
 }
 
@@ -601,8 +602,8 @@ earth_starts_as_the_sole_player_planet :: proc(t: ^testing.T) {
 all_non_earth_planets_start_occupied :: proc(t: ^testing.T) {
 	reset_world()
 	initialize_game()
-	// Exact spec: garrison fighters / miners / base HP per planet, scaling
-	// with distance from Earth (Venus nearest ... Neptune farthest).
+	// Exact spec: garrison fighters / miners / base HP per planet on a fixed
+	// occupation ladder (Venus easiest ... Neptune hardest).
 	testing.expect(t, GARRISON_FIGHTERS[VENUS] == 10 && GARRISON_MINERS[VENUS] == 4 && GARRISON_BASE_HP[VENUS] == 10, "Venus: ~10/4/10")
 	testing.expect(t, GARRISON_FIGHTERS[MARS] == 20 && GARRISON_MINERS[MARS] == 6 && GARRISON_BASE_HP[MARS] == 15, "Mars: ~20/6/15")
 	testing.expect(t, GARRISON_FIGHTERS[MERCURY] == 30 && GARRISON_MINERS[MERCURY] == 8 && GARRISON_BASE_HP[MERCURY] == 20, "Mercury: ~30/8/20")
@@ -619,15 +620,17 @@ all_non_earth_planets_start_occupied :: proc(t: ^testing.T) {
 		testing.expectf(t, enemy_miner_count(p) == GARRISON_MINERS[p], "planet %d spawns its %d garrison miners", p, GARRISON_MINERS[p])
 		testing.expectf(t, enemy_base_hp[p] == GARRISON_BASE_HP[p] && !planet_liberated(p), "planet %d starts occupied with a %d HP base", p, GARRISON_BASE_HP[p])
 	}
-	// Resistance escalates strictly with distance from Earth.
-	by_distance := [7]int{VENUS, MARS, MERCURY, JUPITER, SATURN, URANUS, NEPTUNE}
-	spec_dist := [PLANET_COUNT]f32{31.0, 15.5, 0, 22.8, 51.4, 57.9, 87.4, 117.6}
+	// Distances from Earth after the Earth-centered repositioning (outer
+	// three shifted 80 left); garrisons escalate along the ladder order
+	// below, which no longer equals distance order.
+	by_ladder := [7]int{VENUS, MARS, MERCURY, JUPITER, SATURN, URANUS, NEPTUNE}
+	spec_dist := [PLANET_COUNT]f32{31.0, 15.5, 0, 22.8, 51.4, 31.0, 21.0, 42.7}
 	for i in 0..<7 {
-		p := by_distance[i]
+		p := by_ladder[i]
 		testing.expectf(t, abs(distance(planets[p].position, planets[EARTH].position) - spec_dist[p]) < 1.0,
 			"planet %d sits at its spec distance from Earth", p)
 		if i > 0 {
-			q := by_distance[i - 1]
+			q := by_ladder[i - 1]
 			testing.expectf(t, GARRISON_FIGHTERS[p] > GARRISON_FIGHTERS[q] && GARRISON_MINERS[p] > GARRISON_MINERS[q] && GARRISON_BASE_HP[p] > GARRISON_BASE_HP[q],
 				"garrison escalates from planet %d to %d", q, p)
 		}
@@ -1497,17 +1500,30 @@ reset_world_restores_drone_speed_level :: proc(t: ^testing.T) {
 
 @(test)
 outer_planets_moved_closer_to_earth :: proc(t: ^testing.T) {
-	// Saturn/Uranus/Neptune shifted left (X) toward Earth to cut round-trip
-	// transit times, keeping ~30 units of spacing and their solar order.
-	testing.expect(t, planets[SATURN].position.x == 55, "Saturn shifted to x=55")
-	testing.expect(t, planets[URANUS].position.x == 85, "Uranus shifted to x=85")
-	testing.expect(t, planets[NEPTUNE].position.x == 115, "Neptune shifted to x=115")
+	// Saturn/Uranus/Neptune shifted 80 units further left (X) so Earth sits
+	// almost mid-pack — three planets left (Mercury, Saturn, Venus), four
+	// right (Uranus, Mars, Neptune, Jupiter) — keeping 30 units of spacing
+	// between them (Jupiter's fixed x=50 bounds the right edge, so a 3/4
+	// split is as centered as the layout can get).
+	testing.expect(t, planets[SATURN].position.x == -25, "Saturn shifted to x=-25")
+	testing.expect(t, planets[URANUS].position.x == 5, "Uranus shifted to x=5")
+	testing.expect(t, planets[NEPTUNE].position.x == 35, "Neptune shifted to x=35")
 	testing.expect(t, planets[URANUS].position.x - planets[SATURN].position.x == 30, "Saturn->Uranus spacing kept at ~30")
 	testing.expect(t, planets[NEPTUNE].position.x - planets[URANUS].position.x == 30, "Uranus->Neptune spacing kept at ~30")
-	d_jupiter := distance(planets[JUPITER].position, planets[EARTH].position)
-	testing.expect(t, distance(planets[SATURN].position, planets[EARTH].position) > d_jupiter, "solar order kept: Saturn still beyond Jupiter")
-	testing.expect(t, distance(planets[EARTH].position, planets[NEPTUNE].position) < 142.0, "Neptune round trip shorter than the old 142-unit orbit")
-	// The enemy HQ sits where Neptune used to be (the original outer orbit).
+	left, right := 0, 0
+	for p in 0..<PLANET_COUNT {
+		if planets[p].position.x < 0 { left += 1 }
+		if planets[p].position.x > 0 { right += 1 }
+	}
+	testing.expect(t, left == 3 && right == 4, "Earth sits mid-pack: 3 planets left, 4 right")
+	// No pair collides or crowds after the shift (>2 units past touching radii).
+	for a in 0..<PLANET_COUNT {
+		for b in a + 1..<PLANET_COUNT {
+			clear := distance(planets[a].position, planets[b].position) - planets[a].radius - planets[b].radius
+			testing.expectf(t, clear > 2.0, "planets %d and %d keep >2 units of clearance", a, b)
+		}
+	}
+	// The enemy HQ stays where Neptune used to be (the original outer orbit).
 	testing.expect(t, abs(distance(ENEMY_HQ_POSITION, rl.Vector3{140, 5, 24})) < 0.001, "HQ at the old Neptune orbit")
 }
 

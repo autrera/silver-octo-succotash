@@ -138,9 +138,9 @@ planets := [PLANET_COUNT]Planet{
 	{name = "EARTH", position = {0, 0, 0}, radius = 3.0, color = rl.Color{45, 125, 220, 255}, minerals = 80},
 	{name = "MARS", position = {22, 1, 6}, radius = 2.2, color = rl.Color{215, 80, 55, 255}, minerals = 150},
 	{name = "JUPITER", position = {50, 2.5, -12}, radius = 4.2, color = rl.Color{215, 175, 110, 255}, minerals = 300},
-	{name = "SATURN", position = {55, 3, 18}, radius = 3.8, color = rl.Color{225, 205, 155, 255}, minerals = 350},
-	{name = "URANUS", position = {85, 4, -20}, radius = 3.0, color = rl.Color{170, 225, 230, 255}, minerals = 400},
-	{name = "NEPTUNE", position = {115, 5, 24}, radius = 2.9, color = rl.Color{80, 110, 220, 255}, minerals = 450},
+	{name = "SATURN", position = {-25, 3, 18}, radius = 3.8, color = rl.Color{225, 205, 155, 255}, minerals = 350},
+	{name = "URANUS", position = {5, 4, -20}, radius = 3.0, color = rl.Color{170, 225, 230, 255}, minerals = 400},
+	{name = "NEPTUNE", position = {35, 5, 24}, radius = 2.9, color = rl.Color{80, 110, 220, 255}, minerals = 450},
 }
 
 units: [MAX_UNITS]Unit
@@ -158,9 +158,13 @@ pending_count: [PLANET_COUNT]int
 base_build_progress: f32
 base_build_planet := -1
 camera: rl.Camera3D
-camera_target := rl.Vector3{7.5, 0, -2.5}
-// Startup altitude: 200 - 185*0.85 so zoom_percent() opens at exactly 85%.
-CAMERA_START_Y :: 200.0 - 185.0 * 0.85
+// Framing: center of the planet extents (X -30..50, Z -20..24) after the
+// Earth-centered repositioning; pan/zoom covers the far-off enemy HQ.
+camera_target := rl.Vector3{10, 0, 2}
+// Startup altitude: 200 - 185*0.60 so zoom_percent() opens at exactly 60% —
+// high enough to frame the whole Earth-centered system (X -30..50, Z -20..24)
+// beside the 330px inspector panel (all eight planets on screen at open).
+CAMERA_START_Y :: 200.0 - 185.0 * 0.60
 inspector_drag_start: rl.Vector2
 inspector_drag_active: bool
 
@@ -247,9 +251,9 @@ initialize_game :: proc() {
 	unit_count += 1
 	// Space backdrop: deterministic starfield (independent of the wave RNG).
 	generate_stars()
-	// Every non-Earth sector opens occupied: the farther out, the stronger
-	// the garrison (GARRISON_* tables scale with distance from Earth); the
-	// final sector is the enemy HQ with its 500-fighter garrison.
+	// Every non-Earth sector opens occupied: the GARRISON_* tables form the
+	// fixed occupation ladder (Venus easiest ... Neptune hardest, HQ last) —
+	// after the Earth-centered repositioning this no longer tracks distance.
 	for p in 0..<SECTOR_COUNT {
 		if p == EARTH { continue }
 		spawn_garrison(p, GARRISON_FIGHTERS[p], GARRISON_MINERS[p])
