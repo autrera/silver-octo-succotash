@@ -1935,3 +1935,54 @@ ghost_view_flag_matches_scouted_dark_state :: proc(t: ^testing.T) {
 	selected_planet = EARTH
 	testing.expect(t, !ghost_view(), "Earth is always lit and never a ghost view")
 }
+
+// Regression: in the ghost view both ENEMY sections must stack with the same
+// offsets the live path uses. The original bug drew every section from the
+// .MINING kind, putting both enemy headers/tiles on enemy_tile_y(.MINING)
+// (garbled overlap) and dropping fighter tiles entirely.
+@(test)
+ghost_roster_sections_stack_like_live_view :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game() // Venus garrison: 10 fighters + 4 miners (mixed).
+	// Player scout at Venus, snapshot, then killed: planet goes dark.
+	units[unit_count] = Unit{kind = .COMBAT, state = .GUARDING, position = orbit_pos(sector_pos(VENUS), sector_radius(VENUS), 0), home_planet = EARTH, affiliation = EARTH, target_planet = VENUS}
+	unit_count += 1
+	selected_planet = VENUS
+	update_intel()
+	remove_unit_at(unit_count - 1)
+	testing.expect(t, ghost_view(), "scouted Venus with a dead scout must be a ghost view")
+
+	em := ghost_count(.MINING, true)
+	ef := ghost_count(.COMBAT, true)
+	testing.expect(t, em == GARRISON_MINERS[VENUS], "snapshot keeps the enemy miner count")
+	testing.expect(t, ef == GARRISON_FIGHTERS[VENUS], "snapshot keeps the enemy fighter count")
+
+	// Section origins come from the shared layout helpers; the fighting
+	// section must sit exactly one header + mining-rows block below the
+	// mining section (the live-view offset), never on the same origin.
+	mining_y := enemy_tile_y(.MINING)
+	fighting_y := enemy_tile_y(.COMBAT)
+	offset := 26 + ((em + TILES_PER_ROW - 1) / TILES_PER_ROW) * (TILE_SIZE + TILE_GAP)
+	testing.expect(t, fighting_y - mining_y == offset, "ghost enemy fighting section stacks below mining at the live-view offset")
+}
+
+// Disconfirming edge: a fighters-only garrison must still render its fighter
+// section (no overlap is possible there, but the tiles must not vanish).
+@(test)
+ghost_fighters_only_garrison_keeps_fighter_section :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+	// Strip Venus down to fighters only.
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.enemy && u.kind == .MINING && u.target_planet == VENUS { remove_unit_at(i); i -= 1 }
+	}
+	units[unit_count] = Unit{kind = .COMBAT, state = .GUARDING, position = orbit_pos(sector_pos(VENUS), sector_radius(VENUS), 0), home_planet = EARTH, affiliation = EARTH, target_planet = VENUS}
+	unit_count += 1
+	selected_planet = VENUS
+	update_intel()
+	remove_unit_at(unit_count - 1)
+	testing.expect(t, ghost_view(), "Venus dark after scout loss")
+	testing.expect(t, ghost_count(.MINING, true) == 0, "miners-only strip left no miners in the snapshot")
+	testing.expect(t, ghost_count(.COMBAT, true) == GARRISON_FIGHTERS[VENUS], "fighter section stays populated without miners")
+}

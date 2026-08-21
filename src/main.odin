@@ -1560,12 +1560,16 @@ draw_ghost_rosters :: proc(x: f32) {
 	enemy_header := rl.Color{235, 110, 110, 255}
 	intel := last_known_intel[selected_planet]
 
-	// Player mining section (with cap) + fighting section.
-	for section := 0; section < 2; section += 1 {
-		kind: Unit_Type = .MINING
+	// Player mining section (with cap) + fighting section. Section kinds come
+	// from the same table for both loops: a defaulted kind that only the
+	// mining branch overrides once drew every section as .MINING, stacking the
+	// two enemy headers/tiles on one origin (and dropping fighters entirely).
+	kinds := [2]Unit_Type{.MINING, .COMBAT}
+	for section in 0..<2 {
+		kind := kinds[section]
 		label: cstring = "FIGHTING DRONES"
 		color := rl.SKYBLUE
-		if section == 0 { kind = .MINING; label = "MINING DRONES"; color = rl.ORANGE }
+		if section == 0 { label = "MINING DRONES"; color = rl.ORANGE }
 		count := ghost_count(kind, false)
 		if count == 0 { continue }
 		y := unit_tile_y(kind)
@@ -1584,10 +1588,10 @@ draw_ghost_rosters :: proc(x: f32) {
 	}
 
 	// Enemy mining + fighting sections.
-	for section := 0; section < 2; section += 1 {
-		kind: Unit_Type = .MINING
+	for section in 0..<2 {
+		kind := kinds[section]
 		label: cstring = "ENEMY FIGHTING DRONES"
-		if section == 0 { kind = .MINING; label = "ENEMY MINING DRONES" }
+		if section == 0 { label = "ENEMY MINING DRONES" }
 		count := ghost_count(kind, true)
 		if count == 0 { continue }
 		y := enemy_tile_y(kind)
