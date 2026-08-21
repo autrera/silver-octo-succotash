@@ -1817,3 +1817,121 @@ victory_quit_keybind_is_q_or_escape :: proc(t: ^testing.T) {
 	victory = false
 	quit_requested = false
 }
+
+// ---- Base crew prefers Earth-assigned miners ------------------------------
+
+@(test)
+base_crew_prefers_earth_assigned_miners_over_foreign_routes :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	minerals = 500
+	start_base_construction()
+	testing.expect(t, base_build_planet == EARTH, "build queued")
+	// A foreign-route drone mid-deposit at Earth: while an Earth-assigned
+	// miner is still available, it must keep its route.
+	units[unit_count] = Unit{
+		kind = .MINING, state = .DEPOSITING, position = planets[EARTH].position,
+		home_planet = EARTH, affiliation = MARS, target_planet = MARS,
+		progress = DEPOSIT_DURATION - 0.01,
+	}
+	unit_count += 1
+	units[unit_count] = Unit{
+		kind = .MINING, state = .TRANSIT, position = sector_pos(EARTH),
+		home_planet = EARTH, affiliation = EARTH, target_planet = EARTH,
+	}
+	unit_count += 1
+	update_miner(&units[0], 0, 0.02)
+	testing.expect(t, units[0].state == .TRANSIT, "foreign depositor keeps its route while Earth drones remain")
+	testing.expect(t, constructing_miners(EARTH) == 0, "crew stays empty while Earth drones are available")
+	// The Earth-assigned drone deposits and joins; now no Earth-assigned
+	// miner remains, so the foreign one is free to soak into the crew.
+	units[1].state = .DEPOSITING
+	units[1].progress = DEPOSIT_DURATION - 0.01
+	update_miner(&units[1], 1, 0.02)
+	testing.expect(t, units[1].state == .CONSTRUCTING && units[1].target_planet == EARTH, "Earth-assigned depositor joins first")
+	units[0].state = .DEPOSITING
+	units[0].progress = DEPOSIT_DURATION - 0.01
+	update_miner(&units[0], 0, 0.02)
+	testing.expect(t, units[0].state == .CONSTRUCTING, "foreign depositor joins once Earth's own are exhausted")
+	testing.expect(t, constructing_miners(EARTH) == 2, "crew counts both joiners")
+}
+
+@(test)
+base_crew_earth_preference_clears_when_earth_miners_vanish :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	minerals = 500
+	start_base_construction()
+	// Foreign depositor + Earth-assigned miner far out in transit.
+	units[unit_count] = Unit{
+		kind = .MINING, state = .DEPOSITING, position = planets[EARTH].position,
+		home_planet = EARTH, affiliation = VENUS, target_planet = VENUS,
+		progress = DEPOSIT_DURATION - 0.01,
+	}
+	unit_count += 1
+	units[unit_count] = Unit{
+		kind = .MINING, state = .RETURNING, position = sector_pos(VENUS),
+		home_planet = EARTH, affiliation = EARTH, target_planet = EARTH,
+	}
+	unit_count += 1
+	update_miner(&units[0], 0, 0.02)
+	testing.expect(t, units[0].state != .CONSTRUCTING, "foreign depositor waits for the Earth miner")
+	// Earth-assigned miner destroyed: nothing Earth-side remains, foreign joins.
+	remove_unit_at(1)
+	update_miner(&units[0], 0, 0.02)
+	units[0].state = .DEPOSITING
+	units[0].progress = DEPOSIT_DURATION - 0.01
+	update_miner(&units[0], 0, 0.02)
+	testing.expect(t, units[0].state == .CONSTRUCTING, "foreign depositor joins once no Earth-assigned miner exists")
+}
+
+// ---- Intel roster snapshot for the ghost view -----------------------------
+
+@(test)
+intel_snapshot_captures_roster_and_freezes_while_dark :: proc(t: ^testing.T) {
+	reset_world()
+	spawn_garrison(JUPITER, 2, 2)
+	// Player scout pinned at the garrison lifts the fog.
+	units[unit_count] = Unit{kind = .MINING, state = .IDLE, position = planets[JUPITER].position, home_planet = EARTH, affiliation = JUPITER, target_planet = JUPITER}
+	unit_count += 1
+	update_intel()
+	intel := last_known_intel[JUPITER]
+	testing.expect(t, intel.unit_count == 5, "snapshot holds 2 garrison fighters, 2 enemy miners and the scout")
+	player_miners, enemy_miners, enemy_fighters := 0, 0, 0
+	for i := 0; i < intel.unit_count; i += 1 {
+		u := &intel.units[i]
+		if u.kind == .COMBAT && u.enemy { enemy_fighters += 1 }
+		if u.kind == .MINING && u.enemy { enemy_miners += 1 }
+		if u.kind == .MINING && !u.enemy { player_miners += 1; testing.expect(t, u.state == .IDLE, "scout state captured") }
+	}
+	testing.expect(t, enemy_fighters == 2 && enemy_miners == 2 && player_miners == 1, "per-unit detail: kind, state and side all captured")
+	// Scout destroyed: Jupiter goes dark and the snapshot must freeze even as
+	// the live garrison changes.
+	remove_unit_at(unit_count - 1)
+	testing.expect(t, !has_vision(JUPITER), "Jupiter dark without the scout")
+	remove_unit_at(0)
+	units[0].state = .IDLE
+	update_intel()
+	intel = last_known_intel[JUPITER]
+	testing.expect(t, intel.unit_count == 5, "snapshot does not mutate while dark")
+	enemy_fighters = 0
+	for i := 0; i < intel.unit_count; i += 1 {
+		if intel.units[i].kind == .COMBAT && intel.units[i].enemy { enemy_fighters += 1 }
+	}
+	testing.expect(t, enemy_fighters == 2, "stale roster preserved after going dark")
+}
+
+@(test)
+ghost_view_flag_matches_scouted_dark_state :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = JUPITER
+	testing.expect(t, !ghost_view(), "never-scouted planet is not a ghost view")
+	units[unit_count] = Unit{kind = .MINING, state = .IDLE, position = planets[JUPITER].position, home_planet = EARTH, affiliation = JUPITER, target_planet = JUPITER}
+	unit_count += 1
+	update_intel()
+	testing.expect(t, !ghost_view(), "lit planet with intel is live, not ghost")
+	remove_unit_at(0)
+	testing.expect(t, ghost_view(), "scouted planet under fog renders the ghost view")
+	selected_planet = EARTH
+	testing.expect(t, !ghost_view(), "Earth is always lit and never a ghost view")
+}

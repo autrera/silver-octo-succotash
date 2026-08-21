@@ -108,11 +108,20 @@ Production :: struct {
 }
 
 // Last-known intel snapshot, recorded while a planet is lit; shown under fog
-// once the planet has been scouted at least once.
+// once the planet has been scouted at least once. The per-unit roster feeds
+// the dimmed ghost inspector view drawn while the planet is dark.
+INTEL_UNIT_CAP :: 200
+Intel_Unit :: struct {
+	kind: Unit_Type,
+	state: Unit_State,
+	enemy: bool,
+}
 Intel :: struct {
 	fighters: int,
 	miners: int,
 	base_hp: int,
+	units: [INTEL_UNIT_CAP]Intel_Unit,
+	unit_count: int,
 }
 
 MAX_PENDING :: 25
@@ -489,6 +498,8 @@ handle_inspector_release :: proc(mouse: rl.Vector2, panel_x: f32) {
 // Every unit tile intersecting the drag rectangle is selected on release.
 // Plain drag replaces the selection, Shift adds to it, Ctrl toggles each tile.
 box_select :: proc(mouse: rl.Vector2, panel_x: f32) {
+	// Ghost tiles are a frozen snapshot, not live units: nothing to select.
+	if ghost_view() { return }
 	rect := rect_between(inspector_drag_start, mouse)
 	replace := !ctrl_down() && !shift_down()
 	if replace { clear_selection() }
@@ -511,6 +522,7 @@ shift_down :: proc() -> bool {
 }
 
 click_unit_tiles :: proc(mouse: rl.Vector2, panel_x: f32, kind: Unit_Type) -> bool {
+	if ghost_view() { return false }
 	ordinal := 0
 	for i := 0; i < unit_count; i += 1 {
 		if !unit_in_roster(i, kind) { continue }
@@ -551,6 +563,18 @@ constructing_miners :: proc(p: int) -> int {
 		if u.kind == .MINING && !u.enemy && u.state == .CONSTRUCTING && u.target_planet == p { count += 1 }
 	}
 	return count
+}
+
+// True while any player miner not already on the build crew is assigned to
+// Earth (route target or creation planet): base recruitment prefers these
+// over foreign-route drones that merely deposit at Earth mid-route.
+earth_assigned_miner_available :: proc() -> bool {
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind != .MINING || u.enemy || u.state == .CONSTRUCTING { continue }
+		if u.target_planet == EARTH || u.affiliation == EARTH { return true }
+	}
+	return false
 }
 
 // Mining drones already committed to the active build site on a planet.
@@ -1150,11 +1174,15 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 			u.progress = 0
 			u.state = .TRANSIT
 			// A queued Earth base soaks up returning miners: after the payout
-			// they join the build crew instead of transiting back out.
+			// they join the build crew instead of transiting back out. Earth-
+			// assigned drones join first; a foreign-route miner only joins once
+			// no Earth-assigned miner remains available, so its route is starved last.
 			if base_build_planet == EARTH && !u.enemy && constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS {
-				u.state = .CONSTRUCTING
-				u.target_planet = EARTH
-				u.affiliation = EARTH
+				if u.target_planet == EARTH || u.affiliation == EARTH || !earth_assigned_miner_available() {
+					u.state = .CONSTRUCTING
+					u.target_planet = EARTH
+					u.affiliation = EARTH
+				}
 			}
 		}
 	case .IDLE:
@@ -1336,29 +1364,42 @@ draw_inspector :: proc() {
 		draw_outpost_inspector(x)
 	}
 
-	rl.DrawText(rl.TextFormat("MINING DRONES (%d)", roster_count(.MINING)), c.int(x + 18), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
-	for i := 0; i < unit_count; i += 1 {
-		if unit_in_roster(i, .MINING) { draw_unit_tile(i, x, unit_tile_y(.MINING), roster_ordinal(i, .MINING), false) }
-	}
-	rl.DrawText(rl.TextFormat("FIGHTING DRONES (%d)", roster_count(.COMBAT)), c.int(x + 18), c.int(unit_tile_y(.COMBAT) - 18), 13, rl.SKYBLUE)
-	for i := 0; i < unit_count; i += 1 {
-		if unit_in_roster(i, .COMBAT) { draw_unit_tile(i, x, unit_tile_y(.COMBAT), roster_ordinal(i, .COMBAT), false) }
-	}
-	// Enemy rosters mirror the player sections but only render while the
-	// planet is scouted (fog of war) and enemies are actually present there —
-	// garrison drones at an occupied world or an attacking wave (even inbound).
-	if has_vision(selected_planet) {
-		enemy_header := rl.Color{235, 110, 110, 255}
-		if enemy_roster_count(.MINING) > 0 {
-			rl.DrawText(rl.TextFormat("ENEMY MINING DRONES (%d)", enemy_roster_count(.MINING)), c.int(x + 18), c.int(enemy_tile_y(.MINING) - 18), 13, enemy_header)
-			for i := 0; i < unit_count; i += 1 {
-				if enemy_in_roster(i, .MINING) { draw_unit_tile(i, x, enemy_tile_y(.MINING), enemy_roster_ordinal(i, .MINING), true) }
-			}
+	// Scouted-but-dark planets draw dimmed ghost rosters from the frozen intel
+	// snapshot instead of any live section; lit planets draw live rosters.
+	if ghost_view() {
+		draw_ghost_rosters(x)
+	} else {
+		// Workforce cap shown next to the player mining roster (the HQ hosts no
+		// mining, so it keeps the plain count). One TextFormat per DrawText keeps
+		// each buffer alive until drawn (rotating TextFormat pool).
+		if selected_planet != ENEMY_HOME {
+			rl.DrawText(rl.TextFormat("MINING DRONES (%d/%d)", roster_count(.MINING), planet_mining_cap(selected_planet)), c.int(x + 18), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
+		} else {
+			rl.DrawText(rl.TextFormat("MINING DRONES (%d)", roster_count(.MINING)), c.int(x + 18), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
 		}
-		if enemy_roster_count(.COMBAT) > 0 {
-			rl.DrawText(rl.TextFormat("ENEMY FIGHTING DRONES (%d)", enemy_roster_count(.COMBAT)), c.int(x + 18), c.int(enemy_tile_y(.COMBAT) - 18), 13, enemy_header)
-			for i := 0; i < unit_count; i += 1 {
-				if enemy_in_roster(i, .COMBAT) { draw_unit_tile(i, x, enemy_tile_y(.COMBAT), enemy_roster_ordinal(i, .COMBAT), true) }
+		for i := 0; i < unit_count; i += 1 {
+			if unit_in_roster(i, .MINING) { draw_unit_tile(i, x, unit_tile_y(.MINING), roster_ordinal(i, .MINING), false) }
+		}
+		rl.DrawText(rl.TextFormat("FIGHTING DRONES (%d)", roster_count(.COMBAT)), c.int(x + 18), c.int(unit_tile_y(.COMBAT) - 18), 13, rl.SKYBLUE)
+		for i := 0; i < unit_count; i += 1 {
+			if unit_in_roster(i, .COMBAT) { draw_unit_tile(i, x, unit_tile_y(.COMBAT), roster_ordinal(i, .COMBAT), false) }
+		}
+		// Enemy rosters mirror the player sections but only render while the
+		// planet is scouted (fog of war) and enemies are actually present there —
+		// garrison drones at an occupied world or an attacking wave (even inbound).
+		if has_vision(selected_planet) {
+			enemy_header := rl.Color{235, 110, 110, 255}
+			if enemy_roster_count(.MINING) > 0 {
+				rl.DrawText(rl.TextFormat("ENEMY MINING DRONES (%d)", enemy_roster_count(.MINING)), c.int(x + 18), c.int(enemy_tile_y(.MINING) - 18), 13, enemy_header)
+				for i := 0; i < unit_count; i += 1 {
+					if enemy_in_roster(i, .MINING) { draw_unit_tile(i, x, enemy_tile_y(.MINING), enemy_roster_ordinal(i, .MINING), true) }
+				}
+			}
+			if enemy_roster_count(.COMBAT) > 0 {
+				rl.DrawText(rl.TextFormat("ENEMY FIGHTING DRONES (%d)", enemy_roster_count(.COMBAT)), c.int(x + 18), c.int(enemy_tile_y(.COMBAT) - 18), 13, enemy_header)
+				for i := 0; i < unit_count; i += 1 {
+					if enemy_in_roster(i, .COMBAT) { draw_unit_tile(i, x, enemy_tile_y(.COMBAT), enemy_roster_ordinal(i, .COMBAT), true) }
+				}
 			}
 		}
 	}
@@ -1490,18 +1531,19 @@ draw_outpost_inspector :: proc(x: f32) {
 		rl.DrawText(title, c.int(x + 28), 114, 14, stronghold_color)
 		rl.DrawText(status, c.int(x + 28), 133, 12, rl.Color{200, 200, 210, 255})
 	} else if intel_recorded[selected_planet] {
-		// Scouted once, now dark: show the last snapshot taken while lit, in
-		// grey/amber to read as stale — the garrison may have changed since.
-		card.height = 66
+		// Scouted once, now dark: the stronghold card renders from the frozen
+		// intel snapshot (the full ghost roster below comes from it too).
+		card.height = 54
 		amber := rl.Color{178, 148, 82, 255}
 		grey := rl.Color{152, 152, 162, 255}
 		intel := last_known_intel[selected_planet]
+		title: cstring = "ENEMY STRONGHOLD"
+		status := rl.TextFormat("%02d FIGHTERS  BASE %02d/%02d — STALE INTEL", intel.fighters, intel.base_hp, GARRISON_BASE_HP[selected_planet])
+		if intel.base_hp <= 0 { title = "LIBERATED" }
 		rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
 		rl.DrawRectangleLinesEx(card, 1, amber)
-		rl.DrawText("LAST KNOWN INTEL", c.int(x + 28), 112, 13, amber)
-		rl.DrawText(rl.TextFormat("ENEMY FIGHTERS: %d", intel.fighters), c.int(x + 28), 128, 10, grey)
-		rl.DrawText(rl.TextFormat("ENEMY MINERS: %d", intel.miners), c.int(x + 28), 141, 10, grey)
-		rl.DrawText(rl.TextFormat("BASE HP: %d/%d", intel.base_hp, GARRISON_BASE_HP[selected_planet]), c.int(x + 28), 154, 10, grey)
+		rl.DrawText(title, c.int(x + 28), 114, 14, amber)
+		rl.DrawText(status, c.int(x + 28), 133, 12, grey)
 	} else {
 		// Never scouted: no intel exists at all.
 		rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
@@ -1509,6 +1551,59 @@ draw_outpost_inspector :: proc(x: f32) {
 		rl.DrawText("UNSCOUTED", c.int(x + 28), 114, 14, rl.Color{120, 120, 138, 255})
 		rl.DrawText("STATUS UNKNOWN — SEND SCOUT DRONE", c.int(x + 28), 133, 12, rl.Color{200, 200, 210, 255})
 	}
+}
+
+// Ghost rosters for a scouted-but-dark planet: header + tiles per section,
+// all from the frozen intel snapshot, then a translucent grey-out over the
+// whole roster area so it reads as stale.
+draw_ghost_rosters :: proc(x: f32) {
+	enemy_header := rl.Color{235, 110, 110, 255}
+	intel := last_known_intel[selected_planet]
+
+	// Player mining section (with cap) + fighting section.
+	for section := 0; section < 2; section += 1 {
+		kind: Unit_Type = .MINING
+		label: cstring = "FIGHTING DRONES"
+		color := rl.SKYBLUE
+		if section == 0 { kind = .MINING; label = "MINING DRONES"; color = rl.ORANGE }
+		count := ghost_count(kind, false)
+		if count == 0 { continue }
+		y := unit_tile_y(kind)
+		if section == 0 {
+			rl.DrawText(rl.TextFormat("%s (%d/%d)", label, count, planet_mining_cap(selected_planet)), c.int(x + 18), c.int(y - 18), 13, color)
+		} else {
+			rl.DrawText(rl.TextFormat("%s (%d)", label, count), c.int(x + 18), c.int(y - 18), 13, color)
+		}
+		ordinal := 0
+		for i := 0; i < intel.unit_count; i += 1 {
+			u := &intel.units[i]
+			if u.kind != kind || u.enemy { continue }
+			draw_unit_tile_data(u.kind, u.state, false, x, y, ordinal, false)
+			ordinal += 1
+		}
+	}
+
+	// Enemy mining + fighting sections.
+	for section := 0; section < 2; section += 1 {
+		kind: Unit_Type = .MINING
+		label: cstring = "ENEMY FIGHTING DRONES"
+		if section == 0 { kind = .MINING; label = "ENEMY MINING DRONES" }
+		count := ghost_count(kind, true)
+		if count == 0 { continue }
+		y := enemy_tile_y(kind)
+		rl.DrawText(rl.TextFormat("%s (%d)", label, count), c.int(x + 18), c.int(y - 18), 13, enemy_header)
+		ordinal := 0
+		for i := 0; i < intel.unit_count; i += 1 {
+			u := &intel.units[i]
+			if u.kind != kind || !u.enemy { continue }
+			draw_unit_tile_data(u.kind, u.state, false, x, y, ordinal, true)
+			ordinal += 1
+		}
+	}
+
+	// Grey-out overlay across the roster area: stale snapshot, not live units.
+	top := f32(unit_tile_y(.MINING) - 22)
+	rl.DrawRectangleRec(rl.Rectangle{x, top, SCREEN_PANEL_WIDTH - 6, f32(rl.GetScreenHeight() - 40) - top}, rl.Color{16, 22, 38, 150})
 }
 
 production_orders_y :: proc() -> int {
@@ -1550,7 +1645,7 @@ roster_count :: proc(kind: Unit_Type) -> int {
 // pitch) and must be cleared even with a full queue. Used by rendering, tile
 // rects and click hitboxes alike, so they can never drift apart.
 unit_tile_y :: proc(kind: Unit_Type) -> int {
-	mining_rows := (roster_count(.MINING) + TILES_PER_ROW - 1) / TILES_PER_ROW
+	mining_rows := (view_count(.MINING, false) + TILES_PER_ROW - 1) / TILES_PER_ROW
 	// Outpost inspectors have no base/production/queue sections, so rosters
 	// sit at a fixed height; on Earth they flow below the build queue.
 	y := 196
@@ -1591,13 +1686,39 @@ enemy_roster_ordinal :: proc(index: int, kind: Unit_Type) -> int {
 // Y of the enemy unit-tile rows: directly below the player fighting roster,
 // with the enemy mining section (when present) stacked above the fighters.
 enemy_tile_y :: proc(kind: Unit_Type) -> int {
-	combat_rows := (roster_count(.COMBAT) + TILES_PER_ROW - 1) / TILES_PER_ROW
+	combat_rows := (view_count(.COMBAT, false) + TILES_PER_ROW - 1) / TILES_PER_ROW
 	y := unit_tile_y(.COMBAT) + 26 + combat_rows * (TILE_SIZE + TILE_GAP)
 	if kind == .COMBAT {
-		enemy_mining_rows := (enemy_roster_count(.MINING) + TILES_PER_ROW - 1) / TILES_PER_ROW
+		enemy_mining_rows := (view_count(.MINING, true) + TILES_PER_ROW - 1) / TILES_PER_ROW
 		y += 26 + enemy_mining_rows * (TILE_SIZE + TILE_GAP)
 	}
 	return y
+}
+
+// Ghost view: a previously scouted planet currently under fog renders its
+// rosters from the frozen intel snapshot instead of live units (Earth is
+// always lit; the HQ has its own card).
+ghost_view :: proc() -> bool {
+	return selected_planet != EARTH && selected_planet != ENEMY_HOME && !has_vision(selected_planet) && intel_recorded[selected_planet]
+}
+
+// Count of one section inside the frozen intel snapshot.
+ghost_count :: proc(kind: Unit_Type, enemy: bool) -> int {
+	count := 0
+	intel := last_known_intel[selected_planet]
+	for i := 0; i < intel.unit_count; i += 1 {
+		u := &intel.units[i]
+		if u.kind == kind && u.enemy == enemy { count += 1 }
+	}
+	return count
+}
+
+// Roster size driving headers and tile layout: live counts while lit, the
+// frozen snapshot counts in ghost view, so tiles never jump between frames.
+view_count :: proc(kind: Unit_Type, enemy: bool) -> int {
+	if ghost_view() { return ghost_count(kind, enemy) }
+	if enemy { return enemy_roster_count(kind) }
+	return roster_count(kind)
 }
 
 unit_tile_rect :: proc(x: f32, y: int, ordinal: int) -> rl.Rectangle {
@@ -1607,21 +1728,26 @@ unit_tile_rect :: proc(x: f32, y: int, ordinal: int) -> rl.Rectangle {
 }
 
 draw_unit_tile :: proc(index: int, x: f32, y: int, ordinal: int, enemy: bool) {
+	draw_unit_tile_data(units[index].kind, units[index].state, selected_units[index], x, y, ordinal, enemy)
+}
+
+// Core tile renderer; the ghost view calls it directly with snapshot data.
+draw_unit_tile_data :: proc(kind: Unit_Type, state: Unit_State, selected: bool, x: f32, y: int, ordinal: int, enemy: bool) {
 	rect := unit_tile_rect(x, y, ordinal)
 	fill := rl.Color{38, 55, 78, 255}
 	border := rl.Color{91, 113, 140, 255}
 	if enemy {
 		fill = rl.Color{58, 32, 36, 255}
 		border = rl.Color{140, 72, 78, 255}
-	} else if selected_units[index] { fill = rl.Color{123, 94, 26, 255}; border = rl.GOLD }
+	} else if selected { fill = rl.Color{123, 94, 26, 255}; border = rl.GOLD }
 	rl.DrawRectangleRec(rect, fill)
 	rl.DrawRectangleLinesEx(rect, 1, border)
 	symbol: cstring = "M"
 	accent := rl.ORANGE
-	if units[index].kind == .COMBAT { symbol = "C"; accent = rl.SKYBLUE }
+	if kind == .COMBAT { symbol = "C"; accent = rl.SKYBLUE }
 	if enemy { accent = rl.Color{235, 130, 130, 255} }
 	rl.DrawText(symbol, c.int(rect.x + 8), c.int(rect.y + 7), 12, accent)
-	rl.DrawCircle(c.int(rect.x + rect.width - 5), c.int(rect.y + 5), 3, state_color(units[index].state))
+	rl.DrawCircle(c.int(rect.x + rect.width - 5), c.int(rect.y + 5), 3, state_color(state))
 }
 
 // Player fighters are blue, enemy fighters red.
@@ -1910,7 +2036,19 @@ update_intel :: proc() {
 	for p in 0..<PLANET_COUNT {
 		if !has_vision(p) { continue }
 		_, enemies := planet_combatants(p)
-		last_known_intel[p] = Intel{fighters = enemies, miners = enemy_miner_count(p), base_hp = enemy_base_hp[p]}
+		intel := Intel{fighters = enemies, miners = enemy_miner_count(p), base_hp = enemy_base_hp[p]}
+		// Roster snapshot for the ghost inspector view: every unit matching the
+		// roster predicates (miners targeting p, combatants affiliated with p).
+		for i := 0; i < unit_count && intel.unit_count < INTEL_UNIT_CAP; i += 1 {
+			u := &units[i]
+			in_roster := u.affiliation == p
+			if u.kind == .MINING { in_roster = u.target_planet == p }
+			if in_roster {
+				intel.units[intel.unit_count] = Intel_Unit{kind = u.kind, state = u.state, enemy = u.enemy}
+				intel.unit_count += 1
+			}
+		}
+		last_known_intel[p] = intel
 		intel_recorded[p] = true
 	}
 }
