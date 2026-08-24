@@ -207,6 +207,9 @@ quit_requested := false
 // Victory: latched once every planet is liberated AND the enemy HQ falls;
 // freezes the sim behind the victory overlay until restart.
 victory := false
+// Defeat: latched once no command base AND no player unit remains; freezes
+// the sim behind the game-over overlay until restart.
+defeated := false
 // Earth rally point: NO_RALLY (-1) means no rally set. (Earth used to double
 // as the 0 sentinel before the planet reindex.)
 NO_RALLY :: -1
@@ -237,6 +240,8 @@ main :: proc() {
 		dt := rl.GetFrameTime()
 		if victory {
 			update_victory_overlay()
+		} else if defeated {
+			update_game_over_overlay()
 		} else {
 			if pause_key_pressed() { toggle_pause() }
 			if game_paused {
@@ -252,6 +257,8 @@ main :: proc() {
 		draw_inspector()
 		if victory {
 			draw_victory_overlay()
+		} else if defeated {
+			draw_game_over_overlay()
 		} else if game_paused { draw_pause_menu() }
 		rl.EndDrawing()
 	}
@@ -310,6 +317,7 @@ reset_world :: proc() {
 	drone_speed_level = 0
 	earth_rally = NO_RALLY
 	victory = false
+	defeated = false
 	game_paused = false
 	rl.SetRandomSeed(7)
 }
@@ -2034,6 +2042,8 @@ step_simulation :: proc(dt: f32) {
 	laser_anim_time = math.mod(laser_anim_time + dt, 3600.0)
 	// Victory latch: every planet liberated AND the enemy HQ destroyed.
 	if !victory && victory_achieved() { victory = true }
+	// Defeat latch (edge-triggered; reset_world clears it): no bases AND no units.
+	if !victory && !defeated && defeat_condition() { defeated = true }
 }
 
 // Fog-of-war intel memory: while a planet is lit, keep snapshotting its
@@ -2191,6 +2201,52 @@ draw_victory_overlay :: proc() {
 	rl.DrawText(hint, c.int(w/2 - hint_w/2), c.int(h/2 + 126), 12, rl.Color{120, 130, 150, 255})
 	play_rect, quit_rect := victory_button_rects()
 	draw_button(play_rect, "[R] PLAY AGAIN", rl.Color{38, 92, 60, 255})
+	draw_button(quit_rect, "[Q] QUIT", rl.Color{92, 42, 42, 255})
+}
+
+// ---- Game over -----------------------------------------------------------
+
+// Defeat: no command base left on the map AND no player unit left anywhere.
+// Pure so the test suite can drive it directly.
+defeat_condition :: proc() -> bool {
+	if unit_count != 0 { return false }
+	for p in 0..<PLANET_COUNT {
+		if base_counts[p] != 0 { return false }
+	}
+	return true
+}
+
+// R / ENTER restart; Q / ESC quit. Clicks hit whichever button is under the
+// cursor (same layout as the victory overlay).
+update_game_over_overlay :: proc() {
+	if rl.IsKeyPressed(.R) || rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) { restart_game(); return }
+	if rl.IsKeyPressed(.Q) || rl.IsKeyPressed(.ESCAPE) { quit_requested = true; return }
+	if rl.IsMouseButtonPressed(.LEFT) {
+		play_rect, quit_rect := victory_button_rects()
+		mouse := rl.GetMousePosition()
+		if rl.CheckCollisionPointRec(mouse, play_rect) {
+			restart_game()
+		} else if rl.CheckCollisionPointRec(mouse, quit_rect) {
+			quit_requested = true
+		}
+	}
+}
+
+draw_game_over_overlay :: proc() {
+	rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), rl.Color{4, 8, 16, 215})
+	w := f32(rl.GetScreenWidth())
+	h := f32(rl.GetScreenHeight())
+	title: cstring = "GAME OVER"
+	title_w := f32(rl.MeasureText(title, 40))
+	rl.DrawText(title, c.int(w/2 - title_w/2), c.int(h/2 - 96), 40, rl.RED)
+	sub: cstring = "ALL COMMAND BASES AND DRONES LOST"
+	sub_w := f32(rl.MeasureText(sub, 26))
+	rl.DrawText(sub, c.int(w/2 - sub_w/2), c.int(h/2 - 42), 26, rl.WHITE)
+	hint: cstring = "R / ENTER: RESTART   //   Q / ESC: QUIT"
+	hint_w := f32(rl.MeasureText(hint, 12))
+	rl.DrawText(hint, c.int(w/2 - hint_w/2), c.int(h/2 + 126), 12, rl.Color{120, 130, 150, 255})
+	play_rect, quit_rect := victory_button_rects()
+	draw_button(play_rect, "[R] RESTART", rl.Color{38, 92, 60, 255})
 	draw_button(quit_rect, "[Q] QUIT", rl.Color{92, 42, 42, 255})
 }
 

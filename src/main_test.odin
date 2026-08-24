@@ -2020,3 +2020,65 @@ step_simulation_resolves_combat_at_enemy_hq :: proc(t: ^testing.T) {
 	players, enemies = planet_combatants(ENEMY_HOME)
 	testing.expect(t, players == players_before - 2 && enemies == enemies_before - 2, "HQ combat keeps ticking across steps")
 }
+
+// ---- Game over -----------------------------------------------------------
+
+@(test)
+defeat_triggers_when_all_bases_and_units_lost :: proc(t: ^testing.T) {
+	reset_world()
+	testing.expect(t, !defeat_condition(), "fresh state (1 base, 0 units) is not a defeat")
+	base_counts = {}
+	unit_count = 0
+	testing.expect(t, defeat_condition(), "zero bases AND zero units is defeat")
+}
+
+@(test)
+surviving_base_blocks_defeat :: proc(t: ^testing.T) {
+	reset_world()
+	base_counts = {}
+	base_counts[EARTH] = 1
+	unit_count = 0
+	testing.expect(t, !defeat_condition(), "a remaining command base blocks defeat")
+}
+
+@(test)
+surviving_units_block_defeat :: proc(t: ^testing.T) {
+	reset_world()
+	base_counts = {}
+	units[unit_count] = Unit{kind = .COMBAT, state = .GUARDING, position = {0, 3.8, 0}, home_planet = EARTH, affiliation = EARTH, target_planet = EARTH}
+	unit_count += 1
+	testing.expect(t, !defeat_condition(), "any surviving player unit blocks defeat")
+}
+
+@(test)
+step_simulation_latches_defeat_once :: proc(t: ^testing.T) {
+	reset_world()
+	base_counts = {}
+	unit_count = 0
+	step_simulation(f32(COMBAT_TICK))
+	testing.expect(t, defeated, "defeat latches when the condition holds")
+	// Edge-triggered: the overlay must not re-trigger or stack while showing.
+	step_simulation(f32(COMBAT_TICK))
+	testing.expect(t, defeated, "defeat stays latched, exactly once")
+}
+
+@(test)
+restart_game_restores_fresh_playable_state :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+	// Wreck the world into the defeat state, then restart.
+	base_counts = {}
+	unit_count = 0
+	defeated = true
+	restart_game()
+	testing.expect(t, !defeated && !victory && !game_paused, "restart clears the overlays and pause")
+	testing.expect(t, base_counts[EARTH] == 1, "restart restores Earth's command base")
+	players, enemies := planet_combatants(EARTH)
+	testing.expect(t, players == 1 && enemies == 0, "restart respawns Earth's starting fighter drone")
+	for p in 0..<PLANET_COUNT {
+		if p == EARTH { continue }
+		_, garrison := planet_combatants(p)
+		testing.expectf(t, garrison == GARRISON_FIGHTERS[p], "planet %d garrison rebuilt after restart", p)
+	}
+	testing.expect(t, enemy_base_hp[ENEMY_HOME] == ENEMY_HQ_BASE_HP, "enemy HQ restored after restart")
+}
