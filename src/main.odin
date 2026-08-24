@@ -40,6 +40,9 @@ ENEMY_HQ_BASE_HP :: 500
 // 0.2s the 500-drone HQ siege and every dogfight resolves 5x faster than the
 // old 1s tick.
 COMBAT_TICK :: 0.2
+// Uncontested enemy siege time per player command base on Earth: with no
+// defenders or miners left, one base falls every BASE_SIEGE_TIME seconds.
+BASE_SIEGE_TIME :: 2.0
 // Enemy attack waves: first at the 3-minute mark, then every 2 minutes.
 WAVE_FIRST_DELAY :: 180
 WAVE_INTERVAL :: 120
@@ -889,6 +892,18 @@ update_planet_combat :: proc(dt: f32, p: int) {
 			miner_timer[p] -= COMBAT_TICK
 			if !kill_player_miner(p) { break }
 		}
+		// Earth siege: once no defenders or miners are left, the occupying
+		// fighters tear down the command bases, one per BASE_SIEGE_TIME.
+		if p == EARTH && !player_miners_at(p) {
+			base_timer[p] += dt
+			for base_timer[p] >= BASE_SIEGE_TIME {
+				base_timer[p] -= BASE_SIEGE_TIME
+				destroy_player_base(p)
+				if base_counts[p] == 0 { break }
+			}
+		} else {
+			base_timer[p] = 0
+		}
 	} else if players > 0 {
 		combat_timer[p] = 0
 		// Occupation cleanup: with the garrison fighters gone, player fighters
@@ -989,6 +1004,26 @@ kill_player_miner :: proc(p: int) -> bool {
 		return true
 	}
 	return false
+}
+
+// Any player mining drone physically at p (transit legs are elsewhere and
+// safe). Mirrors kill_player_miner's target set without killing anything.
+player_miners_at :: proc(p: int) -> bool {
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind != .MINING || u.enemy || u.target_planet != p || u.state == .TRANSIT { continue }
+		return true
+	}
+	return false
+}
+
+// Enemy siege tears down one command base: drop its production line (the
+// highest-index line), then redistribute pending items across the survivors.
+destroy_player_base :: proc(p: int) {
+	if base_counts[p] <= 0 { return }
+	production[p][base_counts[p] - 1] = Production{}
+	base_counts[p] -= 1
+	fill_production_lines(p)
 }
 
 enemy_miner_count :: proc(p: int) -> int {
@@ -2206,10 +2241,13 @@ draw_victory_overlay :: proc() {
 
 // ---- Game over -----------------------------------------------------------
 
-// Defeat: no command base left on the map AND no player unit left anywhere.
-// Pure so the test suite can drive it directly.
+// Defeat: no command base left on the map AND no player unit left anywhere
+// (enemy garrisons and waves do not count). Pure so the test suite can drive
+// it directly.
 defeat_condition :: proc() -> bool {
-	if unit_count != 0 { return false }
+	for i := 0; i < unit_count; i += 1 {
+		if !units[i].enemy { return false }
+	}
 	for p in 0..<PLANET_COUNT {
 		if base_counts[p] != 0 { return false }
 	}

@@ -2023,6 +2023,51 @@ step_simulation_resolves_combat_at_enemy_hq :: proc(t: ^testing.T) {
 
 // ---- Game over -----------------------------------------------------------
 
+// Undefended Earth: with no player fighters or miners left, the occupying
+// enemy garrison tears down the command base via update_planet_combat.
+@(test)
+enemy_siege_destroys_undefended_earth_base :: proc(t: ^testing.T) {
+	reset_world()
+	testing.expect(t, base_counts[EARTH] == 1, "Earth opens with one command base")
+	add_guarding_fighter(EARTH, true)
+	// Siege needs BASE_SIEGE_TIME of uncontested occupation; step well past it.
+	destroyed := false
+	for i in 0..<40 {
+		update_planet_combat(f32(COMBAT_TICK), EARTH)
+		if base_counts[EARTH] == 0 { destroyed = true; break }
+	}
+	testing.expect(t, destroyed, "undefended Earth's command base falls to the siege")
+}
+
+// A surviving defender blocks the siege: the dogfight trade consumes both
+// sides and the base timer never runs while a player fighter guards Earth.
+@(test)
+defended_earth_base_survives_siege :: proc(t: ^testing.T) {
+	reset_world()
+	add_guarding_fighter(EARTH, false)
+	add_guarding_fighter(EARTH, true)
+	for i in 0..<40 { update_planet_combat(f32(COMBAT_TICK), EARTH) }
+	testing.expect(t, base_counts[EARTH] == 1, "defended Earth's base is untouched by the siege")
+}
+
+// Losing a base drops its production line; pending queue items redistribute
+// across the surviving lines.
+@(test)
+destroy_player_base_cleans_up_production :: proc(t: ^testing.T) {
+	reset_world()
+	minerals = 10000
+	queue_unit(.MINING) // fills line 0
+	base_counts[EARTH] = 2 // pretend a second base exists for this check
+	queue_unit(.COMBAT) // fills line 1
+	queue_unit(.MINING) // pending (both lines busy)
+	destroy_player_base(EARTH)
+	testing.expect(t, base_counts[EARTH] == 1, "base count decrements")
+	testing.expect(t, queued_count(EARTH) == 2, "line + pending still account for both orders")
+	testing.expect(t, production[EARTH][0].active && production[EARTH][0].kind == .MINING, "line 0 keeps its build")
+	testing.expect(t, !production[EARTH][1].active, "the destroyed base's line is cleared, not orphaned")
+	testing.expect(t, pending_count[EARTH] == 1 && pending[EARTH][0] == .MINING, "surviving order waits in pending")
+}
+
 @(test)
 defeat_triggers_when_all_bases_and_units_lost :: proc(t: ^testing.T) {
 	reset_world()
@@ -2048,6 +2093,16 @@ surviving_units_block_defeat :: proc(t: ^testing.T) {
 	units[unit_count] = Unit{kind = .COMBAT, state = .GUARDING, position = {0, 3.8, 0}, home_planet = EARTH, affiliation = EARTH, target_planet = EARTH}
 	unit_count += 1
 	testing.expect(t, !defeat_condition(), "any surviving player unit blocks defeat")
+}
+
+// Enemy garrisons and waves occupy unit slots: only PLAYER units block defeat.
+@(test)
+enemy_units_do_not_block_defeat :: proc(t: ^testing.T) {
+	reset_world()
+	base_counts = {}
+	add_guarding_fighter(VENUS, true)
+	add_enemy_miner(MERCURY)
+	testing.expect(t, defeat_condition(), "an enemy-only unit roster is still a defeat")
 }
 
 @(test)
