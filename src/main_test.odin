@@ -90,15 +90,15 @@ mined_planet_count_counts_distinct_planets_with_player_miners :: proc(t: ^testin
 	testing.expect(t, mined_planet_count() == 2, "enemy miners do not count")
 	units[1].state = .CONSTRUCTING
 	testing.expect(t, mined_planet_count() == 2, "constructing miner does not count its planet")
-	// Every cycle phase counts: transit, mining, returning, depositing, idle scout.
+	// Only actively mining drones count their planet: scouts in transit,
+	// pinned idle drones, returning and depositing miners never do.
 	units[0].state = .RETURNING
 	units[1].state = .IDLE
 	units[1].target_planet = JUPITER
-	units[1].state = .MINING
-	testing.expect(t, mined_planet_count() == 3, "returning/idle miners count their targets")
-	units[0].state = .TRANSIT
-	units[2].state = .DEPOSITING
-	testing.expect(t, mined_planet_count() == 3, "transit and depositing miners count their targets")
+	units[2].state = .TRANSIT
+	testing.expect(t, mined_planet_count() == 0, "traveling or idle miners never count as mining")
+	units[2].state = .MINING
+	testing.expect(t, mined_planet_count() == 1, "only the actively mining drone counts its planet")
 }
 
 @(test)
@@ -1985,4 +1985,38 @@ ghost_fighters_only_garrison_keeps_fighter_section :: proc(t: ^testing.T) {
 	testing.expect(t, ghost_view(), "Venus dark after scout loss")
 	testing.expect(t, ghost_count(.MINING, true) == 0, "miners-only strip left no miners in the snapshot")
 	testing.expect(t, ghost_count(.COMBAT, true) == GARRISON_FIGHTERS[VENUS], "fighter section stays populated without miners")
+}
+
+// Bug regression: dispatching miners to scout a planet (transit toward it,
+// pinned idle at an occupied world) must not register as mining — the invasion
+// watch fires only on actual mining activity.
+@(test)
+scouting_miners_do_not_trigger_invasion_watch :: proc(t: ^testing.T) {
+	reset_world()
+	// A miner ordered to a far planet, mid-transit: not mining yet.
+	units[unit_count] = Unit{kind = .MINING, state = .TRANSIT, position = {20, 0, 0}, home_planet = EARTH, affiliation = JUPITER, target_planet = JUPITER}
+	unit_count += 1
+	testing.expect(t, mined_planet_count() == 0, "miner dispatched toward a planet does not count as mining")
+	// Arriving at an occupied world pins the drone as an idle scout.
+	units[0].state = .IDLE
+	testing.expect(t, mined_planet_count() == 0, "scout pinned idle at an occupied planet does not count as mining")
+	// Once it actually mines (liberated world), the watch counts the planet.
+	units[0].state = .MINING
+	testing.expect(t, mined_planet_count() == 1, "actively mining the planet counts")
+}
+
+// The HQ is a sector, not a planet: dogfights there must resolve through the
+// same update_planet_combat path without tripping over planet-table bounds.
+@(test)
+step_simulation_resolves_combat_at_enemy_hq :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+	for i in 0..<5 { add_guarding_fighter(ENEMY_HOME, false) }
+	players_before, enemies_before := planet_combatants(ENEMY_HOME)
+	step_simulation(f32(COMBAT_TICK))
+	players, enemies := planet_combatants(ENEMY_HOME)
+	testing.expect(t, players == players_before - 1 && enemies == enemies_before - 1, "1:1 trade per tick at the HQ sector (garrison included)")
+	step_simulation(f32(COMBAT_TICK))
+	players, enemies = planet_combatants(ENEMY_HOME)
+	testing.expect(t, players == players_before - 2 && enemies == enemies_before - 2, "HQ combat keeps ticking across steps")
 }

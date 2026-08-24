@@ -795,15 +795,16 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 // no player defenders left, enemies destroy one mining drone every COMBAT_TICK.
 // Player fleets sweeping an occupied planet kill its garrison miners first,
 // then damage the enemy base by one per player fighter per tick until it falls.
-// Distinct planets currently being mined by the player: a planet counts if
-// at least one non-enemy mining drone is targeting it (any non-CONSTRUCTING
-// state — transit, idle scout, mining, returning or depositing). mined_planets
-// fills `seen` so the wave loop can strike each mined world exactly once.
+// Distinct planets currently being mined by the player: a planet counts only
+// while at least one non-enemy mining drone is actively MINING it (state
+// .MINING). Dispatched scouts or drones pinned in orbit don't count — invasion
+// waves answer production, not travel. mined_planets fills `seen` so the wave
+// loop can strike each mined world exactly once.
 mined_planets :: proc(seen: ^[PLANET_COUNT]bool) -> int {
 	for p in 0..<PLANET_COUNT { seen[p] = false }
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
-		if u.kind != .MINING || u.enemy || u.state == .CONSTRUCTING { continue }
+		if u.kind != .MINING || u.enemy || u.state != .MINING { continue }
 		seen[u.target_planet] = true
 	}
 	count := 0
@@ -1346,7 +1347,6 @@ draw_inspector :: proc() {
 	rl.DrawRectangle(c.int(x), 0, SCREEN_PANEL_WIDTH, rl.GetScreenHeight(), rl.Color{16, 22, 38, 255})
 	rl.DrawRectangle(c.int(x), 0, 3, rl.GetScreenHeight(), rl.GOLD)
 	rl.DrawText("PLANET INSPECTOR", c.int(x + 18), 18, 20, rl.WHITE)
-	planet := &planets[selected_planet]
 	if selected_planet == ENEMY_HOME {
 		// The HQ is a sector, not a planet: a fortress header instead of the
 		// mineral readout (which would index past the planet table).
@@ -1354,6 +1354,9 @@ draw_inspector :: proc() {
 		if enemy_hq_destroyed() { hq_title = "ENEMY FORTRESS (DESTROYED)" }
 		rl.DrawText(hq_title, c.int(x + 18), 48, 15, rl.Color{235, 110, 110, 255})
 	} else {
+		// Planet pointer lives below the HQ guard: selected_planet is the
+		// ENEMY_HOME sector index (8) there, past the planets table.
+		planet := &planets[selected_planet]
 		rl.DrawText(rl.TextFormat("%s  //  MINERALS %03d", planet.name, planet.minerals), c.int(x + 18), 48, 15, rl.SKYBLUE)
 	}
 	if selected_planet == EARTH {
