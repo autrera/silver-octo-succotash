@@ -144,6 +144,57 @@ NEON_PANEL_SOLID :: rl.Color{14, 20, 34, 250}
 NEON_TEXT :: rl.Color{220, 235, 250, 255}
 NEON_MUTED :: rl.Color{155, 170, 195, 255}
 
+// ---- Inspector layout ---------------------------------------------------
+// One horizontal grid for the whole side panel: headers, cards, buttons,
+// production lines and rosters all align to PANEL_PAD_X with content width
+// PANEL_CONTENT_W. Section tops flow from SECTION_TOP through ORDERS_BASE_Y
+// into the queue/roster procs below. Render procs and click hitboxes share
+// every constant, so graphics and hitboxes cannot drift apart.
+PANEL_PAD_X :: 18
+PANEL_CONTENT_W :: SCREEN_PANEL_WIDTH - 2 * PANEL_PAD_X
+CARD_INSET :: 10
+BTN_TEXT_PAD_X :: 9
+BTN_TEXT_PAD_Y :: 8
+BTN_GAP :: 12
+BUILD_BTN_W :: 141
+BUILD_BTN_H :: 34
+BASE_BTN_H :: 32
+SLOT_SIZE :: 18
+GRID_PITCH :: 22
+PROD_PITCH :: 30
+PANEL_HEADER_Y :: 18
+PANEL_DIVIDER_Y :: 44
+PANEL_SUB_Y :: 48
+BASES_Y :: 76
+SECTION_TOP :: 104
+CARD_H :: 54
+CARD_LINE_1 :: 114
+CARD_LINE_2 :: 133
+PROD_LABEL_Y :: 166
+PROD_FIRST_Y :: 180
+ORDERS_BASE_Y :: 246
+UPGRADE_DY :: 38
+UPGRADE_H :: 26
+QUEUE_DY :: 76
+QUEUE_LABEL_GAP :: 17
+DIALOG_PAD :: 28
+DIALOG_BTN_H :: 44
+HUD_PAD :: 12
+PIPS_OFF :: 58
+READOUT_X :: 236
+BADGE_PAD :: 5
+BADGE_GAP :: 12
+BADGE_Y :: 47
+BADGE_H :: 19
+HUD_DOCK_H :: 34
+HUD_TEXT_X :: HUD_PAD + 10
+HUD_TEXT_Y :: HUD_PAD + 8
+ROSTER_BASE_Y :: 196
+ROSTER_BELOW_QUEUE :: 147
+SECTION_PAD_Y :: 26
+PROD_BAR_W :: 185
+BAR_H :: 7
+
 Unit :: struct {
 	kind: Unit_Type,
 	state: Unit_State,
@@ -478,17 +529,17 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 	// keeping the inspector usable even when raygui styles are unavailable.
 	// Base construction and unit production exist only on Earth.
 	if selected_planet == EARTH {
-		if rl.CheckCollisionPointRec(mouse, {panel_x + 18, 106, 294, 32}) {
+		if rl.CheckCollisionPointRec(mouse, {panel_x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, BASE_BTN_H}) {
 			// The hidden button still swallows the click: nothing happens at cap.
 			if base_button_visible() { start_base_construction() }
 			return
 		}
 		orders_y := f32(production_orders_y())
-		if rl.CheckCollisionPointRec(mouse, {panel_x + 18, orders_y, 141, 34}) {
+		if rl.CheckCollisionPointRec(mouse, {panel_x + PANEL_PAD_X, orders_y, BUILD_BTN_W, BUILD_BTN_H}) {
 			queue_unit(.MINING)
 			return
 		}
-		if rl.CheckCollisionPointRec(mouse, {panel_x + 171, orders_y, 141, 34}) {
+		if rl.CheckCollisionPointRec(mouse, {panel_x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, orders_y, BUILD_BTN_W, BUILD_BTN_H}) {
 			queue_unit(.COMBAT)
 			return
 		}
@@ -676,17 +727,17 @@ queue_unit :: proc(kind: Unit_Type) {
 // Screen rect of the drone build-speed upgrade button. Shared by the
 // render and the click hitbox so they cannot drift apart.
 drone_speed_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
-	return rl.Rectangle{panel_x + 18, f32(production_orders_y() + 38), 294, 26}
+	return rl.Rectangle{panel_x + PANEL_PAD_X, f32(production_orders_y() + UPGRADE_DY), PANEL_CONTENT_W, UPGRADE_H}
 }
 
 // Screen rect of build-queue slot `slot` (0 = queue head: active production
 // lines in base order, then pending items). Shared by the queue rendering and
 // the cancel-click hitboxes so they cannot drift apart.
 queue_slot_rect :: proc(panel_x: f32, slot: int) -> rl.Rectangle {
-	queue_y := f32(production_orders_y() + 76)
+	queue_y := f32(production_orders_y() + QUEUE_DY)
 	row := slot / MAX_BASES
 	column := slot % MAX_BASES
-	return rl.Rectangle{panel_x + 18 + f32(column * 22), queue_y + 17 + f32(row * 22), 18, 18}
+	return rl.Rectangle{panel_x + PANEL_PAD_X + f32(column * GRID_PITCH), queue_y + QUEUE_LABEL_GAP + f32(row * GRID_PITCH), SLOT_SIZE, SLOT_SIZE}
 }
 
 // Cancel the unit at queue position `index` (same ordering as
@@ -1381,22 +1432,22 @@ draw_world :: proc() {
 	mps_w := rl.MeasureText(mps_text, 18)
 	speed_w := rl.MeasureText(speed_text, 18)
 	bar_w := min_w + mps_w + speed_w + 46
-	rl.DrawRectangle(12, 12, bar_w, 34, NEON_PANEL)
-	rl.DrawRectangleLinesEx({12, 12, f32(bar_w), 34}, 1, NEON_DIM)
-	rl.DrawLine(22 + min_w + 6, 17, 22 + min_w + 6, 41, NEON_DIM)
-	rl.DrawLine(22 + min_w + 12 + mps_w + 6, 17, 22 + min_w + 12 + mps_w + 6, 41, NEON_DIM)
-	rl.DrawText(min_text, 22, 20, 18, NEON_CYAN)
-	rl.DrawText(mps_text, 22 + min_w + 12, 20, 18, NEON_BLUE)
-	rl.DrawText(speed_text, 22 + min_w + 12 + mps_w + 12, 20, 18, rl.Color{120, 220, 160, 255})
+	rl.DrawRectangle(HUD_PAD, HUD_PAD, bar_w, HUD_DOCK_H, NEON_PANEL)
+	rl.DrawRectangleLinesEx({HUD_PAD, HUD_PAD, f32(bar_w), HUD_DOCK_H}, 1, NEON_DIM)
+	rl.DrawLine(HUD_TEXT_X + min_w + 6, HUD_PAD + 5, HUD_TEXT_X + min_w + 6, HUD_PAD + 29, NEON_DIM)
+	rl.DrawLine(HUD_TEXT_X + min_w + BTN_GAP + mps_w + 6, HUD_PAD + 5, HUD_TEXT_X + min_w + BTN_GAP + mps_w + 6, HUD_PAD + 29, NEON_DIM)
+	rl.DrawText(min_text, HUD_TEXT_X, HUD_TEXT_Y, 18, NEON_CYAN)
+	rl.DrawText(mps_text, HUD_TEXT_X + min_w + BTN_GAP, HUD_TEXT_Y, 18, NEON_BLUE)
+	rl.DrawText(speed_text, HUD_TEXT_X + min_w + BTN_GAP + mps_w + BTN_GAP, HUD_TEXT_Y, 18, rl.Color{120, 220, 160, 255})
 	// Draw status BEFORE the squad badges: rl.TextFormat serves every caller
 	// from a small rotating pool of static buffers, so each badge label
 	// overwrites an earlier one — with a second saved squad the badges
 	// clobbered this line (FPS/controls vanished from the bottom HUD).
 	// zoom_text is safe: it is formatted and drawn immediately.
-	rl.DrawText(status, 18, rl.GetScreenHeight() - 28, 14, NEON_MUTED)
+	rl.DrawText(status, PANEL_PAD_X, rl.GetScreenHeight() - 28, 14, NEON_MUTED)
 	draw_squad_hud()
 	zoom_text := rl.TextFormat("ZOOM %d%% // ALTITUDE %.0f", zoom_percent(), camera.position.y)
-	rl.DrawLine(18, rl.GetScreenHeight() - 34, viewport_w - 18, rl.GetScreenHeight() - 34, NEON_DIM)
+	rl.DrawLine(PANEL_PAD_X, rl.GetScreenHeight() - 34, viewport_w - PANEL_PAD_X, rl.GetScreenHeight() - 34, NEON_DIM)
 	rl.DrawText(zoom_text, viewport_w - 208, rl.GetScreenHeight() - 28, 14, NEON_MUTED)
 }
 
@@ -1406,19 +1457,19 @@ draw_inspector :: proc() {
 	rl.DrawRectangle(c.int(x), 0, SCREEN_PANEL_WIDTH, rl.GetScreenHeight(), NEON_PANEL)
 	rl.DrawRectangle(c.int(x), 0, 1, rl.GetScreenHeight(), NEON_CYAN)
 	rl.DrawRectangle(c.int(x + 1), 0, 1, rl.GetScreenHeight(), rl.Color{0, 225, 255, 40})
-	rl.DrawText("[ PLANET INSPECTOR ]", c.int(x + 18), 18, 20, NEON_CYAN)
-	rl.DrawLine(c.int(x + 18), 44, c.int(x + SCREEN_PANEL_WIDTH - 18), 44, NEON_DIM)
+	rl.DrawText("[ PLANET INSPECTOR ]", c.int(x + PANEL_PAD_X), PANEL_HEADER_Y, 20, NEON_CYAN)
+	rl.DrawLine(c.int(x + PANEL_PAD_X), PANEL_DIVIDER_Y, c.int(x + SCREEN_PANEL_WIDTH - PANEL_PAD_X), PANEL_DIVIDER_Y, NEON_DIM)
 	if selected_planet == ENEMY_HOME {
 		// The HQ is a sector, not a planet: a fortress header instead of the
 		// mineral readout (which would index past the planet table).
 		hq_title: cstring = "ENEMY FORTRESS"
 		if enemy_hq_destroyed() { hq_title = "ENEMY FORTRESS (DESTROYED)" }
-		rl.DrawText(hq_title, c.int(x + 18), 48, 15, rl.Color{235, 110, 110, 255})
+		rl.DrawText(hq_title, c.int(x + PANEL_PAD_X), PANEL_SUB_Y, 15, rl.Color{235, 110, 110, 255})
 	} else {
 		// Planet pointer lives below the HQ guard: selected_planet is the
 		// ENEMY_HOME sector index (8) there, past the planets table.
 		planet := &planets[selected_planet]
-		rl.DrawText(rl.TextFormat("%s  //  MINERALS %03d", planet.name, planet.minerals), c.int(x + 18), 48, 15, NEON_BLUE)
+		rl.DrawText(rl.TextFormat("%s  //  MINERALS %03d", planet.name, planet.minerals), c.int(x + PANEL_PAD_X), PANEL_SUB_Y, 15, NEON_BLUE)
 	}
 	if selected_planet == EARTH {
 		draw_earth_inspector(x)
@@ -1437,14 +1488,14 @@ draw_inspector :: proc() {
 		// mining, so it keeps the plain count). One TextFormat per DrawText keeps
 		// each buffer alive until drawn (rotating TextFormat pool).
 		if selected_planet != ENEMY_HOME {
-			rl.DrawText(rl.TextFormat("MINING DRONES (%d/%d)", roster_count(.MINING), planet_mining_cap(selected_planet)), c.int(x + 18), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
+			rl.DrawText(rl.TextFormat("MINING DRONES (%d/%d)", roster_count(.MINING), planet_mining_cap(selected_planet)), c.int(x + PANEL_PAD_X), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
 		} else {
-			rl.DrawText(rl.TextFormat("MINING DRONES (%d)", roster_count(.MINING)), c.int(x + 18), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
+			rl.DrawText(rl.TextFormat("MINING DRONES (%d)", roster_count(.MINING)), c.int(x + PANEL_PAD_X), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
 		}
 		for i := 0; i < unit_count; i += 1 {
 			if unit_in_roster(i, .MINING) { draw_unit_tile(i, x, unit_tile_y(.MINING), roster_ordinal(i, .MINING), false) }
 		}
-			rl.DrawText(rl.TextFormat("FIGHTING DRONES (%d)", roster_count(.COMBAT)), c.int(x + 18), c.int(unit_tile_y(.COMBAT) - 18), 13, NEON_BLUE)
+			rl.DrawText(rl.TextFormat("FIGHTING DRONES (%d)", roster_count(.COMBAT)), c.int(x + PANEL_PAD_X), c.int(unit_tile_y(.COMBAT) - 18), 13, NEON_BLUE)
 		for i := 0; i < unit_count; i += 1 {
 			if unit_in_roster(i, .COMBAT) { draw_unit_tile(i, x, unit_tile_y(.COMBAT), roster_ordinal(i, .COMBAT), false) }
 		}
@@ -1454,20 +1505,20 @@ draw_inspector :: proc() {
 		if has_vision(selected_planet) {
 			enemy_header := rl.Color{235, 110, 110, 255}
 			if enemy_roster_count(.MINING) > 0 {
-				rl.DrawText(rl.TextFormat("ENEMY MINING DRONES (%d)", enemy_roster_count(.MINING)), c.int(x + 18), c.int(enemy_tile_y(.MINING) - 18), 13, enemy_header)
+				rl.DrawText(rl.TextFormat("ENEMY MINING DRONES (%d)", enemy_roster_count(.MINING)), c.int(x + PANEL_PAD_X), c.int(enemy_tile_y(.MINING) - 18), 13, enemy_header)
 				for i := 0; i < unit_count; i += 1 {
 					if enemy_in_roster(i, .MINING) { draw_unit_tile(i, x, enemy_tile_y(.MINING), enemy_roster_ordinal(i, .MINING), true) }
 				}
 			}
 			if enemy_roster_count(.COMBAT) > 0 {
-				rl.DrawText(rl.TextFormat("ENEMY FIGHTING DRONES (%d)", enemy_roster_count(.COMBAT)), c.int(x + 18), c.int(enemy_tile_y(.COMBAT) - 18), 13, enemy_header)
+				rl.DrawText(rl.TextFormat("ENEMY FIGHTING DRONES (%d)", enemy_roster_count(.COMBAT)), c.int(x + PANEL_PAD_X), c.int(enemy_tile_y(.COMBAT) - 18), 13, enemy_header)
 				for i := 0; i < unit_count; i += 1 {
 					if enemy_in_roster(i, .COMBAT) { draw_unit_tile(i, x, enemy_tile_y(.COMBAT), enemy_roster_ordinal(i, .COMBAT), true) }
 				}
 			}
 		}
 	}
-	if h > 700 { rl.DrawText(rl.TextFormat("SELECTED UNITS: %d", selection_count()), c.int(x + 18), rl.GetScreenHeight() - 34, 13, NEON_CYAN) }
+	if h > 700 { rl.DrawText(rl.TextFormat("SELECTED UNITS: %d", selection_count()), c.int(x + PANEL_PAD_X), rl.GetScreenHeight() - 34, 13, NEON_CYAN) }
 	// Live drag rectangle for the inspector box-select.
 	if inspector_drag_active {
 		rect := rect_between(inspector_drag_start, rl.GetMousePosition())
@@ -1479,56 +1530,56 @@ draw_inspector :: proc() {
 // Earth owns the command bases: base pips, base construction, production
 // lines and the build queue all live here and nowhere else.
 draw_earth_inspector :: proc(x: f32) {
-	rl.DrawText("BASES", c.int(x + 18), 76, 14, NEON_CYAN)
+	rl.DrawText("BASES", c.int(x + PANEL_PAD_X), BASES_Y, 14, NEON_CYAN)
 	for pip := 0; pip < MAX_BASES; pip += 1 {
 		pip_color := rl.Color{14, 20, 34, 255}
 		pip_border := NEON_DIM
 		if pip < base_counts[EARTH] { pip_color = rl.Color{0, 90, 120, 255}; pip_border = NEON_CYAN }
-		pip_rect := rl.Rectangle{x + 76 + f32(pip * 22), 75, 18, 18}
+		pip_rect := rl.Rectangle{x + PANEL_PAD_X + PIPS_OFF + f32(pip * GRID_PITCH), BASES_Y - 1, SLOT_SIZE, SLOT_SIZE}
 		rl.DrawRectangleRec(pip_rect, pip_color)
 		rl.DrawRectangleLinesEx(pip_rect, 1, pip_border)
 		if pip < base_counts[EARTH] { rl.DrawRectangle(c.int(pip_rect.x + 5), c.int(pip_rect.y + 5), 8, 8, NEON_CYAN) }
 	}
-	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(EARTH)), c.int(x + 236), 70, 13, NEON_BLUE)
-	rl.DrawText(rl.TextFormat("GLOBAL %.1f", global_mps()), c.int(x + 236), 86, 13, NEON_CYAN)
+	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(EARTH)), c.int(x + READOUT_X), 70, 13, NEON_BLUE)
+	rl.DrawText(rl.TextFormat("GLOBAL %.1f", global_mps()), c.int(x + READOUT_X), 86, 13, NEON_CYAN)
 
 	if base_button_visible() {
-		base_button := rl.Rectangle{x + 18, 106, 294, 32}
+		base_button := rl.Rectangle{x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, BASE_BTN_H}
 		if base_build_planet == EARTH {
 			rl.DrawRectangleRec(base_button, NEON_PANEL_SOLID)
 			if constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS {
-				rl.DrawText(rl.TextFormat("CREW %d/%d  //  MINERS AUTO-JOIN ON DEPOSIT", constructing_miners(EARTH), BASE_CONSTRUCT_MINERS), c.int(x + 24), 115, 11, NEON_CYAN)
+				rl.DrawText(rl.TextFormat("CREW %d/%d  //  MINERS AUTO-JOIN ON DEPOSIT", constructing_miners(EARTH), BASE_CONSTRUCT_MINERS), c.int(x + PANEL_PAD_X + CARD_INSET), 115, 11, NEON_CYAN)
 			} else {
-				rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + 28), 115, 14, NEON_CYAN)
-				draw_progress({x + 18, 142, 294, 7}, base_build_progress / BASE_CONSTRUCT_TIME, NEON_CYAN)
+				rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + PANEL_PAD_X + CARD_INSET), 115, 14, NEON_CYAN)
+				draw_progress({x + PANEL_PAD_X, 142, PANEL_CONTENT_W, BAR_H}, base_build_progress / BASE_CONSTRUCT_TIME, NEON_CYAN)
 			}
 			rl.DrawRectangleLinesEx(base_button, 1, NEON_STEEL)
 		} else {
 			rl.DrawRectangleRec(base_button, NEON_PANEL_SOLID)
 			rl.DrawRectangleLinesEx(base_button, 1, NEON_STEEL)
-			rl.DrawText("Construct Command Base (500 Minerals)", c.int(x + 28), 115, 14, NEON_TEXT)
+			rl.DrawText("Construct Command Base (500 Minerals)", c.int(x + PANEL_PAD_X + CARD_INSET), 115, 14, NEON_TEXT)
 		}
 	}
 
-	rl.DrawText("PRODUCTION LINES", c.int(x + 18), 166, 13, NEON_CYAN)
+	rl.DrawText("PRODUCTION LINES", c.int(x + PANEL_PAD_X), PROD_LABEL_Y, 13, NEON_CYAN)
 	for b := 0; b < base_counts[EARTH]; b += 1 {
 		line := production[EARTH][b]
-		y := f32(180 + b * 30)
+		y := f32(PROD_FIRST_Y + b * PROD_PITCH)
 		if line.active {
 			name := "MINING DRONE"
 			total := drone_build_time(line.kind)
 			if line.kind == .COMBAT { name = "COMBAT DRONE" }
-			rl.DrawText(rl.TextFormat("BASE %d  %s", b + 1, name), c.int(x + 18), c.int(y), 12, NEON_TEXT)
-			draw_progress({x + 18, y + 17, 185, 7}, line.progress / total, NEON_CYAN)
+			rl.DrawText(rl.TextFormat("BASE %d  %s", b + 1, name), c.int(x + PANEL_PAD_X), c.int(y), 12, NEON_TEXT)
+			draw_progress({x + PANEL_PAD_X, y + QUEUE_LABEL_GAP, PROD_BAR_W, BAR_H}, line.progress / total, NEON_CYAN)
 		} else {
-			rl.DrawText(rl.TextFormat("BASE %d  READY", b + 1), c.int(x + 18), c.int(y), 12, rl.Color{90, 110, 135, 255})
+			rl.DrawText(rl.TextFormat("BASE %d  READY", b + 1), c.int(x + PANEL_PAD_X), c.int(y), 12, rl.Color{90, 110, 135, 255})
 		}
 	}
 
 	orders_y := production_orders_y()
-	rl.DrawText("BUILD", c.int(x + 18), c.int(orders_y - 16), 13, NEON_CYAN)
-	draw_button({x + 18, f32(orders_y), 141, 34}, "[M] MINER  (50)", NEON_PANEL_SOLID)
-	draw_button({x + 171, f32(orders_y), 141, 34}, "[C] COMBAT (125)", NEON_PANEL_SOLID)
+	rl.DrawText("BUILD", c.int(x + PANEL_PAD_X), c.int(orders_y - 16), 13, NEON_CYAN)
+	draw_button({x + PANEL_PAD_X, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, "[M] MINER  (50)", NEON_PANEL_SOLID)
+	draw_button({x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, "[C] COMBAT (125)", NEON_PANEL_SOLID)
 	// Drone build-speed upgrade: one button below the BUILD row. At the cap it
 	// shows MAX and the click handler is a no-op.
 	if drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
@@ -1537,10 +1588,10 @@ draw_earth_inspector :: proc(x: f32) {
 		draw_button(drone_speed_button_rect(x), rl.TextFormat("[U] DRONE BUILD SPEED  LVL %d/%d (%d)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX, DRONE_SPEED_UPGRADE_COST), NEON_PANEL_SOLID)
 	}
 
-	queue_y := production_orders_y() + 76
+	queue_y := production_orders_y() + QUEUE_DY
 	queue_capacity := base_counts[EARTH] * MAX_BASES
 	queue_total := queued_count(EARTH)
-	rl.DrawText(rl.TextFormat("BUILD QUEUE  (%d/%d)", queue_total, queue_capacity), c.int(x + 18), c.int(queue_y), 12, NEON_CYAN)
+	rl.DrawText(rl.TextFormat("BUILD QUEUE  (%d/%d)", queue_total, queue_capacity), c.int(x + PANEL_PAD_X), c.int(queue_y), 12, NEON_CYAN)
 	for slot := 0; slot < queue_capacity; slot += 1 {
 		queued := slot < queue_total
 		kind := Unit_Type.MINING
@@ -1552,31 +1603,31 @@ draw_earth_inspector :: proc(x: f32) {
 // The enemy HQ sector inspector: fortress status card plus the shared unit
 // rosters. Drawn for ENEMY_HOME instead of the outpost card.
 draw_hq_inspector :: proc(x: f32) {
-	card := rl.Rectangle{x + 18, 104, 294, 54}
+	card := rl.Rectangle{x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, CARD_H}
 	if enemy_hq_destroyed() {
 		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
 		rl.DrawRectangleLinesEx(card, 1, rl.Color{58, 60, 66, 255})
-		rl.DrawText("HUSK — SECTOR SILENCED", c.int(x + 28), 114, 14, rl.Color{120, 125, 135, 255})
-		rl.DrawText("NO WAVES LAUNCH FROM A DEAD HQ", c.int(x + 28), 133, 12, NEON_TEXT)
+		rl.DrawText("HUSK — SECTOR SILENCED", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 14, rl.Color{120, 125, 135, 255})
+		rl.DrawText("NO WAVES LAUNCH FROM A DEAD HQ", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 12, NEON_TEXT)
 	} else if has_vision(ENEMY_HOME) {
 		_, garrison := planet_combatants(ENEMY_HOME)
 		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
 		rl.DrawRectangleLinesEx(card, 1, rl.Color{205, 50, 58, 255})
-		rl.DrawText("ENEMY FORTRESS", c.int(x + 28), 114, 14, rl.Color{235, 110, 110, 255})
-		rl.DrawText(rl.TextFormat("FIGHTERS %d  //  INTEGRITY %d/%d", garrison, enemy_base_hp[ENEMY_HOME], ENEMY_HQ_BASE_HP), c.int(x + 28), 133, 12, NEON_TEXT)
+		rl.DrawText("ENEMY FORTRESS", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 14, rl.Color{235, 110, 110, 255})
+		rl.DrawText(rl.TextFormat("FIGHTERS %d  //  INTEGRITY %d/%d", garrison, enemy_base_hp[ENEMY_HOME], ENEMY_HQ_BASE_HP), c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 12, NEON_TEXT)
 	} else {
 		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
 		rl.DrawRectangleLinesEx(card, 1, NEON_STEEL)
-		rl.DrawText("UNSCOUTED", c.int(x + 28), 114, 14, NEON_MUTED)
-		rl.DrawText("SEND COMBAT DRONES TO REVEAL", c.int(x + 28), 133, 12, NEON_TEXT)
+		rl.DrawText("UNSCOUTED", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 14, NEON_MUTED)
+		rl.DrawText("SEND COMBAT DRONES TO REVEAL", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 12, NEON_TEXT)
 	}
 }
 
 // Outpost planets host no player bases: show the mining forecast, the enemy
 // stronghold status (mining is locked until it falls) and unit rosters only.
 draw_outpost_inspector :: proc(x: f32) {
-	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(selected_planet)), c.int(x + 18), 79, 13, NEON_BLUE)
-	card := rl.Rectangle{x + 18, 104, 294, 54}
+	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(selected_planet)), c.int(x + PANEL_PAD_X), 79, 13, NEON_BLUE)
+	card := rl.Rectangle{x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, CARD_H}
 	if has_vision(selected_planet) {
 		stronghold_color := rl.Color{120, 120, 138, 255}
 		title: cstring = "UNSCOUTED"
@@ -1594,12 +1645,12 @@ draw_outpost_inspector :: proc(x: f32) {
 		}
 		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
 		rl.DrawRectangleLinesEx(card, 1, stronghold_color)
-		rl.DrawText(title, c.int(x + 28), 114, 14, stronghold_color)
-		rl.DrawText(status, c.int(x + 28), 133, 12, NEON_TEXT)
+		rl.DrawText(title, c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 14, stronghold_color)
+		rl.DrawText(status, c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 12, NEON_TEXT)
 	} else if intel_recorded[selected_planet] {
 		// Scouted once, now dark: the stronghold card renders from the frozen
 		// intel snapshot (the full ghost roster below comes from it too).
-		card.height = 54
+		card.height = CARD_H
 		amber := rl.Color{178, 148, 82, 255}
 		grey := rl.Color{152, 152, 162, 255}
 		intel := last_known_intel[selected_planet]
@@ -1608,14 +1659,14 @@ draw_outpost_inspector :: proc(x: f32) {
 		if intel.base_hp <= 0 { title = "LIBERATED" }
 		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
 		rl.DrawRectangleLinesEx(card, 1, amber)
-		rl.DrawText(title, c.int(x + 28), 114, 14, amber)
-		rl.DrawText(status, c.int(x + 28), 133, 12, grey)
+		rl.DrawText(title, c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 14, amber)
+		rl.DrawText(status, c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 12, grey)
 	} else {
 		// Never scouted: no intel exists at all.
 		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
 		rl.DrawRectangleLinesEx(card, 1, NEON_STEEL)
-		rl.DrawText("UNSCOUTED", c.int(x + 28), 114, 14, NEON_MUTED)
-		rl.DrawText("STATUS UNKNOWN — SEND SCOUT DRONE", c.int(x + 28), 133, 12, NEON_TEXT)
+		rl.DrawText("UNSCOUTED", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 14, NEON_MUTED)
+		rl.DrawText("STATUS UNKNOWN — SEND SCOUT DRONE", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 12, NEON_TEXT)
 	}
 }
 
@@ -1640,9 +1691,9 @@ draw_ghost_rosters :: proc(x: f32) {
 		if count == 0 { continue }
 		y := unit_tile_y(kind)
 		if section == 0 {
-			rl.DrawText(rl.TextFormat("%s (%d/%d)", label, count, planet_mining_cap(selected_planet)), c.int(x + 18), c.int(y - 18), 13, color)
+			rl.DrawText(rl.TextFormat("%s (%d/%d)", label, count, planet_mining_cap(selected_planet)), c.int(x + PANEL_PAD_X), c.int(y - 18), 13, color)
 		} else {
-			rl.DrawText(rl.TextFormat("%s (%d)", label, count), c.int(x + 18), c.int(y - 18), 13, color)
+			rl.DrawText(rl.TextFormat("%s (%d)", label, count), c.int(x + PANEL_PAD_X), c.int(y - 18), 13, color)
 		}
 		ordinal := 0
 		for i := 0; i < intel.unit_count; i += 1 {
@@ -1661,7 +1712,7 @@ draw_ghost_rosters :: proc(x: f32) {
 		count := ghost_count(kind, true)
 		if count == 0 { continue }
 		y := enemy_tile_y(kind)
-		rl.DrawText(rl.TextFormat("%s (%d)", label, count), c.int(x + 18), c.int(y - 18), 13, enemy_header)
+		rl.DrawText(rl.TextFormat("%s (%d)", label, count), c.int(x + PANEL_PAD_X), c.int(y - 18), 13, enemy_header)
 		ordinal := 0
 		for i := 0; i < intel.unit_count; i += 1 {
 			u := &intel.units[i]
@@ -1677,7 +1728,7 @@ draw_ghost_rosters :: proc(x: f32) {
 }
 
 production_orders_y :: proc() -> int {
-	return 246 + max_int(base_counts[selected_planet] - 1, 0) * 30
+	return ORDERS_BASE_Y + max_int(base_counts[selected_planet] - 1, 0) * PROD_PITCH
 }
 
 queued_count :: proc(planet: int) -> int {
@@ -1718,11 +1769,11 @@ unit_tile_y :: proc(kind: Unit_Type) -> int {
 	mining_rows := (view_count(.MINING, false) + TILES_PER_ROW - 1) / TILES_PER_ROW
 	// Outpost inspectors have no base/production/queue sections, so rosters
 	// sit at a fixed height; on Earth they flow below the build queue.
-	y := 196
+	y := ROSTER_BASE_Y
 	if selected_planet == EARTH {
-		y = production_orders_y() + 147 + (base_counts[selected_planet] - 1) * 22
+		y = production_orders_y() + ROSTER_BELOW_QUEUE + (base_counts[selected_planet] - 1) * GRID_PITCH
 	}
-	if kind == .COMBAT { y += 26 + mining_rows * (TILE_SIZE + TILE_GAP) }
+	if kind == .COMBAT { y += SECTION_PAD_Y + mining_rows * (TILE_SIZE + TILE_GAP) }
 	return y
 }
 
@@ -1757,10 +1808,10 @@ enemy_roster_ordinal :: proc(index: int, kind: Unit_Type) -> int {
 // with the enemy mining section (when present) stacked above the fighters.
 enemy_tile_y :: proc(kind: Unit_Type) -> int {
 	combat_rows := (view_count(.COMBAT, false) + TILES_PER_ROW - 1) / TILES_PER_ROW
-	y := unit_tile_y(.COMBAT) + 26 + combat_rows * (TILE_SIZE + TILE_GAP)
+	y := unit_tile_y(.COMBAT) + SECTION_PAD_Y + combat_rows * (TILE_SIZE + TILE_GAP)
 	if kind == .COMBAT {
 		enemy_mining_rows := (view_count(.MINING, true) + TILES_PER_ROW - 1) / TILES_PER_ROW
-		y += 26 + enemy_mining_rows * (TILE_SIZE + TILE_GAP)
+		y += SECTION_PAD_Y + enemy_mining_rows * (TILE_SIZE + TILE_GAP)
 	}
 	return y
 }
@@ -1794,7 +1845,7 @@ view_count :: proc(kind: Unit_Type, enemy: bool) -> int {
 unit_tile_rect :: proc(x: f32, y: int, ordinal: int) -> rl.Rectangle {
 	column := ordinal % TILES_PER_ROW
 	row := ordinal / TILES_PER_ROW
-	return rl.Rectangle{x + 18 + f32(column * (TILE_SIZE + TILE_GAP)), f32(y + row * (TILE_SIZE + TILE_GAP)), TILE_SIZE, TILE_SIZE}
+	return rl.Rectangle{x + PANEL_PAD_X + f32(column * (TILE_SIZE + TILE_GAP)), f32(y + row * (TILE_SIZE + TILE_GAP)), TILE_SIZE, TILE_SIZE}
 }
 
 draw_unit_tile :: proc(index: int, x: f32, y: int, ordinal: int, enemy: bool) {
@@ -1932,7 +1983,7 @@ draw_button :: proc(rect: rl.Rectangle, label: cstring, color: rl.Color) {
 		rl.DrawLine(c.int(rect.x + 1), c.int(rect.y + 1), c.int(rect.x + rect.width - 1), c.int(rect.y + 1), rl.Color{0, 225, 255, 110})
 	}
 	rl.DrawRectangleLinesEx(rect, 1, border)
-	rl.DrawText(label, c.int(rect.x + 9), c.int(rect.y + 8), 11, hovered ? NEON_CYAN : NEON_TEXT)
+	rl.DrawText(label, c.int(rect.x + BTN_TEXT_PAD_X), c.int(rect.y + BTN_TEXT_PAD_Y), 11, hovered ? NEON_CYAN : NEON_TEXT)
 }
 
 draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type) {
@@ -2075,17 +2126,17 @@ squad_count :: proc(group: int) -> int {
 // Global HUD squad badges: `[n: count]` per assigned squad, under the top bar.
 // Sleek tech pills: dark dock chip, thin neon outline, cyan text.
 draw_squad_hud :: proc() {
-	x := f32(22)
+	x := f32(HUD_TEXT_X)
 	for g in 1..=SQUAD_COUNT {
 		count := squad_count(g)
 		if count == 0 { continue }
 		label := rl.TextFormat("[%d: %d]", g, count)
 		w := f32(rl.MeasureText(label, 13))
-		badge := rl.Rectangle{x - 5, 47, w + 10, 19}
+		badge := rl.Rectangle{x - BADGE_PAD, BADGE_Y, w + 2 * BADGE_PAD, BADGE_H}
 		rl.DrawRectangleRec(badge, NEON_PANEL)
 		rl.DrawRectangleLinesEx(badge, 1, NEON_DIM)
-		rl.DrawText(label, c.int(x), 50, 13, NEON_CYAN)
-		x += w + 12 + 10
+		rl.DrawText(label, c.int(x), BADGE_Y + 3, 13, NEON_CYAN)
+		x += w + BADGE_GAP + 2 * BADGE_PAD
 	}
 }
 
@@ -2171,8 +2222,8 @@ pause_menu_rects :: proc() -> (box, continue_rect, quit_rect: rl.Rectangle) {
 	box_w := max(status_w, title_w) + 56
 	box_h: f32 = 270.0
 	box = rl.Rectangle{(w - box_w) / 2, (h - box_h) / 2, box_w, box_h}
-	continue_rect = rl.Rectangle{box.x + 28, box.y + 140, box.width - 56, 44}
-	quit_rect = rl.Rectangle{box.x + 28, box.y + 196, box.width - 56, 44}
+	continue_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 140, box.width - 2 * DIALOG_PAD, DIALOG_BTN_H}
+	quit_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 196, box.width - 2 * DIALOG_PAD, DIALOG_BTN_H}
 	return
 }
 
