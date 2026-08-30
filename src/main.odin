@@ -132,6 +132,18 @@ TILE_SIZE :: 26
 TILE_GAP :: 3
 TILES_PER_ROW :: 10
 
+// ---- Neon UI theme ----------------------------------------------------
+// Sleek high-tech sci-fi palette: deep-space panels, neon cyan accents,
+// thin 1px borders. Visual only - no game logic reads these.
+NEON_CYAN :: rl.Color{0, 225, 255, 255}
+NEON_BLUE :: rl.Color{40, 195, 255, 255}
+NEON_DIM :: rl.Color{25, 75, 110, 255}
+NEON_STEEL :: rl.Color{40, 110, 150, 255}
+NEON_PANEL :: rl.Color{10, 14, 26, 245}
+NEON_PANEL_SOLID :: rl.Color{14, 20, 34, 250}
+NEON_TEXT :: rl.Color{220, 235, 250, 255}
+NEON_MUTED :: rl.Color{155, 170, 195, 255}
+
 Unit :: struct {
 	kind: Unit_Type,
 	state: Unit_State,
@@ -1272,8 +1284,8 @@ draw_world :: proc() {
 		// Clean solid spheres: no wireframe overlay, no grid beneath.
 		rl.DrawSphere(planet.position, planet.radius, surface)
 		if p == selected_planet {
-			rl.DrawCircle3D(planet.position, planet.radius + 0.35, {0, 1, 0}, 90, rl.GOLD)
-			rl.DrawCircle3D(planet.position, planet.radius + 0.55, {0, 1, 0}, 90, rl.SKYBLUE)
+			rl.DrawCircle3D(planet.position, planet.radius + 0.35, {0, 1, 0}, 90, NEON_CYAN)
+			rl.DrawCircle3D(planet.position, planet.radius + 0.55, {0, 1, 0}, 90, NEON_DIM)
 		}
 	}
 	// The enemy HQ fortress at Neptune's old orbit: dark red (bright once
@@ -1286,7 +1298,7 @@ draw_world :: proc() {
 	}
 	rl.DrawCubeV(ENEMY_HQ_POSITION, {3.6, 3.6, 3.6}, hq_color)
 	if selected_planet == ENEMY_HOME {
-		rl.DrawCubeWiresV(ENEMY_HQ_POSITION, {4.2, 4.2, 4.2}, rl.GOLD)
+		rl.DrawCubeWiresV(ENEMY_HQ_POSITION, {4.2, 4.2, 4.2}, NEON_CYAN)
 	}
 	draw_rally_flag()
 	for i := 0; i < unit_count; i += 1 {
@@ -1336,7 +1348,7 @@ draw_world :: proc() {
 	// The transit lines make dispatches visibly physical rather than teleporting.
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
-		if u.state == .TRANSIT && !is_concealed(u) { rl.DrawLine3D(u.position, sector_pos(u.target_planet), rl.Color{255, 210, 80, 100}) }
+		if u.state == .TRANSIT && !is_concealed(u) { rl.DrawLine3D(u.position, sector_pos(u.target_planet), rl.Color{0, 225, 255, 90}) }
 	}
 	rl.EndMode3D()
 
@@ -1347,9 +1359,9 @@ draw_world :: proc() {
 			label := planets[p].name
 			if p == selected_planet {
 				w := rl.MeasureText(label, 14)
-				rl.DrawRectangle(c.int(pos.x) - w/2 - 6, c.int(pos.y - planets[p].radius * 5 - 18), w + 12, 22, rl.Color{110, 85, 25, 230})
+				draw_target_brackets({pos.x - f32(w)/2 - 8, pos.y - planets[p].radius * 5 - 20, f32(w) + 16, 24}, NEON_CYAN)
 			}
-			rl.DrawText(label, c.int(pos.x - 28), c.int(pos.y - planets[p].radius * 5 - 14), 14, p == selected_planet ? rl.GOLD : rl.WHITE)
+			rl.DrawText(label, c.int(pos.x - 28), c.int(pos.y - planets[p].radius * 5 - 14), 14, p == selected_planet ? NEON_CYAN : NEON_TEXT)
 		}
 	}
 	// Enemy HQ label, anchored to the 3D position like the planet labels.
@@ -1369,27 +1381,33 @@ draw_world :: proc() {
 	mps_w := rl.MeasureText(mps_text, 18)
 	speed_w := rl.MeasureText(speed_text, 18)
 	bar_w := min_w + mps_w + speed_w + 46
-	rl.DrawRectangle(12, 12, bar_w, 34, rl.Color{20, 32, 45, 235})
-	rl.DrawText(min_text, 22, 20, 18, rl.GOLD)
-	rl.DrawText(mps_text, 22 + min_w + 12, 20, 18, rl.SKYBLUE)
+	rl.DrawRectangle(12, 12, bar_w, 34, NEON_PANEL)
+	rl.DrawRectangleLinesEx({12, 12, f32(bar_w), 34}, 1, NEON_DIM)
+	rl.DrawLine(22 + min_w + 6, 17, 22 + min_w + 6, 41, NEON_DIM)
+	rl.DrawLine(22 + min_w + 12 + mps_w + 6, 17, 22 + min_w + 12 + mps_w + 6, 41, NEON_DIM)
+	rl.DrawText(min_text, 22, 20, 18, NEON_CYAN)
+	rl.DrawText(mps_text, 22 + min_w + 12, 20, 18, NEON_BLUE)
 	rl.DrawText(speed_text, 22 + min_w + 12 + mps_w + 12, 20, 18, rl.Color{120, 220, 160, 255})
 	// Draw status BEFORE the squad badges: rl.TextFormat serves every caller
 	// from a small rotating pool of static buffers, so each badge label
 	// overwrites an earlier one — with a second saved squad the badges
 	// clobbered this line (FPS/controls vanished from the bottom HUD).
 	// zoom_text is safe: it is formatted and drawn immediately.
-	rl.DrawText(status, 18, rl.GetScreenHeight() - 28, 14, rl.Color{155, 170, 195, 255})
+	rl.DrawText(status, 18, rl.GetScreenHeight() - 28, 14, NEON_MUTED)
 	draw_squad_hud()
 	zoom_text := rl.TextFormat("ZOOM %d%% // ALTITUDE %.0f", zoom_percent(), camera.position.y)
-	rl.DrawText(zoom_text, viewport_w - 208, rl.GetScreenHeight() - 28, 14, rl.Color{155, 170, 195, 255})
+	rl.DrawLine(18, rl.GetScreenHeight() - 34, viewport_w - 18, rl.GetScreenHeight() - 34, NEON_DIM)
+	rl.DrawText(zoom_text, viewport_w - 208, rl.GetScreenHeight() - 28, 14, NEON_MUTED)
 }
 
 draw_inspector :: proc() {
 	x := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
 	h := f32(rl.GetScreenHeight())
-	rl.DrawRectangle(c.int(x), 0, SCREEN_PANEL_WIDTH, rl.GetScreenHeight(), rl.Color{16, 22, 38, 255})
-	rl.DrawRectangle(c.int(x), 0, 3, rl.GetScreenHeight(), rl.GOLD)
-	rl.DrawText("PLANET INSPECTOR", c.int(x + 18), 18, 20, rl.WHITE)
+	rl.DrawRectangle(c.int(x), 0, SCREEN_PANEL_WIDTH, rl.GetScreenHeight(), NEON_PANEL)
+	rl.DrawRectangle(c.int(x), 0, 1, rl.GetScreenHeight(), NEON_CYAN)
+	rl.DrawRectangle(c.int(x + 1), 0, 1, rl.GetScreenHeight(), rl.Color{0, 225, 255, 40})
+	rl.DrawText("[ PLANET INSPECTOR ]", c.int(x + 18), 18, 20, NEON_CYAN)
+	rl.DrawLine(c.int(x + 18), 44, c.int(x + SCREEN_PANEL_WIDTH - 18), 44, NEON_DIM)
 	if selected_planet == ENEMY_HOME {
 		// The HQ is a sector, not a planet: a fortress header instead of the
 		// mineral readout (which would index past the planet table).
@@ -1400,7 +1418,7 @@ draw_inspector :: proc() {
 		// Planet pointer lives below the HQ guard: selected_planet is the
 		// ENEMY_HOME sector index (8) there, past the planets table.
 		planet := &planets[selected_planet]
-		rl.DrawText(rl.TextFormat("%s  //  MINERALS %03d", planet.name, planet.minerals), c.int(x + 18), 48, 15, rl.SKYBLUE)
+		rl.DrawText(rl.TextFormat("%s  //  MINERALS %03d", planet.name, planet.minerals), c.int(x + 18), 48, 15, NEON_BLUE)
 	}
 	if selected_planet == EARTH {
 		draw_earth_inspector(x)
@@ -1426,7 +1444,7 @@ draw_inspector :: proc() {
 		for i := 0; i < unit_count; i += 1 {
 			if unit_in_roster(i, .MINING) { draw_unit_tile(i, x, unit_tile_y(.MINING), roster_ordinal(i, .MINING), false) }
 		}
-		rl.DrawText(rl.TextFormat("FIGHTING DRONES (%d)", roster_count(.COMBAT)), c.int(x + 18), c.int(unit_tile_y(.COMBAT) - 18), 13, rl.SKYBLUE)
+			rl.DrawText(rl.TextFormat("FIGHTING DRONES (%d)", roster_count(.COMBAT)), c.int(x + 18), c.int(unit_tile_y(.COMBAT) - 18), 13, NEON_BLUE)
 		for i := 0; i < unit_count; i += 1 {
 			if unit_in_roster(i, .COMBAT) { draw_unit_tile(i, x, unit_tile_y(.COMBAT), roster_ordinal(i, .COMBAT), false) }
 		}
@@ -1449,48 +1467,50 @@ draw_inspector :: proc() {
 			}
 		}
 	}
-	if h > 700 { rl.DrawText(rl.TextFormat("SELECTED UNITS: %d", selection_count()), c.int(x + 18), rl.GetScreenHeight() - 34, 13, rl.GOLD) }
+	if h > 700 { rl.DrawText(rl.TextFormat("SELECTED UNITS: %d", selection_count()), c.int(x + 18), rl.GetScreenHeight() - 34, 13, NEON_CYAN) }
 	// Live drag rectangle for the inspector box-select.
 	if inspector_drag_active {
 		rect := rect_between(inspector_drag_start, rl.GetMousePosition())
-		rl.DrawRectangleRec(rect, rl.Fade(rl.SKYBLUE, 0.18))
-		rl.DrawRectangleLinesEx(rect, 1, rl.SKYBLUE)
+		rl.DrawRectangleRec(rect, rl.Fade(NEON_CYAN, 0.18))
+		rl.DrawRectangleLinesEx(rect, 1, NEON_CYAN)
 	}
 }
 
 // Earth owns the command bases: base pips, base construction, production
 // lines and the build queue all live here and nowhere else.
 draw_earth_inspector :: proc(x: f32) {
-	rl.DrawText("BASES", c.int(x + 18), 76, 14, rl.WHITE)
+	rl.DrawText("BASES", c.int(x + 18), 76, 14, NEON_CYAN)
 	for pip := 0; pip < MAX_BASES; pip += 1 {
-		pip_color := rl.Color{43, 51, 64, 255}
-		if pip < base_counts[EARTH] { pip_color = rl.Color{55, 190, 105, 255} }
+		pip_color := rl.Color{14, 20, 34, 255}
+		pip_border := NEON_DIM
+		if pip < base_counts[EARTH] { pip_color = rl.Color{0, 90, 120, 255}; pip_border = NEON_CYAN }
 		pip_rect := rl.Rectangle{x + 76 + f32(pip * 22), 75, 18, 18}
 		rl.DrawRectangleRec(pip_rect, pip_color)
-		rl.DrawRectangleLinesEx(pip_rect, 1, rl.Color{90, 105, 125, 255})
+		rl.DrawRectangleLinesEx(pip_rect, 1, pip_border)
+		if pip < base_counts[EARTH] { rl.DrawRectangle(c.int(pip_rect.x + 5), c.int(pip_rect.y + 5), 8, 8, NEON_CYAN) }
 	}
-	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(EARTH)), c.int(x + 236), 70, 13, rl.SKYBLUE)
-	rl.DrawText(rl.TextFormat("GLOBAL %.1f", global_mps()), c.int(x + 236), 86, 13, rl.GOLD)
+	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(EARTH)), c.int(x + 236), 70, 13, NEON_BLUE)
+	rl.DrawText(rl.TextFormat("GLOBAL %.1f", global_mps()), c.int(x + 236), 86, 13, NEON_CYAN)
 
 	if base_button_visible() {
 		base_button := rl.Rectangle{x + 18, 106, 294, 32}
 		if base_build_planet == EARTH {
-			rl.DrawRectangleRec(base_button, rl.Color{30, 40, 55, 255})
+			rl.DrawRectangleRec(base_button, NEON_PANEL_SOLID)
 			if constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS {
-				rl.DrawText(rl.TextFormat("CREW %d/%d  //  MINERS AUTO-JOIN ON DEPOSIT", constructing_miners(EARTH), BASE_CONSTRUCT_MINERS), c.int(x + 24), 115, 11, rl.GOLD)
+				rl.DrawText(rl.TextFormat("CREW %d/%d  //  MINERS AUTO-JOIN ON DEPOSIT", constructing_miners(EARTH), BASE_CONSTRUCT_MINERS), c.int(x + 24), 115, 11, NEON_CYAN)
 			} else {
-				rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + 28), 115, 14, rl.GOLD)
-				draw_progress({x + 18, 142, 294, 7}, base_build_progress / BASE_CONSTRUCT_TIME, rl.GOLD)
+				rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + 28), 115, 14, NEON_CYAN)
+				draw_progress({x + 18, 142, 294, 7}, base_build_progress / BASE_CONSTRUCT_TIME, NEON_CYAN)
 			}
-			rl.DrawRectangleLinesEx(base_button, 1, rl.Color{85, 125, 155, 255})
+			rl.DrawRectangleLinesEx(base_button, 1, NEON_STEEL)
 		} else {
-			rl.DrawRectangleRec(base_button, rl.Color{35, 56, 78, 255})
-			rl.DrawRectangleLinesEx(base_button, 1, rl.Color{85, 125, 155, 255})
-			rl.DrawText("Construct Command Base (500 Minerals)", c.int(x + 28), 115, 14, rl.WHITE)
+			rl.DrawRectangleRec(base_button, NEON_PANEL_SOLID)
+			rl.DrawRectangleLinesEx(base_button, 1, NEON_STEEL)
+			rl.DrawText("Construct Command Base (500 Minerals)", c.int(x + 28), 115, 14, NEON_TEXT)
 		}
 	}
 
-	rl.DrawText("PRODUCTION LINES", c.int(x + 18), 166, 13, rl.Color{130, 150, 175, 255})
+	rl.DrawText("PRODUCTION LINES", c.int(x + 18), 166, 13, NEON_CYAN)
 	for b := 0; b < base_counts[EARTH]; b += 1 {
 		line := production[EARTH][b]
 		y := f32(180 + b * 30)
@@ -1498,29 +1518,29 @@ draw_earth_inspector :: proc(x: f32) {
 			name := "MINING DRONE"
 			total := drone_build_time(line.kind)
 			if line.kind == .COMBAT { name = "COMBAT DRONE" }
-			rl.DrawText(rl.TextFormat("BASE %d  %s", b + 1, name), c.int(x + 18), c.int(y), 12, rl.WHITE)
-			draw_progress({x + 18, y + 17, 185, 7}, line.progress / total, rl.SKYBLUE)
+			rl.DrawText(rl.TextFormat("BASE %d  %s", b + 1, name), c.int(x + 18), c.int(y), 12, NEON_TEXT)
+			draw_progress({x + 18, y + 17, 185, 7}, line.progress / total, NEON_CYAN)
 		} else {
 			rl.DrawText(rl.TextFormat("BASE %d  READY", b + 1), c.int(x + 18), c.int(y), 12, rl.Color{90, 110, 135, 255})
 		}
 	}
 
 	orders_y := production_orders_y()
-	rl.DrawText("BUILD", c.int(x + 18), c.int(orders_y - 16), 13, rl.Color{130, 150, 175, 255})
-	draw_button({x + 18, f32(orders_y), 141, 34}, "[M] MINER  (50)", rl.Color{38, 72, 75, 255})
-	draw_button({x + 171, f32(orders_y), 141, 34}, "[C] COMBAT (125)", rl.Color{78, 48, 55, 255})
+	rl.DrawText("BUILD", c.int(x + 18), c.int(orders_y - 16), 13, NEON_CYAN)
+	draw_button({x + 18, f32(orders_y), 141, 34}, "[M] MINER  (50)", NEON_PANEL_SOLID)
+	draw_button({x + 171, f32(orders_y), 141, 34}, "[C] COMBAT (125)", NEON_PANEL_SOLID)
 	// Drone build-speed upgrade: one button below the BUILD row. At the cap it
 	// shows MAX and the click handler is a no-op.
 	if drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
-		draw_button(drone_speed_button_rect(x), rl.TextFormat("DRONE BUILD SPEED  LVL %d/%d (MAX)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX), rl.Color{45, 58, 48, 255})
+		draw_button(drone_speed_button_rect(x), rl.TextFormat("DRONE BUILD SPEED  LVL %d/%d (MAX)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX), NEON_PANEL_SOLID)
 	} else {
-		draw_button(drone_speed_button_rect(x), rl.TextFormat("[U] DRONE BUILD SPEED  LVL %d/%d (%d)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX, DRONE_SPEED_UPGRADE_COST), rl.Color{52, 58, 78, 255})
+		draw_button(drone_speed_button_rect(x), rl.TextFormat("[U] DRONE BUILD SPEED  LVL %d/%d (%d)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX, DRONE_SPEED_UPGRADE_COST), NEON_PANEL_SOLID)
 	}
 
 	queue_y := production_orders_y() + 76
 	queue_capacity := base_counts[EARTH] * MAX_BASES
 	queue_total := queued_count(EARTH)
-	rl.DrawText(rl.TextFormat("BUILD QUEUE  (%d/%d)", queue_total, queue_capacity), c.int(x + 18), c.int(queue_y), 12, rl.Color{130, 150, 175, 255})
+	rl.DrawText(rl.TextFormat("BUILD QUEUE  (%d/%d)", queue_total, queue_capacity), c.int(x + 18), c.int(queue_y), 12, NEON_CYAN)
 	for slot := 0; slot < queue_capacity; slot += 1 {
 		queued := slot < queue_total
 		kind := Unit_Type.MINING
@@ -1534,28 +1554,28 @@ draw_earth_inspector :: proc(x: f32) {
 draw_hq_inspector :: proc(x: f32) {
 	card := rl.Rectangle{x + 18, 104, 294, 54}
 	if enemy_hq_destroyed() {
-		rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
+		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
 		rl.DrawRectangleLinesEx(card, 1, rl.Color{58, 60, 66, 255})
 		rl.DrawText("HUSK — SECTOR SILENCED", c.int(x + 28), 114, 14, rl.Color{120, 125, 135, 255})
-		rl.DrawText("NO WAVES LAUNCH FROM A DEAD HQ", c.int(x + 28), 133, 12, rl.Color{200, 200, 210, 255})
+		rl.DrawText("NO WAVES LAUNCH FROM A DEAD HQ", c.int(x + 28), 133, 12, NEON_TEXT)
 	} else if has_vision(ENEMY_HOME) {
 		_, garrison := planet_combatants(ENEMY_HOME)
-		rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
+		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
 		rl.DrawRectangleLinesEx(card, 1, rl.Color{205, 50, 58, 255})
 		rl.DrawText("ENEMY FORTRESS", c.int(x + 28), 114, 14, rl.Color{235, 110, 110, 255})
-		rl.DrawText(rl.TextFormat("FIGHTERS %d  //  INTEGRITY %d/%d", garrison, enemy_base_hp[ENEMY_HOME], ENEMY_HQ_BASE_HP), c.int(x + 28), 133, 12, rl.Color{200, 200, 210, 255})
+		rl.DrawText(rl.TextFormat("FIGHTERS %d  //  INTEGRITY %d/%d", garrison, enemy_base_hp[ENEMY_HOME], ENEMY_HQ_BASE_HP), c.int(x + 28), 133, 12, NEON_TEXT)
 	} else {
-		rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
-		rl.DrawRectangleLinesEx(card, 1, rl.Color{120, 120, 138, 255})
-		rl.DrawText("UNSCOUTED", c.int(x + 28), 114, 14, rl.Color{120, 120, 138, 255})
-		rl.DrawText("SEND COMBAT DRONES TO REVEAL", c.int(x + 28), 133, 12, rl.Color{200, 200, 210, 255})
+		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
+		rl.DrawRectangleLinesEx(card, 1, NEON_STEEL)
+		rl.DrawText("UNSCOUTED", c.int(x + 28), 114, 14, NEON_MUTED)
+		rl.DrawText("SEND COMBAT DRONES TO REVEAL", c.int(x + 28), 133, 12, NEON_TEXT)
 	}
 }
 
 // Outpost planets host no player bases: show the mining forecast, the enemy
 // stronghold status (mining is locked until it falls) and unit rosters only.
 draw_outpost_inspector :: proc(x: f32) {
-	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(selected_planet)), c.int(x + 18), 79, 13, rl.SKYBLUE)
+	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(selected_planet)), c.int(x + 18), 79, 13, NEON_BLUE)
 	card := rl.Rectangle{x + 18, 104, 294, 54}
 	if has_vision(selected_planet) {
 		stronghold_color := rl.Color{120, 120, 138, 255}
@@ -1572,10 +1592,10 @@ draw_outpost_inspector :: proc(x: f32) {
 			_, garrison := planet_combatants(selected_planet)
 			status = rl.TextFormat("%02d FIGHTERS  BASE %02d — SEND COMBAT DRONES", garrison, enemy_base_hp[selected_planet])
 		}
-		rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
+		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
 		rl.DrawRectangleLinesEx(card, 1, stronghold_color)
 		rl.DrawText(title, c.int(x + 28), 114, 14, stronghold_color)
-		rl.DrawText(status, c.int(x + 28), 133, 12, rl.Color{200, 200, 210, 255})
+		rl.DrawText(status, c.int(x + 28), 133, 12, NEON_TEXT)
 	} else if intel_recorded[selected_planet] {
 		// Scouted once, now dark: the stronghold card renders from the frozen
 		// intel snapshot (the full ghost roster below comes from it too).
@@ -1586,16 +1606,16 @@ draw_outpost_inspector :: proc(x: f32) {
 		title: cstring = "ENEMY STRONGHOLD"
 		status := rl.TextFormat("%02d FIGHTERS  BASE %02d/%02d — STALE INTEL", intel.fighters, intel.base_hp, GARRISON_BASE_HP[selected_planet])
 		if intel.base_hp <= 0 { title = "LIBERATED" }
-		rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
+		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
 		rl.DrawRectangleLinesEx(card, 1, amber)
 		rl.DrawText(title, c.int(x + 28), 114, 14, amber)
 		rl.DrawText(status, c.int(x + 28), 133, 12, grey)
 	} else {
 		// Never scouted: no intel exists at all.
-		rl.DrawRectangleRec(card, rl.Color{35, 30, 42, 255})
-		rl.DrawRectangleLinesEx(card, 1, rl.Color{120, 120, 138, 255})
-		rl.DrawText("UNSCOUTED", c.int(x + 28), 114, 14, rl.Color{120, 120, 138, 255})
-		rl.DrawText("STATUS UNKNOWN — SEND SCOUT DRONE", c.int(x + 28), 133, 12, rl.Color{200, 200, 210, 255})
+		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
+		rl.DrawRectangleLinesEx(card, 1, NEON_STEEL)
+		rl.DrawText("UNSCOUTED", c.int(x + 28), 114, 14, NEON_MUTED)
+		rl.DrawText("STATUS UNKNOWN — SEND SCOUT DRONE", c.int(x + 28), 133, 12, NEON_TEXT)
 	}
 }
 
@@ -1614,7 +1634,7 @@ draw_ghost_rosters :: proc(x: f32) {
 	for section in 0..<2 {
 		kind := kinds[section]
 		label: cstring = "FIGHTING DRONES"
-		color := rl.SKYBLUE
+		color := NEON_BLUE
 		if section == 0 { label = "MINING DRONES"; color = rl.ORANGE }
 		count := ghost_count(kind, false)
 		if count == 0 { continue }
@@ -1653,7 +1673,7 @@ draw_ghost_rosters :: proc(x: f32) {
 
 	// Grey-out overlay across the roster area: stale snapshot, not live units.
 	top := f32(unit_tile_y(.MINING) - 22)
-	rl.DrawRectangleRec(rl.Rectangle{x, top, SCREEN_PANEL_WIDTH - 6, f32(rl.GetScreenHeight() - 40) - top}, rl.Color{16, 22, 38, 150})
+	rl.DrawRectangleRec(rl.Rectangle{x, top, SCREEN_PANEL_WIDTH - 6, f32(rl.GetScreenHeight() - 40) - top}, rl.Color{10, 14, 26, 150})
 }
 
 production_orders_y :: proc() -> int {
@@ -1784,38 +1804,39 @@ draw_unit_tile :: proc(index: int, x: f32, y: int, ordinal: int, enemy: bool) {
 // Core tile renderer; the ghost view calls it directly with snapshot data.
 draw_unit_tile_data :: proc(kind: Unit_Type, state: Unit_State, selected: bool, x: f32, y: int, ordinal: int, enemy: bool) {
 	rect := unit_tile_rect(x, y, ordinal)
-	fill := rl.Color{38, 55, 78, 255}
-	border := rl.Color{91, 113, 140, 255}
+	fill := rl.Color{14, 30, 46, 255}
+	border := NEON_STEEL
 	if enemy {
 		fill = rl.Color{58, 32, 36, 255}
 		border = rl.Color{140, 72, 78, 255}
-	} else if selected { fill = rl.Color{123, 94, 26, 255}; border = rl.GOLD }
+	} else if selected { fill = rl.Color{0, 60, 80, 255}; border = NEON_CYAN }
 	rl.DrawRectangleRec(rect, fill)
 	rl.DrawRectangleLinesEx(rect, 1, border)
+	if selected && !enemy { rl.DrawRectangleLinesEx({rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2}, 1, rl.Color{0, 225, 255, 90}) }
 	symbol: cstring = "M"
 	accent := rl.ORANGE
-	if kind == .COMBAT { symbol = "C"; accent = rl.SKYBLUE }
+	if kind == .COMBAT { symbol = "C"; accent = NEON_BLUE }
 	if enemy { accent = rl.Color{235, 130, 130, 255} }
 	rl.DrawText(symbol, c.int(rect.x + 8), c.int(rect.y + 7), 12, accent)
 	rl.DrawCircle(c.int(rect.x + rect.width - 5), c.int(rect.y + 5), 3, state_color(state))
 }
 
-// Player fighters are blue, enemy fighters red.
+// Player fighters are neon blue, enemy fighters red.
 draw_fighter :: proc(position: rl.Vector3, enemy: bool) {
-	color := rl.SKYBLUE
+	color := NEON_BLUE
 	if enemy { color = rl.RED }
 	rl.DrawCubeV(position, {0.7, 0.32, 0.7}, color)
 }
 
 // Visible laser fire during battles: short flying bolts from each shooter
-// toward its target (player fire SKYBLUE, enemy fire RED), mirroring the
+// toward its target (player fire neon cyan, enemy fire RED), mirroring the
 // update_planet_combat rules — dogfights, miner sweeps and base sieges.
 draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, ec: int) {
 	target_spots: [MAX_UNITS]rl.Vector3
 	tc := 0
 	if pc > 0 && ec > 0 {
 		// Dogfight: each fighter trades fire with the opposing line.
-		for i in 0..<pc { draw_laser_bolt(player_spots[i], enemy_spots[i % ec], f32(i) * 2.3, rl.SKYBLUE) }
+		for i in 0..<pc { draw_laser_bolt(player_spots[i], enemy_spots[i % ec], f32(i) * 2.3, NEON_CYAN) }
 		for j in 0..<ec { draw_laser_bolt(enemy_spots[j], player_spots[j % pc], f32(j) * 2.3 + 1.1, rl.RED) }
 	} else if ec > 0 {
 		// Enemy fighters strafing unescorted player miners (kill_player_miner).
@@ -1835,10 +1856,10 @@ draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, 
 			if u.kind == .MINING && u.enemy && u.affiliation == p { target_spots[tc] = u.position; tc += 1 }
 		}
 		if tc > 0 {
-			for i in 0..<pc { draw_laser_bolt(player_spots[i], target_spots[i % tc], f32(i) * 2.3, rl.SKYBLUE) }
+			for i in 0..<pc { draw_laser_bolt(player_spots[i], target_spots[i % tc], f32(i) * 2.3, NEON_CYAN) }
 		} else if enemy_base_hp[p] > 0 {
 			base := sector_pos(p) + rl.Vector3{0, sector_radius(p) * 0.6, 0}
-			for i in 0..<pc { draw_laser_bolt(player_spots[i], base, f32(i) * 2.3, rl.SKYBLUE) }
+			for i in 0..<pc { draw_laser_bolt(player_spots[i], base, f32(i) * 2.3, NEON_CYAN) }
 		}
 	}
 }
@@ -1881,50 +1902,72 @@ draw_selection_ring :: proc(center: rl.Vector3, radius: f32) {
 		rl.DrawLine3D(
 			{center.x + math.cos(a) * radius, center.y - 0.25, center.z + math.sin(a) * radius},
 			{center.x + math.cos(b) * radius, center.y - 0.25, center.z + math.sin(b) * radius},
-			rl.YELLOW,
+			NEON_CYAN,
 		)
 	}
 }
 
+// Sci-fi targeting brackets: four corner ticks around a screen rect,
+// replacing heavy solid highlight blocks over selected labels.
+draw_target_brackets :: proc(rect: rl.Rectangle, color: rl.Color) {
+	l := f32(7)
+	x, y, w, h := rect.x, rect.y, rect.width, rect.height
+	rl.DrawLineV({x, y}, {x + l, y}, color)
+	rl.DrawLineV({x, y}, {x, y + l}, color)
+	rl.DrawLineV({x + w - l, y}, {x + w, y}, color)
+	rl.DrawLineV({x + w, y}, {x + w, y + l}, color)
+	rl.DrawLineV({x, y + h}, {x + l, y + h}, color)
+	rl.DrawLineV({x, y + h - l}, {x, y + h}, color)
+	rl.DrawLineV({x + w - l, y + h}, {x + w, y + h}, color)
+	rl.DrawLineV({x + w, y + h - l}, {x + w, y + h}, color)
+}
+
 draw_button :: proc(rect: rl.Rectangle, label: cstring, color: rl.Color) {
 	rl.DrawRectangleRec(rect, color)
-	border := rl.Color{100, 125, 145, 255}
-	if rl.CheckCollisionPointRec(rl.GetMousePosition(), rect) { border = rl.GOLD }
+	hovered := rl.CheckCollisionPointRec(rl.GetMousePosition(), rect)
+	border := NEON_DIM
+	if hovered {
+		border = NEON_CYAN
+		rl.DrawRectangleRec(rect, rl.Color{0, 225, 255, 28})
+		rl.DrawLine(c.int(rect.x + 1), c.int(rect.y + 1), c.int(rect.x + rect.width - 1), c.int(rect.y + 1), rl.Color{0, 225, 255, 110})
+	}
 	rl.DrawRectangleLinesEx(rect, 1, border)
-	rl.DrawText(label, c.int(rect.x + 9), c.int(rect.y + 8), 11, rl.WHITE)
+	rl.DrawText(label, c.int(rect.x + 9), c.int(rect.y + 8), 11, hovered ? NEON_CYAN : NEON_TEXT)
 }
 
 draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type) {
-	color := rl.Color{39, 47, 60, 255}
-	border := rl.Color{80, 95, 115, 255}
+	color := rl.Color{14, 20, 34, 255}
+	border := NEON_DIM
 	symbol: cstring = ""
 	if queued {
-		color = rl.Color{42, 135, 88, 255}
-		if kind == .COMBAT { color = rl.Color{155, 108, 35, 255} }
-		border = rl.Color{190, 205, 180, 255}
+		color = rl.Color{0, 90, 125, 255}
+		if kind == .COMBAT { color = rl.Color{30, 60, 120, 255} }
+		border = NEON_CYAN
 		symbol = "⛏"
 		if kind == .COMBAT { symbol = "⚔" }
 	}
 	rl.DrawRectangleRec(rect, color)
 	rl.DrawRectangleLinesEx(rect, 1, border)
-	if queued { rl.DrawText(symbol, c.int(rect.x + 3), c.int(rect.y + 1), 13, rl.WHITE) }
+	if queued { rl.DrawText(symbol, c.int(rect.x + 3), c.int(rect.y + 1), 13, NEON_TEXT) }
 }
 
 draw_progress :: proc(rect: rl.Rectangle, value: f32, color: rl.Color) {
 	v := clamp_f32(value, 0, 1)
-	rl.DrawRectangleRec(rect, rl.Color{35, 43, 58, 255})
+	rl.DrawRectangleRec(rect, rl.Color{14, 20, 34, 255})
 	rl.DrawRectangle(c.int(rect.x), c.int(rect.y), c.int(rect.width * v), c.int(rect.height), color)
+	if v > 0 && v < 1 { rl.DrawLine(c.int(rect.x + rect.width * v), c.int(rect.y), c.int(rect.x + rect.width * v), c.int(rect.y + rect.height), NEON_TEXT) }
+	rl.DrawRectangleLinesEx(rect, 1, NEON_DIM)
 }
 
 state_color :: proc(state: Unit_State) -> rl.Color {
 	switch state {
 	case .IDLE: return rl.GRAY
-	case .TRANSIT: return rl.SKYBLUE
+	case .TRANSIT: return NEON_BLUE
 	case .MINING: return rl.GREEN
 	case .RETURNING: return rl.ORANGE
-	case .DEPOSITING: return rl.GOLD
+	case .DEPOSITING: return NEON_CYAN
 	case .GUARDING: return rl.RED
-	case .CONSTRUCTING: return rl.GOLD
+	case .CONSTRUCTING: return NEON_CYAN
 	}
 	return rl.WHITE
 }
@@ -1976,8 +2019,10 @@ generate_stars :: proc() {
 	}
 }
 
-// White pixel stars in screen space, drawn before the 3D pass so they stay
-// behind everything. The >= bounds form also discards NaN projections of
+// Cool-tinted pixel stars in screen space, drawn before the 3D pass so they
+// stay behind everything. Every 4th star carries a faint cyan tint for a
+// colder deep-space feel; the tint derives from the star index so the field
+// stays deterministic. The >= bounds form also discards NaN projections of
 // points behind the camera.
 draw_starfield :: proc() {
 	w := f32(rl.GetScreenWidth())
@@ -1985,7 +2030,9 @@ draw_starfield :: proc() {
 	for i in 0..<STAR_COUNT {
 		pos := rl.GetWorldToScreen(stars[i], camera)
 		if !(pos.x >= 0 && pos.x <= w && pos.y >= 0 && pos.y <= h) { continue }
-		rl.DrawCircleV(pos, star_sizes[i], rl.Fade(rl.WHITE, star_alphas[i]))
+		tint := rl.WHITE
+		if i % 4 == 0 { tint = rl.Color{170, 230, 255, 255} }
+		rl.DrawCircleV(pos, star_sizes[i], rl.Fade(tint, star_alphas[i]))
 	}
 }
 
@@ -2026,14 +2073,19 @@ squad_count :: proc(group: int) -> int {
 }
 
 // Global HUD squad badges: `[n: count]` per assigned squad, under the top bar.
+// Sleek tech pills: dark dock chip, thin neon outline, cyan text.
 draw_squad_hud :: proc() {
 	x := f32(22)
 	for g in 1..=SQUAD_COUNT {
 		count := squad_count(g)
 		if count == 0 { continue }
 		label := rl.TextFormat("[%d: %d]", g, count)
-		rl.DrawText(label, c.int(x), 50, 13, rl.Color{205, 215, 235, 255})
-		x += f32(rl.MeasureText(label, 13)) + 12
+		w := f32(rl.MeasureText(label, 13))
+		badge := rl.Rectangle{x - 5, 47, w + 10, 19}
+		rl.DrawRectangleRec(badge, NEON_PANEL)
+		rl.DrawRectangleLinesEx(badge, 1, NEON_DIM)
+		rl.DrawText(label, c.int(x), 50, 13, NEON_CYAN)
+		x += w + 12 + 10
 	}
 }
 
@@ -2144,27 +2196,28 @@ update_pause_menu :: proc() {
 draw_pause_menu :: proc() {
 	rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), rl.Color{0, 0, 0, 180})
 	box, continue_rect, quit_rect := pause_menu_rects()
-	rl.DrawRectangleRec(box, rl.Color{16, 22, 38, 250})
-	rl.DrawRectangleLinesEx(box, 2, rl.GOLD)
+	rl.DrawRectangleRec(box, NEON_PANEL_SOLID)
+	rl.DrawRectangleLinesEx(box, 1, NEON_CYAN)
+	rl.DrawRectangleLinesEx({box.x - 3, box.y - 3, box.width + 6, box.height + 6}, 1, rl.Color{0, 225, 255, 40})
 	// Title and status are centered under a 36px / 14px heading with balanced
 	// vertical padding between all elements, keeping every line inside the box.
 	title: cstring = "PAUSED"
 	title_w := f32(rl.MeasureText(title, 36))
-	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 30), 36, rl.WHITE)
+	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 30), 36, NEON_CYAN)
 	status: cstring = PAUSE_STATUS
 	status_w := f32(rl.MeasureText(status, 14))
-	rl.DrawText(status, c.int(box.x + (box.width - status_w) / 2), c.int(box.y + 76), 14, rl.Color{130, 150, 175, 255})
-	draw_button(continue_rect, "CONTINUE", rl.Color{38, 92, 60, 255})
-	draw_button(quit_rect, "QUIT", rl.Color{92, 42, 42, 255})
+	rl.DrawText(status, c.int(box.x + (box.width - status_w) / 2), c.int(box.y + 76), 14, NEON_MUTED)
+	draw_button(continue_rect, "CONTINUE", NEON_PANEL_SOLID)
+	draw_button(quit_rect, "QUIT", NEON_PANEL_SOLID)
 	draw_pause_focus(pause_menu_selection == 0 ? continue_rect : quit_rect)
 }
 
-// Keyboard focus highlight: a gold ring just outside the focused button plus
+// Keyboard focus highlight: a neon ring just outside the focused button plus
 // a ">" marker — distinct from draw_button's mouse-hover border.
 draw_pause_focus :: proc(rect: rl.Rectangle) {
 	ring := rl.Rectangle{rect.x - 4, rect.y - 4, rect.width + 8, rect.height + 8}
-	rl.DrawRectangleLinesEx(ring, 2, rl.GOLD)
-	rl.DrawText(">", c.int(rect.x - 18), c.int(rect.y + rect.height / 2 - 7), 14, rl.GOLD)
+	rl.DrawRectangleLinesEx(ring, 1, NEON_CYAN)
+	rl.DrawText(">", c.int(rect.x - 18), c.int(rect.y + rect.height / 2 - 7), 14, NEON_CYAN)
 }
 
 // ---- Victory & restart --------------------------------------------------
@@ -2224,19 +2277,19 @@ draw_victory_overlay :: proc() {
 	h := f32(rl.GetScreenHeight())
 	title: cstring = "CONGRATULATIONS!"
 	title_w := f32(rl.MeasureText(title, 40))
-	rl.DrawText(title, c.int(w/2 - title_w/2), c.int(h/2 - 96), 40, rl.GOLD)
+	rl.DrawText(title, c.int(w/2 - title_w/2), c.int(h/2 - 96), 40, NEON_CYAN)
 	sub: cstring = "YOU BEAT THE GAME!"
 	sub_w := f32(rl.MeasureText(sub, 26))
-	rl.DrawText(sub, c.int(w/2 - sub_w/2), c.int(h/2 - 42), 26, rl.WHITE)
+	rl.DrawText(sub, c.int(w/2 - sub_w/2), c.int(h/2 - 42), 26, NEON_TEXT)
 	stats := rl.TextFormat("ALL %d PLANETS LIBERATED  //  ENEMY HQ DESTROYED", PLANET_COUNT)
 	stats_w := f32(rl.MeasureText(stats, 14))
-	rl.DrawText(stats, c.int(w/2 - stats_w/2), c.int(h/2 + 2), 14, rl.Color{155, 170, 195, 255})
+	rl.DrawText(stats, c.int(w/2 - stats_w/2), c.int(h/2 + 2), 14, NEON_MUTED)
 	hint: cstring = "R / ENTER: PLAY AGAIN   //   Q / ESC: QUIT"
 	hint_w := f32(rl.MeasureText(hint, 12))
 	rl.DrawText(hint, c.int(w/2 - hint_w/2), c.int(h/2 + 126), 12, rl.Color{120, 130, 150, 255})
 	play_rect, quit_rect := victory_button_rects()
-	draw_button(play_rect, "[R] PLAY AGAIN", rl.Color{38, 92, 60, 255})
-	draw_button(quit_rect, "[Q] QUIT", rl.Color{92, 42, 42, 255})
+	draw_button(play_rect, "[R] PLAY AGAIN", NEON_PANEL_SOLID)
+	draw_button(quit_rect, "[Q] QUIT", NEON_PANEL_SOLID)
 }
 
 // ---- Game over -----------------------------------------------------------
@@ -2279,13 +2332,13 @@ draw_game_over_overlay :: proc() {
 	rl.DrawText(title, c.int(w/2 - title_w/2), c.int(h/2 - 96), 40, rl.RED)
 	sub: cstring = "ALL COMMAND BASES AND DRONES LOST"
 	sub_w := f32(rl.MeasureText(sub, 26))
-	rl.DrawText(sub, c.int(w/2 - sub_w/2), c.int(h/2 - 42), 26, rl.WHITE)
+	rl.DrawText(sub, c.int(w/2 - sub_w/2), c.int(h/2 - 42), 26, NEON_TEXT)
 	hint: cstring = "R / ENTER: RESTART   //   Q / ESC: QUIT"
 	hint_w := f32(rl.MeasureText(hint, 12))
 	rl.DrawText(hint, c.int(w/2 - hint_w/2), c.int(h/2 + 126), 12, rl.Color{120, 130, 150, 255})
 	play_rect, quit_rect := victory_button_rects()
-	draw_button(play_rect, "[R] RESTART", rl.Color{38, 92, 60, 255})
-	draw_button(quit_rect, "[Q] QUIT", rl.Color{92, 42, 42, 255})
+	draw_button(play_rect, "[R] RESTART", NEON_PANEL_SOLID)
+	draw_button(quit_rect, "[Q] QUIT", NEON_PANEL_SOLID)
 }
 
 // ---- Fog of war ----------------------------------------------------------
@@ -2338,8 +2391,8 @@ draw_rally_flag :: proc() {
 	rl.DrawCylinderEx(base, top, 0.07, 0.07, 6, rl.Color{205, 208, 218, 255})
 	// Pennant: two windings so it reads from either side.
 	tip := rl.Vector3{p.position.x + 1.7, top.y - 0.55, p.position.z}
-	rl.DrawTriangle3D({p.position.x, top.y, p.position.z}, {p.position.x, top.y - 1.3, p.position.z}, tip, rl.GOLD)
-	rl.DrawTriangle3D({p.position.x, top.y - 1.3, p.position.z}, {p.position.x, top.y, p.position.z}, tip, rl.GOLD)
+	rl.DrawTriangle3D({p.position.x, top.y, p.position.z}, {p.position.x, top.y - 1.3, p.position.z}, tip, NEON_CYAN)
+	rl.DrawTriangle3D({p.position.x, top.y - 1.3, p.position.z}, {p.position.x, top.y, p.position.z}, tip, NEON_CYAN)
 }
 
 // ---- Camera zoom ---------------------------------------------------------
