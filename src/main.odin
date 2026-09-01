@@ -128,8 +128,8 @@ Intel :: struct {
 }
 
 MAX_PENDING :: 25
-TILE_SIZE :: 26
-TILE_GAP :: 3
+TILE_SIZE :: 16
+TILE_GAP :: 6
 TILES_PER_ROW :: 10
 
 // ---- Neon UI theme ----------------------------------------------------
@@ -150,50 +150,53 @@ NEON_MUTED :: rl.Color{155, 170, 195, 255}
 // PANEL_CONTENT_W. Section tops flow from SECTION_TOP through ORDERS_BASE_Y
 // into the queue/roster procs below. Render procs and click hitboxes share
 // every constant, so graphics and hitboxes cannot drift apart.
-PANEL_PAD_X :: 18
+PANEL_PAD_X :: 20
 PANEL_CONTENT_W :: SCREEN_PANEL_WIDTH - 2 * PANEL_PAD_X
 CARD_INSET :: 10
 BTN_TEXT_PAD_X :: 9
-BTN_TEXT_PAD_Y :: 8
 BTN_GAP :: 12
-BUILD_BTN_W :: 141
-BUILD_BTN_H :: 34
-BASE_BTN_H :: 32
+BUILD_BTN_W :: 139
+BUILD_BTN_H :: 36
+BASE_BTN_H :: 36
 SLOT_SIZE :: 18
-GRID_PITCH :: 22
-PROD_PITCH :: 30
-PANEL_HEADER_Y :: 18
-PANEL_DIVIDER_Y :: 44
-PANEL_SUB_Y :: 48
-BASES_Y :: 76
-SECTION_TOP :: 104
+GRID_PITCH :: 24
+PROD_PITCH :: 34
+PANEL_HEADER_Y :: 20
+PANEL_DIVIDER_Y :: 48
+PANEL_SUB_Y :: 60
+BASES_Y :: 92
+SECTION_TOP :: 124
 CARD_H :: 54
-CARD_LINE_1 :: 114
-CARD_LINE_2 :: 133
-PROD_LABEL_Y :: 166
-PROD_FIRST_Y :: 180
-ORDERS_BASE_Y :: 246
-UPGRADE_DY :: 38
-UPGRADE_H :: 26
-QUEUE_DY :: 76
-QUEUE_LABEL_GAP :: 17
+CARD_LINE_1 :: 138
+CARD_LINE_2 :: 157
+BASE_PROGRESS_Y :: 166
+PROD_TITLE_Y :: 198
+PROD_FIRST_Y :: 221
+PROD_BAR_DY :: 16
+ORDERS_BASE_Y :: 292
+UPGRADE_DY :: 48
+UPGRADE_H :: 36
+QUEUE_DY :: 108
+QUEUE_LABEL_GAP :: 23
 DIALOG_PAD :: 28
 DIALOG_BTN_H :: 44
-HUD_PAD :: 12
-PIPS_OFF :: 58
-READOUT_X :: 236
-BADGE_PAD :: 5
-BADGE_GAP :: 12
-BADGE_Y :: 47
-BADGE_H :: 19
-HUD_DOCK_H :: 34
-HUD_TEXT_X :: HUD_PAD + 10
-HUD_TEXT_Y :: HUD_PAD + 8
+HUD_PAD :: 16
+PIPS_OFF :: 64
+READOUT_X :: 215
+BADGE_PAD :: 6
+BADGE_GAP :: 10
+BADGE_Y :: 68
+BADGE_H :: 25
+HUD_DOCK_H :: 40
+HUD_TEXT_X :: HUD_PAD + 20
+HUD_TEXT_Y :: HUD_PAD + 11
+HUD_COL_GAP :: 24
+BOTTOM_DOCK_H :: 36
 ROSTER_BASE_Y :: 196
-ROSTER_BELOW_QUEUE :: 147
+ROSTER_BELOW_QUEUE :: 206
 SECTION_PAD_Y :: 26
-PROD_BAR_W :: 185
-BAR_H :: 7
+PROD_BAR_W :: 200
+BAR_H :: 8
 
 Unit :: struct {
 	kind: Unit_Type,
@@ -1425,30 +1428,41 @@ draw_world :: proc() {
 	status := rl.TextFormat("FPS %d   RIGHT-CLICK: ORDER   SHIFT+#: SAVE SQUAD   #: RECALL   P: PAUSE   ESC: CANCEL   N: WAVE", rl.GetFPS())
 	// Top bar: minerals plus the empire-wide MPS so income is visible without
 	// opening Earth's inspector.
-	min_text := rl.TextFormat("◆ MINERALS: %d", minerals)
+	min_text := rl.TextFormat("MINERALS: %d", minerals)
 	mps_text := rl.TextFormat("MPS %.1f", global_mps())
 	speed_text := rl.TextFormat("SPEED LVL %d/%d", drone_speed_level, DRONE_SPEED_UPGRADE_MAX)
 	min_w := rl.MeasureText(min_text, 18)
 	mps_w := rl.MeasureText(mps_text, 18)
 	speed_w := rl.MeasureText(speed_text, 18)
-	bar_w := min_w + mps_w + speed_w + 46
+	// Floating tech dock: 20px inner padding, 24px column gaps with a centered
+	// 20px-tall NEON_DIM divider between metrics.
+	bar_w := (HUD_TEXT_X - HUD_PAD) + min_w + mps_w + speed_w + 2 * HUD_COL_GAP + (HUD_TEXT_X - HUD_PAD)
 	rl.DrawRectangle(HUD_PAD, HUD_PAD, bar_w, HUD_DOCK_H, NEON_PANEL)
 	rl.DrawRectangleLinesEx({HUD_PAD, HUD_PAD, f32(bar_w), HUD_DOCK_H}, 1, NEON_DIM)
-	rl.DrawLine(HUD_TEXT_X + min_w + 6, HUD_PAD + 5, HUD_TEXT_X + min_w + 6, HUD_PAD + 29, NEON_DIM)
-	rl.DrawLine(HUD_TEXT_X + min_w + BTN_GAP + mps_w + 6, HUD_PAD + 5, HUD_TEXT_X + min_w + BTN_GAP + mps_w + 6, HUD_PAD + 29, NEON_DIM)
+	// Small diamond glyph (the default font has no unicode gem character).
+	draw_diamond(HUD_TEXT_X - 14, HUD_PAD + HUD_DOCK_H / 2, 5, NEON_CYAN)
+	rl.DrawLine(HUD_TEXT_X + min_w + HUD_COL_GAP / 2, HUD_PAD + 10, HUD_TEXT_X + min_w + HUD_COL_GAP / 2, HUD_PAD + 30, NEON_DIM)
+	rl.DrawLine(HUD_TEXT_X + min_w + HUD_COL_GAP + mps_w + HUD_COL_GAP / 2, HUD_PAD + 10, HUD_TEXT_X + min_w + HUD_COL_GAP + mps_w + HUD_COL_GAP / 2, HUD_PAD + 30, NEON_DIM)
 	rl.DrawText(min_text, HUD_TEXT_X, HUD_TEXT_Y, 18, NEON_CYAN)
-	rl.DrawText(mps_text, HUD_TEXT_X + min_w + BTN_GAP, HUD_TEXT_Y, 18, NEON_BLUE)
-	rl.DrawText(speed_text, HUD_TEXT_X + min_w + BTN_GAP + mps_w + BTN_GAP, HUD_TEXT_Y, 18, rl.Color{120, 220, 160, 255})
+	rl.DrawText(mps_text, HUD_TEXT_X + min_w + HUD_COL_GAP, HUD_TEXT_Y, 18, NEON_BLUE)
+	rl.DrawText(speed_text, HUD_TEXT_X + min_w + HUD_COL_GAP + mps_w + HUD_COL_GAP, HUD_TEXT_Y, 18, rl.Color{120, 220, 160, 255})
 	// Draw status BEFORE the squad badges: rl.TextFormat serves every caller
 	// from a small rotating pool of static buffers, so each badge label
 	// overwrites an earlier one — with a second saved squad the badges
 	// clobbered this line (FPS/controls vanished from the bottom HUD).
 	// zoom_text is safe: it is formatted and drawn immediately.
-	rl.DrawText(status, PANEL_PAD_X, rl.GetScreenHeight() - 28, 14, NEON_MUTED)
+	// Bottom status dock: same floating tech style as the top bar (drawn before
+	// the squad badges - see the TextFormat pool note above). Size-12 text so
+	// the full keybind guide and the zoom readout never collide mid-dock.
+	dock_y := f32(rl.GetScreenHeight() - BOTTOM_DOCK_H - 12)
+	dock_w := f32(viewport_w - 2 * HUD_PAD)
+	rl.DrawRectangle(HUD_PAD, c.int(dock_y), c.int(dock_w), BOTTOM_DOCK_H, NEON_PANEL)
+	rl.DrawRectangleLinesEx({HUD_PAD, dock_y, dock_w, BOTTOM_DOCK_H}, 1, NEON_DIM)
+	rl.DrawText(status, HUD_TEXT_X, c.int(dock_y + 12), 12, NEON_MUTED)
 	draw_squad_hud()
 	zoom_text := rl.TextFormat("ZOOM %d%% // ALTITUDE %.0f", zoom_percent(), camera.position.y)
-	rl.DrawLine(PANEL_PAD_X, rl.GetScreenHeight() - 34, viewport_w - PANEL_PAD_X, rl.GetScreenHeight() - 34, NEON_DIM)
-	rl.DrawText(zoom_text, viewport_w - 208, rl.GetScreenHeight() - 28, 14, NEON_MUTED)
+	zoom_w := f32(rl.MeasureText(zoom_text, 12))
+	rl.DrawText(zoom_text, c.int(HUD_PAD + dock_w - f32(HUD_TEXT_X - HUD_PAD) - zoom_w), c.int(dock_y + 12), 12, NEON_MUTED)
 }
 
 draw_inspector :: proc() {
@@ -1488,14 +1502,14 @@ draw_inspector :: proc() {
 		// mining, so it keeps the plain count). One TextFormat per DrawText keeps
 		// each buffer alive until drawn (rotating TextFormat pool).
 		if selected_planet != ENEMY_HOME {
-			rl.DrawText(rl.TextFormat("MINING DRONES (%d/%d)", roster_count(.MINING), planet_mining_cap(selected_planet)), c.int(x + PANEL_PAD_X), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
+			rl.DrawText(rl.TextFormat("MINING DRONES (%d/%d)", roster_count(.MINING), planet_mining_cap(selected_planet)), c.int(x + PANEL_PAD_X), c.int(unit_tile_y(.MINING) - 23), 13, rl.ORANGE)
 		} else {
-			rl.DrawText(rl.TextFormat("MINING DRONES (%d)", roster_count(.MINING)), c.int(x + PANEL_PAD_X), c.int(unit_tile_y(.MINING) - 18), 13, rl.ORANGE)
+			rl.DrawText(rl.TextFormat("MINING DRONES (%d)", roster_count(.MINING)), c.int(x + PANEL_PAD_X), c.int(unit_tile_y(.MINING) - 23), 13, rl.ORANGE)
 		}
 		for i := 0; i < unit_count; i += 1 {
 			if unit_in_roster(i, .MINING) { draw_unit_tile(i, x, unit_tile_y(.MINING), roster_ordinal(i, .MINING), false) }
 		}
-			rl.DrawText(rl.TextFormat("FIGHTING DRONES (%d)", roster_count(.COMBAT)), c.int(x + PANEL_PAD_X), c.int(unit_tile_y(.COMBAT) - 18), 13, NEON_BLUE)
+			rl.DrawText(rl.TextFormat("FIGHTING DRONES (%d)", roster_count(.COMBAT)), c.int(x + PANEL_PAD_X), c.int(unit_tile_y(.COMBAT) - 23), 13, NEON_BLUE)
 		for i := 0; i < unit_count; i += 1 {
 			if unit_in_roster(i, .COMBAT) { draw_unit_tile(i, x, unit_tile_y(.COMBAT), roster_ordinal(i, .COMBAT), false) }
 		}
@@ -1505,13 +1519,13 @@ draw_inspector :: proc() {
 		if has_vision(selected_planet) {
 			enemy_header := rl.Color{235, 110, 110, 255}
 			if enemy_roster_count(.MINING) > 0 {
-				rl.DrawText(rl.TextFormat("ENEMY MINING DRONES (%d)", enemy_roster_count(.MINING)), c.int(x + PANEL_PAD_X), c.int(enemy_tile_y(.MINING) - 18), 13, enemy_header)
+				rl.DrawText(rl.TextFormat("ENEMY MINING DRONES (%d)", enemy_roster_count(.MINING)), c.int(x + PANEL_PAD_X), c.int(enemy_tile_y(.MINING) - 23), 13, enemy_header)
 				for i := 0; i < unit_count; i += 1 {
 					if enemy_in_roster(i, .MINING) { draw_unit_tile(i, x, enemy_tile_y(.MINING), enemy_roster_ordinal(i, .MINING), true) }
 				}
 			}
 			if enemy_roster_count(.COMBAT) > 0 {
-				rl.DrawText(rl.TextFormat("ENEMY FIGHTING DRONES (%d)", enemy_roster_count(.COMBAT)), c.int(x + PANEL_PAD_X), c.int(enemy_tile_y(.COMBAT) - 18), 13, enemy_header)
+				rl.DrawText(rl.TextFormat("ENEMY FIGHTING DRONES (%d)", enemy_roster_count(.COMBAT)), c.int(x + PANEL_PAD_X), c.int(enemy_tile_y(.COMBAT) - 23), 13, enemy_header)
 				for i := 0; i < unit_count; i += 1 {
 					if enemy_in_roster(i, .COMBAT) { draw_unit_tile(i, x, enemy_tile_y(.COMBAT), enemy_roster_ordinal(i, .COMBAT), true) }
 				}
@@ -1535,33 +1549,33 @@ draw_earth_inspector :: proc(x: f32) {
 		pip_color := rl.Color{14, 20, 34, 255}
 		pip_border := NEON_DIM
 		if pip < base_counts[EARTH] { pip_color = rl.Color{0, 90, 120, 255}; pip_border = NEON_CYAN }
-		pip_rect := rl.Rectangle{x + PANEL_PAD_X + PIPS_OFF + f32(pip * GRID_PITCH), BASES_Y - 1, SLOT_SIZE, SLOT_SIZE}
+		pip_rect := rl.Rectangle{x + PANEL_PAD_X + PIPS_OFF + f32(pip * GRID_PITCH), BASES_Y - 2, SLOT_SIZE, SLOT_SIZE}
 		rl.DrawRectangleRec(pip_rect, pip_color)
 		rl.DrawRectangleLinesEx(pip_rect, 1, pip_border)
 		if pip < base_counts[EARTH] { rl.DrawRectangle(c.int(pip_rect.x + 5), c.int(pip_rect.y + 5), 8, 8, NEON_CYAN) }
 	}
-	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(EARTH)), c.int(x + READOUT_X), 70, 13, NEON_BLUE)
-	rl.DrawText(rl.TextFormat("GLOBAL %.1f", global_mps()), c.int(x + READOUT_X), 86, 13, NEON_CYAN)
+	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(EARTH)), c.int(x + READOUT_X), 84, 13, NEON_BLUE)
+	rl.DrawText(rl.TextFormat("GLOBAL %.1f", global_mps()), c.int(x + READOUT_X), 100, 13, NEON_CYAN)
 
 	if base_button_visible() {
 		base_button := rl.Rectangle{x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, BASE_BTN_H}
+		rl.DrawRectangleRec(base_button, NEON_PANEL_SOLID)
 		if base_build_planet == EARTH {
-			rl.DrawRectangleRec(base_button, NEON_PANEL_SOLID)
 			if constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS {
-				rl.DrawText(rl.TextFormat("CREW %d/%d  //  MINERS AUTO-JOIN ON DEPOSIT", constructing_miners(EARTH), BASE_CONSTRUCT_MINERS), c.int(x + PANEL_PAD_X + CARD_INSET), 115, 11, NEON_CYAN)
+				rl.DrawText(rl.TextFormat("CREW %d/%d  //  MINERS AUTO-JOIN ON DEPOSIT", constructing_miners(EARTH), BASE_CONSTRUCT_MINERS), c.int(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 12, 11, NEON_CYAN)
 			} else {
-				rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + PANEL_PAD_X + CARD_INSET), 115, 14, NEON_CYAN)
-				draw_progress({x + PANEL_PAD_X, 142, PANEL_CONTENT_W, BAR_H}, base_build_progress / BASE_CONSTRUCT_TIME, NEON_CYAN)
+				rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 11, 14, NEON_CYAN)
 			}
 			rl.DrawRectangleLinesEx(base_button, 1, NEON_STEEL)
+			// Construction progress runs in an 8px bar just below the button.
+			draw_progress({x + PANEL_PAD_X, BASE_PROGRESS_Y, PANEL_CONTENT_W, BAR_H}, base_build_progress / BASE_CONSTRUCT_TIME, NEON_CYAN)
 		} else {
-			rl.DrawRectangleRec(base_button, NEON_PANEL_SOLID)
 			rl.DrawRectangleLinesEx(base_button, 1, NEON_STEEL)
-			rl.DrawText("Construct Command Base (500 Minerals)", c.int(x + PANEL_PAD_X + CARD_INSET), 115, 14, NEON_TEXT)
+			rl.DrawText("Construct Command Base (500 Minerals)", c.int(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 11, 14, NEON_TEXT)
 		}
 	}
 
-	rl.DrawText("PRODUCTION LINES", c.int(x + PANEL_PAD_X), PROD_LABEL_Y, 13, NEON_CYAN)
+	rl.DrawText("PRODUCTION LINES", c.int(x + PANEL_PAD_X), PROD_TITLE_Y, 13, NEON_CYAN)
 	for b := 0; b < base_counts[EARTH]; b += 1 {
 		line := production[EARTH][b]
 		y := f32(PROD_FIRST_Y + b * PROD_PITCH)
@@ -1570,14 +1584,14 @@ draw_earth_inspector :: proc(x: f32) {
 			total := drone_build_time(line.kind)
 			if line.kind == .COMBAT { name = "COMBAT DRONE" }
 			rl.DrawText(rl.TextFormat("BASE %d  %s", b + 1, name), c.int(x + PANEL_PAD_X), c.int(y), 12, NEON_TEXT)
-			draw_progress({x + PANEL_PAD_X, y + QUEUE_LABEL_GAP, PROD_BAR_W, BAR_H}, line.progress / total, NEON_CYAN)
+			draw_progress({x + PANEL_PAD_X, y + PROD_BAR_DY, PROD_BAR_W, BAR_H}, line.progress / total, NEON_CYAN)
 		} else {
 			rl.DrawText(rl.TextFormat("BASE %d  READY", b + 1), c.int(x + PANEL_PAD_X), c.int(y), 12, rl.Color{90, 110, 135, 255})
 		}
 	}
 
 	orders_y := production_orders_y()
-	rl.DrawText("BUILD", c.int(x + PANEL_PAD_X), c.int(orders_y - 16), 13, NEON_CYAN)
+	rl.DrawText("BUILD", c.int(x + PANEL_PAD_X), c.int(orders_y - 23), 13, NEON_CYAN)
 	draw_button({x + PANEL_PAD_X, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, "[M] MINER  (50)", NEON_PANEL_SOLID)
 	draw_button({x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, "[C] COMBAT (125)", NEON_PANEL_SOLID)
 	// Drone build-speed upgrade: one button below the BUILD row. At the cap it
@@ -1591,7 +1605,7 @@ draw_earth_inspector :: proc(x: f32) {
 	queue_y := production_orders_y() + QUEUE_DY
 	queue_capacity := base_counts[EARTH] * MAX_BASES
 	queue_total := queued_count(EARTH)
-	rl.DrawText(rl.TextFormat("BUILD QUEUE  (%d/%d)", queue_total, queue_capacity), c.int(x + PANEL_PAD_X), c.int(queue_y), 12, NEON_CYAN)
+	rl.DrawText(rl.TextFormat("BUILD QUEUE  (%d/%d)", queue_total, queue_capacity), c.int(x + PANEL_PAD_X), c.int(queue_y), 13, NEON_CYAN)
 	for slot := 0; slot < queue_capacity; slot += 1 {
 		queued := slot < queue_total
 		kind := Unit_Type.MINING
@@ -1626,7 +1640,7 @@ draw_hq_inspector :: proc(x: f32) {
 // Outpost planets host no player bases: show the mining forecast, the enemy
 // stronghold status (mining is locked until it falls) and unit rosters only.
 draw_outpost_inspector :: proc(x: f32) {
-	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(selected_planet)), c.int(x + PANEL_PAD_X), 79, 13, NEON_BLUE)
+	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(selected_planet)), c.int(x + PANEL_PAD_X), BASES_Y, 13, NEON_BLUE)
 	card := rl.Rectangle{x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, CARD_H}
 	if has_vision(selected_planet) {
 		stronghold_color := rl.Color{120, 120, 138, 255}
@@ -1691,9 +1705,9 @@ draw_ghost_rosters :: proc(x: f32) {
 		if count == 0 { continue }
 		y := unit_tile_y(kind)
 		if section == 0 {
-			rl.DrawText(rl.TextFormat("%s (%d/%d)", label, count, planet_mining_cap(selected_planet)), c.int(x + PANEL_PAD_X), c.int(y - 18), 13, color)
+			rl.DrawText(rl.TextFormat("%s (%d/%d)", label, count, planet_mining_cap(selected_planet)), c.int(x + PANEL_PAD_X), c.int(y - 23), 13, color)
 		} else {
-			rl.DrawText(rl.TextFormat("%s (%d)", label, count), c.int(x + PANEL_PAD_X), c.int(y - 18), 13, color)
+			rl.DrawText(rl.TextFormat("%s (%d)", label, count), c.int(x + PANEL_PAD_X), c.int(y - 23), 13, color)
 		}
 		ordinal := 0
 		for i := 0; i < intel.unit_count; i += 1 {
@@ -1712,7 +1726,7 @@ draw_ghost_rosters :: proc(x: f32) {
 		count := ghost_count(kind, true)
 		if count == 0 { continue }
 		y := enemy_tile_y(kind)
-		rl.DrawText(rl.TextFormat("%s (%d)", label, count), c.int(x + PANEL_PAD_X), c.int(y - 18), 13, enemy_header)
+		rl.DrawText(rl.TextFormat("%s (%d)", label, count), c.int(x + PANEL_PAD_X), c.int(y - 23), 13, enemy_header)
 		ordinal := 0
 		for i := 0; i < intel.unit_count; i += 1 {
 			u := &intel.units[i]
@@ -1868,8 +1882,8 @@ draw_unit_tile_data :: proc(kind: Unit_Type, state: Unit_State, selected: bool, 
 	accent := rl.ORANGE
 	if kind == .COMBAT { symbol = "C"; accent = NEON_BLUE }
 	if enemy { accent = rl.Color{235, 130, 130, 255} }
-	rl.DrawText(symbol, c.int(rect.x + 8), c.int(rect.y + 7), 12, accent)
-	rl.DrawCircle(c.int(rect.x + rect.width - 5), c.int(rect.y + 5), 3, state_color(state))
+	rl.DrawText(symbol, c.int(rect.x + 4), c.int(rect.y + 2), 11, accent)
+	rl.DrawCircle(c.int(rect.x + rect.width - 4), c.int(rect.y + 4), 2, state_color(state))
 }
 
 // Player fighters are neon blue, enemy fighters red.
@@ -1983,7 +1997,10 @@ draw_button :: proc(rect: rl.Rectangle, label: cstring, color: rl.Color) {
 		rl.DrawLine(c.int(rect.x + 1), c.int(rect.y + 1), c.int(rect.x + rect.width - 1), c.int(rect.y + 1), rl.Color{0, 225, 255, 110})
 	}
 	rl.DrawRectangleLinesEx(rect, 1, border)
-	rl.DrawText(label, c.int(rect.x + BTN_TEXT_PAD_X), c.int(rect.y + BTN_TEXT_PAD_Y), 11, hovered ? NEON_CYAN : NEON_TEXT)
+	// Label vertically centered so one proc serves 36px action buttons and
+	// 44px overlay buttons alike.
+	text_y := rect.y + (rect.height - 12) / 2
+	rl.DrawText(label, c.int(rect.x + BTN_TEXT_PAD_X), c.int(text_y), 12, hovered ? NEON_CYAN : NEON_TEXT)
 }
 
 draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type) {
@@ -2165,6 +2182,15 @@ advance_pause_selection :: proc(dir: int) {
 // ENTER/KP_ENTER on the focused option — the same actions the mouse path takes.
 activate_pause_selection :: proc() {
 	if pause_menu_selection == 0 { game_paused = false } else { quit_requested = true }
+}
+
+// Small diamond glyph for the resource dock: four thin lines (the default
+// raylib font lacks a unicode gem character, which rendered as '?').
+draw_diamond :: proc(cx, cy, r: f32, color: rl.Color) {
+	rl.DrawLineV({cx, cy - r}, {cx + r, cy}, color)
+	rl.DrawLineV({cx + r, cy}, {cx, cy + r}, color)
+	rl.DrawLineV({cx, cy + r}, {cx - r, cy}, color)
+	rl.DrawLineV({cx - r, cy}, {cx, cy - r}, color)
 }
 
 // One unpaused simulation tick. The main loop skips this entirely while the

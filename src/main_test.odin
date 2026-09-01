@@ -1102,23 +1102,23 @@ base_button_hidden_at_max_bases :: proc(t: ^testing.T) {
 	// Clicking the hidden button area does nothing: no minerals spent, no build.
 	base_counts[EARTH] = MAX_BASES
 	minerals = 1000
-	handle_inspector_click({19, 107}, 0) // panel_x = 0: base rect is {18,106,294,32}.
+	handle_inspector_click({25, 130}, 0) // panel_x = 0: base rect is {20,124,290,36}.
 	testing.expect(t, minerals == 1000 && base_build_planet == -1, "clicking the hidden button area does nothing at the cap")
 }
 
 @(test)
 unit_tiles_are_compact_and_hitboxes_match_layout :: proc(t: ^testing.T) {
-	testing.expect(t, TILE_SIZE == 26, "tiles are 50% smaller (52 -> 26)")
-	// A full row packs inside the panel content area (two 18px margins).
-	testing.expect(t, TILE_SIZE * TILES_PER_ROW + (TILES_PER_ROW - 1) * TILE_GAP <= SCREEN_PANEL_WIDTH - 36, "a full row fits inside the panel")
+	testing.expect(t, TILE_SIZE == 16, "tiles are compact 16px grid tiles")
+	// A full row packs inside the panel content area (two 20px margins).
+	testing.expect(t, TILE_SIZE * TILES_PER_ROW + (TILES_PER_ROW - 1) * TILE_GAP <= SCREEN_PANEL_WIDTH - 40, "a full row fits inside the panel")
 	testing.expect(t, TILES_PER_ROW >= 9, "rows hold at least 9 tiles")
 	// First tile sits at the panel margin; ordinal 10 wraps to the second row.
 	r0 := unit_tile_rect(100, 200, 0)
-	testing.expect(t, r0.x == 118 && r0.y == 200 && r0.width == TILE_SIZE && r0.height == TILE_SIZE, "first tile at the panel margin")
+	testing.expect(t, r0.x == 120 && r0.y == 200 && r0.width == TILE_SIZE && r0.height == TILE_SIZE, "first tile at the panel margin")
 	r10 := unit_tile_rect(100, 200, 10)
-	testing.expect(t, r10.x == 118 && r10.y == 200 + (TILE_SIZE + TILE_GAP), "ordinal 10 wraps to the second row")
+	testing.expect(t, r10.x == 120 && r10.y == 200 + (TILE_SIZE + TILE_GAP), "ordinal 10 wraps to the second row")
 	r9 := unit_tile_rect(100, 200, 9)
-	testing.expect(t, r9.x == 100 + 18 + 9 * (TILE_SIZE + TILE_GAP), "tiles pack left to right")
+	testing.expect(t, r9.x == 100 + 20 + 9 * (TILE_SIZE + TILE_GAP), "tiles pack left to right")
 	// Hitbox covers the tile and stays inside it.
 	testing.expect(t, rl.CheckCollisionPointRec({r0.x + 1, r0.y + 1}, r0), "hitbox covers the tile")
 	testing.expect(t, !rl.CheckCollisionPointRec({r0.x - 1, r0.y - 1}, r0), "hitbox stays inside the tile")
