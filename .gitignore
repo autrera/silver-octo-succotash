@@ -408,3 +408,4 @@ bin/
 *.swo
 *.swn
 /build/compile_commands.json
+shot_*.png
