@@ -177,6 +177,7 @@ PROD_TITLE_Y :: 166
 PROD_FIRST_Y :: 189
 PROD_BAR_DY :: 16
 ORDERS_BASE_Y :: 260
+BASE_COLLAPSE_Y :: PROD_TITLE_Y - SECTION_TOP
 UPGRADE_DY :: 48
 UPGRADE_H :: 36
 QUEUE_DY :: 108
@@ -186,10 +187,10 @@ DIALOG_BTN_H :: 44
 HUD_PAD :: 16
 PIPS_OFF :: 64
 READOUT_X :: 215
-BADGE_PAD :: 6
-BADGE_GAP :: 10
+BADGE_PAD :: 8
+BADGE_GAP :: 8
 BADGE_Y :: 68
-BADGE_H :: 25
+BADGE_H :: 20
 HUD_DOCK_H :: 40
 HUD_TEXT_X :: HUD_PAD + 20
 HUD_TEXT_Y :: HUD_PAD + 11
@@ -535,9 +536,8 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 	// keeping the inspector usable even when raygui styles are unavailable.
 	// Base construction and unit production exist only on Earth.
 	if selected_planet == EARTH {
-		if rl.CheckCollisionPointRec(mouse, {panel_x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, BASE_BTN_H}) {
-			// The hidden button still swallows the click: nothing happens at cap.
-			if base_button_visible() { start_base_construction() }
+		if base_button_visible() && rl.CheckCollisionPointRec(mouse, {panel_x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, BASE_BTN_H}) {
+			start_base_construction()
 			return
 		}
 		orders_y := f32(production_orders_y())
@@ -1573,10 +1573,12 @@ draw_earth_inspector :: proc(x: f32) {
 		}
 	}
 
-	rl.DrawText("PRODUCTION LINES", c.int(x + PANEL_PAD_X), PROD_TITLE_Y, 13, NEON_CYAN)
+	prod_title_y := production_title_y()
+	prod_first_y := production_first_y()
+	rl.DrawText("PRODUCTION LINES", c.int(x + PANEL_PAD_X), c.int(prod_title_y), 13, NEON_CYAN)
 	for b := 0; b < base_counts[EARTH]; b += 1 {
 		line := production[EARTH][b]
-		y := f32(PROD_FIRST_Y + b * PROD_PITCH)
+		y := f32(prod_first_y + b * PROD_PITCH)
 		if line.active {
 			name := "MINING DRONE"
 			total := drone_build_time(line.kind)
@@ -1742,8 +1744,21 @@ draw_ghost_rosters :: proc(x: f32) {
 	rl.DrawRectangleRec(rl.Rectangle{x, top, SCREEN_PANEL_WIDTH - 6, f32(rl.GetScreenHeight() - 40) - top}, rl.Color{10, 14, 26, 150})
 }
 
+// When all bases are built on Earth, the Command Base button disappears and
+// the production sections collapse up to SECTION_TOP to avoid an empty gap.
+production_title_y :: proc() -> int {
+	if selected_planet == EARTH && !base_button_visible() { return SECTION_TOP }
+	return PROD_TITLE_Y
+}
+
+production_first_y :: proc() -> int {
+	return production_title_y() + (PROD_FIRST_Y - PROD_TITLE_Y)
+}
+
 production_orders_y :: proc() -> int {
-	return ORDERS_BASE_Y + max_int(base_counts[selected_planet] - 1, 0) * PROD_PITCH
+	base_y := ORDERS_BASE_Y
+	if selected_planet == EARTH && !base_button_visible() { base_y -= BASE_COLLAPSE_Y }
+	return base_y + max_int(base_counts[selected_planet] - 1, 0) * PROD_PITCH
 }
 
 queued_count :: proc(planet: int) -> int {
@@ -2179,20 +2194,20 @@ squad_count :: proc(group: int) -> int {
 	return count
 }
 
-// Global HUD squad badges: `[n: count]` per assigned squad, under the top bar.
+// Global HUD squad badges: `[n:count]` per assigned squad, under the top bar.
 // Sleek tech pills: dark dock chip, thin neon outline, cyan text.
 draw_squad_hud :: proc() {
-	x := f32(HUD_TEXT_X)
+	x := f32(HUD_PAD)
 	for g in 1..=SQUAD_COUNT {
 		count := squad_count(g)
 		if count == 0 { continue }
-		label := rl.TextFormat("[%d: %d]", g, count)
+		label := rl.TextFormat("[%d:%d]", g, count)
 		w := f32(rl.MeasureText(label, 13))
-		badge := rl.Rectangle{x - BADGE_PAD, BADGE_Y, w + 2 * BADGE_PAD, BADGE_H}
+		badge := rl.Rectangle{x, BADGE_Y, w + 2 * BADGE_PAD, BADGE_H}
 		rl.DrawRectangleRec(badge, NEON_PANEL)
 		rl.DrawRectangleLinesEx(badge, 1, NEON_DIM)
-		rl.DrawText(label, c.int(x), BADGE_Y + 3, 13, NEON_CYAN)
-		x += w + BADGE_GAP + 2 * BADGE_PAD
+		rl.DrawText(label, c.int(x + BADGE_PAD), BADGE_Y + 4, 13, NEON_CYAN)
+		x += badge.width + BADGE_GAP
 	}
 }
 

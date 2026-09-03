@@ -2149,3 +2149,63 @@ restart_game_restores_fresh_playable_state :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, enemy_base_hp[ENEMY_HOME] == ENEMY_HQ_BASE_HP, "enemy HQ restored after restart")
 }
+
+@(test)
+bases_collapse_gap_when_five_bases_built :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	testing.expect(t, base_button_visible(), "base button visible with 1 base")
+	testing.expect(t, production_title_y() == PROD_TITLE_Y, "production title at normal PROD_TITLE_Y with 1 base")
+	testing.expect(t, production_first_y() == PROD_FIRST_Y, "production line 0 at PROD_FIRST_Y with 1 base")
+	testing.expect(t, production_orders_y() == ORDERS_BASE_Y, "orders at ORDERS_BASE_Y with 1 base")
+
+	// Set bases to 5 (cap)
+	base_counts[EARTH] = MAX_BASES
+	testing.expect(t, !base_button_visible(), "base button hidden with 5 bases")
+	testing.expect(t, production_title_y() == SECTION_TOP, "production title collapses up to SECTION_TOP with 5 bases")
+	testing.expect(t, production_first_y() == SECTION_TOP + 23, "production first line collapses up with 5 bases")
+	testing.expect(t, production_orders_y() == ORDERS_BASE_Y - BASE_COLLAPSE_Y + 4 * PROD_PITCH, "orders collapse up to account for removed button")
+
+	// With base constructing at Earth, button is visible and positions stay expanded
+	base_counts[EARTH] = 4
+	base_build_planet = EARTH
+	testing.expect(t, base_button_visible(), "base button visible while constructing")
+	testing.expect(t, production_title_y() == PROD_TITLE_Y, "production title stays at PROD_TITLE_Y while constructing")
+}
+
+@(test)
+five_bases_inspector_clicks_and_cancel :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	base_counts[EARTH] = MAX_BASES
+	minerals = 1000
+
+	// Clicking where the base button used to be at SECTION_TOP does NOT start base construction
+	handle_inspector_click({PANEL_PAD_X + 10, f32(SECTION_TOP + 10)}, 0)
+	testing.expect(t, base_build_planet < 0, "no base construction started from clicking collapsed area at 5 bases")
+
+	// Queue a unit via the collapsed BUILD button
+	orders_y := f32(production_orders_y())
+	handle_inspector_click({PANEL_PAD_X + 10, orders_y + 10}, 0)
+	testing.expect(t, queued_count(EARTH) == 1, "queue_unit succeeds at 5 bases via collapsed build button")
+
+	// Cancel by clicking slot 0 in the collapsed queue
+	slot_rect := queue_slot_rect(0, 0)
+	handle_inspector_click({slot_rect.x + 1, slot_rect.y + 1}, 0)
+	testing.expect(t, queued_count(EARTH) == 0, "cancel_queued_at works at 5 bases via collapsed queue slot")
+}
+
+@(test)
+losing_base_from_cap_reopens_button_and_restores_positions :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	base_counts[EARTH] = MAX_BASES
+	testing.expect(t, !base_button_visible(), "hidden at cap")
+
+	// Siege destroys a base
+	destroy_player_base(EARTH)
+	testing.expect(t, base_counts[EARTH] == 4, "base count drops to 4")
+	testing.expect(t, base_button_visible(), "button visible again at 4 bases")
+	testing.expect(t, production_title_y() == PROD_TITLE_Y, "production title returns to PROD_TITLE_Y")
+	testing.expect(t, production_orders_y() == ORDERS_BASE_Y + 3 * PROD_PITCH, "orders return to normal expanded Y")
+}
