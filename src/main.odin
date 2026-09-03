@@ -137,6 +137,8 @@ TILES_PER_ROW :: 10
 // thin 1px borders. Visual only - no game logic reads these.
 NEON_CYAN :: rl.Color{0, 225, 255, 255}
 NEON_BLUE :: rl.Color{40, 195, 255, 255}
+NEON_AMBER :: rl.Color{255, 185, 45, 255}
+NEON_AMBER_DIM :: rl.Color{140, 95, 25, 255}
 NEON_DIM :: rl.Color{25, 75, 110, 255}
 NEON_STEEL :: rl.Color{40, 110, 150, 255}
 NEON_PANEL :: rl.Color{10, 14, 26, 245}
@@ -164,16 +166,17 @@ PROD_PITCH :: 34
 PANEL_HEADER_Y :: 20
 PANEL_DIVIDER_Y :: 48
 PANEL_SUB_Y :: 60
-BASES_Y :: 92
-SECTION_TOP :: 124
+OUTPOST_CARD_Y :: PANEL_SUB_Y
+BASES_Y :: 60
+SECTION_TOP :: 92
 CARD_H :: 54
-CARD_LINE_1 :: 138
-CARD_LINE_2 :: 157
-BASE_PROGRESS_Y :: 166
-PROD_TITLE_Y :: 198
-PROD_FIRST_Y :: 221
+CARD_LINE_1 :: OUTPOST_CARD_Y + 14
+CARD_LINE_2 :: OUTPOST_CARD_Y + 33
+BASE_PROGRESS_Y :: 134
+PROD_TITLE_Y :: 166
+PROD_FIRST_Y :: 189
 PROD_BAR_DY :: 16
-ORDERS_BASE_Y :: 292
+ORDERS_BASE_Y :: 260
 UPGRADE_DY :: 48
 UPGRADE_H :: 36
 QUEUE_DY :: 108
@@ -192,7 +195,7 @@ HUD_TEXT_X :: HUD_PAD + 20
 HUD_TEXT_Y :: HUD_PAD + 11
 HUD_COL_GAP :: 24
 BOTTOM_DOCK_H :: 36
-ROSTER_BASE_Y :: 196
+ROSTER_BASE_Y :: 150
 ROSTER_BELOW_QUEUE :: 206
 SECTION_PAD_Y :: 26
 PROD_BAR_W :: 200
@@ -1439,11 +1442,9 @@ draw_world :: proc() {
 	bar_w := (HUD_TEXT_X - HUD_PAD) + min_w + mps_w + speed_w + 2 * HUD_COL_GAP + (HUD_TEXT_X - HUD_PAD)
 	rl.DrawRectangle(HUD_PAD, HUD_PAD, bar_w, HUD_DOCK_H, NEON_PANEL)
 	rl.DrawRectangleLinesEx({HUD_PAD, HUD_PAD, f32(bar_w), HUD_DOCK_H}, 1, NEON_DIM)
-	// Small diamond glyph (the default font has no unicode gem character).
-	draw_diamond(HUD_TEXT_X - 14, HUD_PAD + HUD_DOCK_H / 2, 5, NEON_CYAN)
 	rl.DrawLine(HUD_TEXT_X + min_w + HUD_COL_GAP / 2, HUD_PAD + 10, HUD_TEXT_X + min_w + HUD_COL_GAP / 2, HUD_PAD + 30, NEON_DIM)
 	rl.DrawLine(HUD_TEXT_X + min_w + HUD_COL_GAP + mps_w + HUD_COL_GAP / 2, HUD_PAD + 10, HUD_TEXT_X + min_w + HUD_COL_GAP + mps_w + HUD_COL_GAP / 2, HUD_PAD + 30, NEON_DIM)
-	rl.DrawText(min_text, HUD_TEXT_X, HUD_TEXT_Y, 18, NEON_CYAN)
+	rl.DrawText(min_text, HUD_TEXT_X, HUD_TEXT_Y, 18, NEON_AMBER)
 	rl.DrawText(mps_text, HUD_TEXT_X + min_w + HUD_COL_GAP, HUD_TEXT_Y, 18, NEON_BLUE)
 	rl.DrawText(speed_text, HUD_TEXT_X + min_w + HUD_COL_GAP + mps_w + HUD_COL_GAP, HUD_TEXT_Y, 18, rl.Color{120, 220, 160, 255})
 	// Draw status BEFORE the squad badges: rl.TextFormat serves every caller
@@ -1471,20 +1472,19 @@ draw_inspector :: proc() {
 	rl.DrawRectangle(c.int(x), 0, SCREEN_PANEL_WIDTH, rl.GetScreenHeight(), NEON_PANEL)
 	rl.DrawRectangle(c.int(x), 0, 1, rl.GetScreenHeight(), NEON_CYAN)
 	rl.DrawRectangle(c.int(x + 1), 0, 1, rl.GetScreenHeight(), rl.Color{0, 225, 255, 40})
-	rl.DrawText("[ PLANET INSPECTOR ]", c.int(x + PANEL_PAD_X), PANEL_HEADER_Y, 20, NEON_CYAN)
-	rl.DrawLine(c.int(x + PANEL_PAD_X), PANEL_DIVIDER_Y, c.int(x + SCREEN_PANEL_WIDTH - PANEL_PAD_X), PANEL_DIVIDER_Y, NEON_DIM)
 	if selected_planet == ENEMY_HOME {
-		// The HQ is a sector, not a planet: a fortress header instead of the
-		// mineral readout (which would index past the planet table).
 		hq_title: cstring = "ENEMY FORTRESS"
 		if enemy_hq_destroyed() { hq_title = "ENEMY FORTRESS (DESTROYED)" }
-		rl.DrawText(hq_title, c.int(x + PANEL_PAD_X), PANEL_SUB_Y, 15, rl.Color{235, 110, 110, 255})
+		rl.DrawText(hq_title, c.int(x + PANEL_PAD_X), PANEL_HEADER_Y, 20, rl.Color{235, 110, 110, 255})
 	} else {
-		// Planet pointer lives below the HQ guard: selected_planet is the
-		// ENEMY_HOME sector index (8) there, past the planets table.
-		planet := &planets[selected_planet]
-		rl.DrawText(rl.TextFormat("%s  //  MINERALS %03d", planet.name, planet.minerals), c.int(x + PANEL_PAD_X), PANEL_SUB_Y, 15, NEON_BLUE)
+		rl.DrawText(planets[selected_planet].name, c.int(x + PANEL_PAD_X), PANEL_HEADER_Y, 20, NEON_CYAN)
+		if selected_planet == EARTH || has_vision(selected_planet) || intel_recorded[selected_planet] {
+			mps_text := rl.TextFormat("MPS %.1f", planet_mps(selected_planet))
+			mps_w := rl.MeasureText(mps_text, 14)
+			rl.DrawText(mps_text, c.int(x + SCREEN_PANEL_WIDTH - PANEL_PAD_X - f32(mps_w)), PANEL_HEADER_Y + 4, 14, NEON_AMBER)
+		}
 	}
+	rl.DrawLine(c.int(x + PANEL_PAD_X), PANEL_DIVIDER_Y, c.int(x + SCREEN_PANEL_WIDTH - PANEL_PAD_X), PANEL_DIVIDER_Y, NEON_DIM)
 	if selected_planet == EARTH {
 		draw_earth_inspector(x)
 	} else if selected_planet == ENEMY_HOME {
@@ -1497,7 +1497,7 @@ draw_inspector :: proc() {
 	// snapshot instead of any live section; lit planets draw live rosters.
 	if ghost_view() {
 		draw_ghost_rosters(x)
-	} else {
+	} else if selected_planet == EARTH || has_vision(selected_planet) {
 		// Workforce cap shown next to the player mining roster (the HQ hosts no
 		// mining, so it keeps the plain count). One TextFormat per DrawText keeps
 		// each buffer alive until drawn (rotating TextFormat pool).
@@ -1554,8 +1554,6 @@ draw_earth_inspector :: proc(x: f32) {
 		rl.DrawRectangleLinesEx(pip_rect, 1, pip_border)
 		if pip < base_counts[EARTH] { rl.DrawRectangle(c.int(pip_rect.x + 5), c.int(pip_rect.y + 5), 8, 8, NEON_CYAN) }
 	}
-	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(EARTH)), c.int(x + READOUT_X), 84, 13, NEON_BLUE)
-	rl.DrawText(rl.TextFormat("GLOBAL %.1f", global_mps()), c.int(x + READOUT_X), 100, 13, NEON_CYAN)
 
 	if base_button_visible() {
 		base_button := rl.Rectangle{x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, BASE_BTN_H}
@@ -1570,8 +1568,8 @@ draw_earth_inspector :: proc(x: f32) {
 			// Construction progress runs in an 8px bar just below the button.
 			draw_progress({x + PANEL_PAD_X, BASE_PROGRESS_Y, PANEL_CONTENT_W, BAR_H}, base_build_progress / BASE_CONSTRUCT_TIME, NEON_CYAN)
 		} else {
-			rl.DrawRectangleLinesEx(base_button, 1, NEON_STEEL)
-			rl.DrawText("Construct Command Base (500 Minerals)", c.int(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 11, 14, NEON_TEXT)
+			can_build_base := minerals >= BASE_COST && base_counts[EARTH] < MAX_BASES && base_build_planet < 0 && planet_liberated(EARTH)
+			draw_button(base_button, "Command Base (500)", NEON_PANEL_SOLID, can_build_base)
 		}
 	}
 
@@ -1591,15 +1589,19 @@ draw_earth_inspector :: proc(x: f32) {
 	}
 
 	orders_y := production_orders_y()
-	rl.DrawText("BUILD", c.int(x + PANEL_PAD_X), c.int(orders_y - 23), 13, NEON_CYAN)
-	draw_button({x + PANEL_PAD_X, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, "[M] MINER  (50)", NEON_PANEL_SOLID)
-	draw_button({x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, "[C] COMBAT (125)", NEON_PANEL_SOLID)
+	rl.DrawText("BUILD", c.int(x + PANEL_PAD_X), c.int(orders_y - 23), 13, NEON_AMBER)
+	queue_not_full := queued_count(EARTH) < base_counts[EARTH] * 5
+	can_build_miner := minerals >= unit_cost(.MINING) && queue_not_full
+	can_build_combat := minerals >= unit_cost(.COMBAT) && queue_not_full
+	draw_button({x + PANEL_PAD_X, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, "[M] MINER  (50)", NEON_PANEL_SOLID, can_build_miner)
+	draw_button({x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, "[C] COMBAT (125)", NEON_PANEL_SOLID, can_build_combat)
 	// Drone build-speed upgrade: one button below the BUILD row. At the cap it
 	// shows MAX and the click handler is a no-op.
 	if drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
-		draw_button(drone_speed_button_rect(x), rl.TextFormat("DRONE BUILD SPEED  LVL %d/%d (MAX)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX), NEON_PANEL_SOLID)
+		draw_button(drone_speed_button_rect(x), rl.TextFormat("DRONE BUILD SPEED  LVL %d/%d (MAX)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX), NEON_PANEL_SOLID, false)
 	} else {
-		draw_button(drone_speed_button_rect(x), rl.TextFormat("[U] DRONE BUILD SPEED  LVL %d/%d (%d)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX, DRONE_SPEED_UPGRADE_COST), NEON_PANEL_SOLID)
+		can_upgrade_speed := minerals >= DRONE_SPEED_UPGRADE_COST
+		draw_button(drone_speed_button_rect(x), rl.TextFormat("[U] DRONE BUILD SPEED  LVL %d/%d (%d)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX, DRONE_SPEED_UPGRADE_COST), NEON_PANEL_SOLID, can_upgrade_speed)
 	}
 
 	queue_y := production_orders_y() + QUEUE_DY
@@ -1617,7 +1619,7 @@ draw_earth_inspector :: proc(x: f32) {
 // The enemy HQ sector inspector: fortress status card plus the shared unit
 // rosters. Drawn for ENEMY_HOME instead of the outpost card.
 draw_hq_inspector :: proc(x: f32) {
-	card := rl.Rectangle{x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, CARD_H}
+	card := rl.Rectangle{x + PANEL_PAD_X, OUTPOST_CARD_Y, PANEL_CONTENT_W, CARD_H}
 	if enemy_hq_destroyed() {
 		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
 		rl.DrawRectangleLinesEx(card, 1, rl.Color{58, 60, 66, 255})
@@ -1640,8 +1642,7 @@ draw_hq_inspector :: proc(x: f32) {
 // Outpost planets host no player bases: show the mining forecast, the enemy
 // stronghold status (mining is locked until it falls) and unit rosters only.
 draw_outpost_inspector :: proc(x: f32) {
-	rl.DrawText(rl.TextFormat("MPS %.1f", planet_mps(selected_planet)), c.int(x + PANEL_PAD_X), BASES_Y, 13, NEON_BLUE)
-	card := rl.Rectangle{x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, CARD_H}
+	card := rl.Rectangle{x + PANEL_PAD_X, OUTPOST_CARD_Y, PANEL_CONTENT_W, CARD_H}
 	if has_vision(selected_planet) {
 		stronghold_color := rl.Color{120, 120, 138, 255}
 		title: cstring = "UNSCOUTED"
@@ -1820,12 +1821,16 @@ enemy_roster_ordinal :: proc(index: int, kind: Unit_Type) -> int {
 
 // Y of the enemy unit-tile rows: directly below the player fighting roster,
 // with the enemy mining section (when present) stacked above the fighters.
+// If no enemy mining drones exist, enemy fighters collapse up to avoid an empty gap.
 enemy_tile_y :: proc(kind: Unit_Type) -> int {
 	combat_rows := (view_count(.COMBAT, false) + TILES_PER_ROW - 1) / TILES_PER_ROW
 	y := unit_tile_y(.COMBAT) + SECTION_PAD_Y + combat_rows * (TILE_SIZE + TILE_GAP)
 	if kind == .COMBAT {
-		enemy_mining_rows := (view_count(.MINING, true) + TILES_PER_ROW - 1) / TILES_PER_ROW
-		y += SECTION_PAD_Y + enemy_mining_rows * (TILE_SIZE + TILE_GAP)
+		enemy_mining_count := view_count(.MINING, true)
+		if enemy_mining_count > 0 {
+			enemy_mining_rows := (enemy_mining_count + TILES_PER_ROW - 1) / TILES_PER_ROW
+			y += SECTION_PAD_Y + enemy_mining_rows * (TILE_SIZE + TILE_GAP)
+		}
 	}
 	return y
 }
@@ -1987,36 +1992,70 @@ draw_target_brackets :: proc(rect: rl.Rectangle, color: rl.Color) {
 	rl.DrawLineV({x + w, y + h - l}, {x + w, y + h}, color)
 }
 
-draw_button :: proc(rect: rl.Rectangle, label: cstring, color: rl.Color) {
-	rl.DrawRectangleRec(rect, color)
-	hovered := rl.CheckCollisionPointRec(rl.GetMousePosition(), rect)
-	border := NEON_DIM
-	if hovered {
-		border = NEON_CYAN
-		rl.DrawRectangleRec(rect, rl.Color{0, 225, 255, 28})
-		rl.DrawLine(c.int(rect.x + 1), c.int(rect.y + 1), c.int(rect.x + rect.width - 1), c.int(rect.y + 1), rl.Color{0, 225, 255, 110})
+draw_button :: proc(rect: rl.Rectangle, label: cstring, color: rl.Color, enabled: bool = true) {
+	hovered := enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), rect)
+	pressed := enabled && hovered && rl.IsMouseButtonDown(.LEFT)
+
+	top_h := c.int(rect.height / 2)
+	bot_h := c.int(rect.height) - top_h
+
+	// Elevated tactile button body: subtle 2-tone vertical bevel
+	top_color: rl.Color
+	bot_color: rl.Color
+	if !enabled {
+		top_color = rl.Color{13, 17, 26, 255}
+		bot_color = rl.Color{10, 13, 20, 255}
+	} else if pressed {
+		top_color = rl.Color{14, 20, 32, 255}
+		bot_color = rl.Color{20, 28, 46, 255}
+	} else if hovered {
+		top_color = rl.Color{32, 44, 68, 255}
+		bot_color = rl.Color{20, 28, 46, 255}
+	} else {
+		top_color = rl.Color{22, 30, 48, 255}
+		bot_color = rl.Color{14, 20, 32, 255}
 	}
+
+	rl.DrawRectangle(c.int(rect.x), c.int(rect.y), c.int(rect.width), top_h, top_color)
+	rl.DrawRectangle(c.int(rect.x), c.int(rect.y) + top_h, c.int(rect.width), bot_h, bot_color)
+
+	// Top bevel highlight & bottom drop shadow
+	if enabled && !pressed {
+		hl := hovered ? rl.Color{255, 255, 255, 80} : rl.Color{255, 255, 255, 35}
+		rl.DrawLine(c.int(rect.x + 1), c.int(rect.y + 1), c.int(rect.x + rect.width - 2), c.int(rect.y + 1), hl)
+		rl.DrawRectangle(c.int(rect.x + 1), c.int(rect.y + rect.height - 2), c.int(rect.width - 2), 2, rl.Color{8, 12, 18, 220})
+	}
+
+	// Border (no orange)
+	border := !enabled ? rl.Color{25, 40, 60, 255} : (hovered ? NEON_CYAN : NEON_STEEL)
 	rl.DrawRectangleLinesEx(rect, 1, border)
-	// Label vertically centered so one proc serves 36px action buttons and
-	// 44px overlay buttons alike.
-	text_y := rect.y + (rect.height - 12) / 2
-	rl.DrawText(label, c.int(rect.x + BTN_TEXT_PAD_X), c.int(text_y), 12, hovered ? NEON_CYAN : NEON_TEXT)
+
+	// Subtle cyan wash when hovered
+	if hovered && !pressed {
+		rl.DrawRectangleRec(rect, rl.Color{0, 225, 255, 22})
+	}
+
+	// Label vertically centered, presses down by 1px on mouse click
+	text_y := rect.y + (rect.height - 12) / 2 + (pressed ? 1.0 : 0.0)
+	text_color: rl.Color = !enabled ? rl.Color{90, 105, 125, 255} : (hovered ? NEON_CYAN : NEON_TEXT)
+	rl.DrawText(label, c.int(rect.x + BTN_TEXT_PAD_X), c.int(text_y), 12, text_color)
 }
 
 draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type) {
 	color := rl.Color{14, 20, 34, 255}
 	border := NEON_DIM
 	symbol: cstring = ""
+	accent := rl.ORANGE
 	if queued {
 		color = rl.Color{0, 90, 125, 255}
-		if kind == .COMBAT { color = rl.Color{30, 60, 120, 255} }
+		if kind == .COMBAT { color = rl.Color{30, 60, 120, 255}; accent = NEON_BLUE }
 		border = NEON_CYAN
-		symbol = "⛏"
-		if kind == .COMBAT { symbol = "⚔" }
+		symbol = "M"
+		if kind == .COMBAT { symbol = "C" }
 	}
 	rl.DrawRectangleRec(rect, color)
 	rl.DrawRectangleLinesEx(rect, 1, border)
-	if queued { rl.DrawText(symbol, c.int(rect.x + 3), c.int(rect.y + 1), 13, NEON_TEXT) }
+	if queued { rl.DrawText(symbol, c.int(rect.x + 5), c.int(rect.y + 3), 12, accent) }
 }
 
 draw_progress :: proc(rect: rl.Rectangle, value: f32, color: rl.Color) {

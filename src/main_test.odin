@@ -1102,7 +1102,7 @@ base_button_hidden_at_max_bases :: proc(t: ^testing.T) {
 	// Clicking the hidden button area does nothing: no minerals spent, no build.
 	base_counts[EARTH] = MAX_BASES
 	minerals = 1000
-	handle_inspector_click({25, 130}, 0) // panel_x = 0: base rect is {20,124,290,36}.
+	handle_inspector_click({25, f32(SECTION_TOP + 10)}, 0) // panel_x = 0: base rect is {20, SECTION_TOP, 290, 36}.
 	testing.expect(t, minerals == 1000 && base_build_planet == -1, "clicking the hidden button area does nothing at the cap")
 }
 
@@ -1985,6 +1985,18 @@ ghost_fighters_only_garrison_keeps_fighter_section :: proc(t: ^testing.T) {
 	testing.expect(t, ghost_view(), "Venus dark after scout loss")
 	testing.expect(t, ghost_count(.MINING, true) == 0, "miners-only strip left no miners in the snapshot")
 	testing.expect(t, ghost_count(.COMBAT, true) == GARRISON_FIGHTERS[VENUS], "fighter section stays populated without miners")
+}
+
+@(test)
+enemy_fighters_collapse_without_empty_mining_gap :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+	// Earth has no enemy mining drones.
+	selected_planet = EARTH
+	testing.expect(t, enemy_roster_count(.MINING) == 0, "no enemy miners on Earth")
+	// When no enemy miners exist, enemy combat tiles must collapse to the first
+	// enemy section position instead of leaving a phantom empty section gap.
+	testing.expect(t, enemy_tile_y(.COMBAT) == enemy_tile_y(.MINING), "enemy fighters collapse to enemy_tile_y(.MINING) when no enemy miners exist")
 }
 
 // Bug regression: dispatching miners to scout a planet (transit toward it,
