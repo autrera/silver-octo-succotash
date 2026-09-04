@@ -2124,42 +2124,136 @@ draw_miner_drone :: proc(position: rl.Vector3, enemy: bool) {
 	rl.DrawSphereEx(pos + {0, 0.02, -0.38}, 0.08 + 0.05 * pulse, 6, 8, rl.Fade(glow, 0.85))
 }
 
-// Combat drone: cylindrical fuselage along its heading, nose cone, swept
-// wings + tail fin as triangles, glowing cockpit and engine flare.
+// Combat drone: assault chassis inspired by the heavy attack drone reference:
+// central armored cowl, circular glowing ocular sensor with concentric bezel,
+// forward chin sensor needle, flanking twin-railgun weapon pods with glowing
+// accelerator channels, ventral stabilizer mandibles, and rear plasma thruster.
 draw_fighter_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector3) {
 	h := heading
 	if rl.Vector3Length(h) < 0.001 { h = {1, 0, 0} }
 	h = rl.Vector3Normalize(h)
-	up := rl.Vector3{0, 1, 0}
-	side := rl.Vector3CrossProduct(h, up)
-	if rl.Vector3Length(side) < 0.001 { side = {0, 0, 1} }
-	side = rl.Vector3Normalize(side)
-	hull := NEON_BLUE
-	light := rl.Color{150, 230, 255, 255}
-	canopy := rl.Color{220, 250, 255, 255}
-	flame := NEON_CYAN
-	if enemy {
-		hull = rl.Color{215, 55, 60, 255}
-		light = rl.Color{255, 150, 150, 255}
-		canopy = rl.Color{255, 200, 200, 255}
-		flame = rl.Color{255, 90, 70, 255}
+
+	// Build a stable orthonormal basis around heading
+	world_up := rl.Vector3{0, 1, 0}
+	if math.abs(rl.Vector3DotProduct(h, world_up)) > 0.95 {
+		world_up = {0, 0, 1}
 	}
-	dark := rl.Color{u8(f32(hull.r) * 0.45), u8(f32(hull.g) * 0.45), u8(f32(hull.b) * 0.45), 255}
-	nose := position + h * 0.85
-	tail := position - h * 0.55
-	rl.DrawCylinderEx(tail, position + h * 0.5, 0.17, 0.17, 8, hull)
-	rl.DrawCylinderEx(position + h * 0.5, nose, 0.17, 0.0, 8, light)
-	// Swept wings.
-	root_f := position + h * 0.25
-	root_b := position - h * 0.30
-	rl.DrawTriangle3D(root_f, root_b, root_b + side * 0.95 - h * 0.25, hull)
-	rl.DrawTriangle3D(root_f, root_b, root_b - side * 0.95 - h * 0.25, hull)
-	// Tail fin.
-	rl.DrawTriangle3D(position - h * 0.45, position - h * 0.15, position - h * 0.35 + up * 0.55, dark)
-	// Cockpit + engine flare.
-	rl.DrawSphereEx(position + h * 0.12 + up * 0.14, 0.13, 6, 8, canopy)
-	pulse := 0.5 + 0.5 * math.sin(laser_anim_time * 6.0 + position.x * 4.0)
-	rl.DrawSphereEx(tail, 0.10 + 0.06 * pulse, 6, 8, rl.Fade(flame, 0.9))
+	side := rl.Vector3Normalize(rl.Vector3CrossProduct(h, world_up))
+	up := rl.Vector3Normalize(rl.Vector3CrossProduct(side, h))
+
+	// Sci-Fi Palette: tactical slate armor with vibrant energy accents
+	armor_main: rl.Color
+	armor_dark: rl.Color
+	armor_plate: rl.Color
+	metal_trim: rl.Color
+	energy_glow: rl.Color
+	energy_core: rl.Color
+
+	if enemy {
+		armor_main  = rl.Color{78, 28, 36, 255}
+		armor_dark  = rl.Color{38, 14, 18, 255}
+		armor_plate = rl.Color{125, 42, 52, 255}
+		metal_trim  = rl.Color{160, 125, 130, 255}
+		energy_glow = SCIFI_RED
+		energy_core = rl.Color{255, 190, 140, 255}
+	} else {
+		armor_main  = rl.Color{28, 48, 76, 255}
+		armor_dark  = rl.Color{16, 26, 42, 255}
+		armor_plate = rl.Color{46, 82, 126, 255}
+		metal_trim  = rl.Color{135, 165, 190, 255}
+		energy_glow = SCIFI_CYAN
+		energy_core = SCIFI_MINT
+	}
+
+	// 1. Central Core & Armored Dorsal Cowling
+	core_f := position + h * 0.18
+	core_b := position - h * 0.28
+	rl.DrawCylinderEx(core_b, core_f, 0.22, 0.20, 8, armor_dark)
+
+	hood_f := position + h * 0.20 + up * 0.16
+	hood_b := position - h * 0.30 + up * 0.18
+	rl.DrawCylinderEx(hood_b, hood_f, 0.16, 0.13, 6, armor_main)
+
+	// Dorsal ridge running along top of cowling
+	rl.DrawCylinderEx(hood_b + up * 0.03, hood_f + up * 0.02, 0.05, 0.03, 6, metal_trim)
+
+	s_signs := [2]f32{-1.0, 1.0}
+
+	// Slanted shoulder armor plates flanking the core
+	for s_sign in s_signs {
+		s_vec := side * s_sign
+		sh_f := position + h * 0.18 + up * 0.06 + s_vec * 0.24
+		sh_b := position - h * 0.26 + up * 0.08 + s_vec * 0.26
+		sh_tip := position + s_vec * 0.30 - up * 0.06
+
+		rl.DrawTriangle3D(hood_f, sh_f, hood_b, armor_plate)
+		rl.DrawTriangle3D(hood_b, sh_f, sh_b, armor_plate)
+		rl.DrawTriangle3D(sh_f, sh_tip + h * 0.08, sh_b, armor_main)
+		rl.DrawTriangle3D(sh_b, sh_tip + h * 0.08, sh_tip - h * 0.16, armor_main)
+	}
+
+	// 2. Central Circular Ocular Sensor (The "Eye")
+	eye_pos := position + h * 0.22
+	// Outer metallic bezel ring
+	rl.DrawCylinderEx(eye_pos, eye_pos + h * 0.05, 0.15, 0.14, 10, metal_trim)
+	// Dark inner iris ring
+	rl.DrawCylinderEx(eye_pos + h * 0.03, eye_pos + h * 0.06, 0.12, 0.10, 10, armor_dark)
+	// Glowing central eye lens
+	rl.DrawSphereEx(eye_pos + h * 0.05, 0.08, 8, 8, energy_glow)
+	// Bright pupil center
+	rl.DrawSphereEx(eye_pos + h * 0.08, 0.04, 6, 6, energy_core)
+
+	// Forward chin sensor probe / needle
+	probe_base := position + h * 0.18 - up * 0.11
+	probe_tip  := position + h * 0.52 - up * 0.20
+	rl.DrawCylinderEx(probe_base, probe_tip, 0.03, 0.008, 4, metal_trim)
+
+	// 3. Ventral Stabilizer Mandibles / Struts
+	for s_sign in s_signs {
+		s_vec := side * s_sign
+		strut_top := position - h * 0.06 - up * 0.10 + s_vec * 0.14
+		strut_tip := position + h * 0.04 - up * 0.34 + s_vec * 0.18
+		rl.DrawCylinderEx(strut_top, strut_tip, 0.032, 0.014, 4, metal_trim)
+	}
+	// Underbelly power node glow
+	rl.DrawSphereEx(position - up * 0.14 - h * 0.04, 0.05, 6, 6, rl.Fade(energy_glow, 0.75))
+
+	// 4. Outboard Twin Heavy Weapon Sponsons (Flanking Railguns)
+	for s_sign in s_signs {
+		s_vec := side * s_sign
+		pod_pos := position + s_vec * 0.40 - up * 0.02
+
+		// Heavy mounting pylon
+		rl.DrawCylinderEx(position + s_vec * 0.20, pod_pos, 0.035, 0.035, 4, armor_dark)
+
+		// Armored cannon receiver housing
+		rl.DrawCylinderEx(pod_pos - h * 0.20, pod_pos + h * 0.10, 0.07, 0.06, 6, armor_main)
+		rl.DrawCylinderEx(pod_pos - h * 0.18 + up * 0.04, pod_pos + h * 0.06 + up * 0.03, 0.04, 0.03, 4, armor_plate)
+
+		// Dual forward railgun prongs (upper and lower rails)
+		rail_len := f32(0.36)
+		p_top_start := pod_pos + h * 0.08 + up * 0.042
+		p_top_end   := p_top_start + h * rail_len
+		rl.DrawCylinderEx(p_top_start, p_top_end, 0.024, 0.016, 4, metal_trim)
+
+		p_bot_start := pod_pos + h * 0.08 - up * 0.042
+		p_bot_end   := p_bot_start + h * rail_len
+		rl.DrawCylinderEx(p_bot_start, p_bot_end, 0.024, 0.016, 4, metal_trim)
+
+		// Glowing rail accelerator channel between the prongs
+		rl.DrawCylinderEx(pod_pos + h * 0.07, pod_pos + h * 0.38, 0.014, 0.014, 4, energy_glow)
+	}
+
+	// 5. Rear Propulsion & Thruster Flare
+	engine_pos := position - h * 0.32
+	rl.DrawCylinderEx(position - h * 0.24, engine_pos, 0.13, 0.10, 8, armor_dark)
+	rl.DrawCylinderEx(engine_pos, engine_pos - h * 0.05, 0.10, 0.08, 8, metal_trim)
+
+	// Animated pulsing thruster flare
+	pulse := 0.5 + 0.5 * math.sin(laser_anim_time * 8.0 + position.x * 4.0 + position.z * 2.0)
+	flame_r := 0.07 + 0.04 * pulse
+	rl.DrawSphereEx(engine_pos - h * 0.06, flame_r, 6, 8, rl.Fade(energy_glow, 0.9))
+	rl.DrawSphereEx(engine_pos - h * 0.04, flame_r * 0.5, 6, 6, energy_core)
 }
 
 // Player fighters are neon blue, enemy fighters red.
