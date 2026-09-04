@@ -228,6 +228,19 @@ planets := [PLANET_COUNT]Planet{
 	{name = "NEPTUNE", position = {35, 5, 24}, radius = 2.9, color = rl.Color{80, 110, 220, 255}, minerals = 450},
 }
 
+// ---- Planet visuals -----------------------------------------------------
+// Procedural textured planet models: each planet gets a 128x128 perlin-noise
+// texture tinted to its base color (bands for gas giants, blobs for rocky
+// worlds), mapped onto a sphere mesh so DrawModelEx can spin it slowly.
+// Initialized once after InitWindow (needs a GL context); draw_world falls
+// back to flat DrawSphere until ready (headless tests never init).
+planet_models: [PLANET_COUNT]rl.Model
+planet_textures: [PLANET_COUNT]rl.Texture2D
+planet_visuals_ready := false
+// Slow per-planet spin angle (radians); advanced in step_simulation so spin
+// freezes on pause. Outer giants turn a touch faster for visible motion.
+planet_spin: [PLANET_COUNT]f32
+
 units: [MAX_UNITS]Unit
 unit_count: int
 selected_units: [MAX_UNITS]bool
@@ -301,6 +314,8 @@ main :: proc() {
 	rl.SetExitKey(.KEY_NULL) // ESC cancels the last queued build instead of closing the window; P/F10 pause.
 
 	initialize_game()
+	init_planet_visuals()
+	defer unload_planet_visuals()
 	camera = rl.Camera3D{
 		position = {camera_target.x, CAMERA_START_Y, camera_target.z + CAMERA_START_Y},
 		target = camera_target,
@@ -1333,44 +1348,72 @@ draw_world :: proc() {
 	rl.BeginMode3D(camera)
 	for p in 0..<PLANET_COUNT {
 		planet := planets[p]
+		lit := has_vision(p)
 		surface := planet.color
-		if !has_vision(p) {
+		if !lit {
 			// Fog of war: planets the player has no presence at render shadowed.
 			surface = rl.Color{58, 62, 74, 255}
 		}
-		// Clean solid spheres: no wireframe overlay, no grid beneath.
-		rl.DrawSphere(planet.position, planet.radius, surface)
+		if planet_visuals_ready {
+			// Textured, slowly spinning sphere; fogged worlds tint grey.
+			tint := rl.WHITE
+			if !lit { tint = rl.Color{110, 116, 130, 255} }
+			rl.DrawModelEx(planet_models[p], planet.position, {0, 1, 0}, planet_spin[p] * 57.29578, {1, 1, 1}, tint)
+		} else {
+			rl.DrawSphere(planet.position, planet.radius, surface)
+		}
+		// Atmosphere shell: faint planet-tinted halo for depth.
+		atmo := rl.Color{planet.color.r, planet.color.g, planet.color.b, 255}
+		if !lit { atmo = rl.Color{70, 76, 90, 255} }
+		rl.DrawSphereEx(planet.position, planet.radius * 1.09, 12, 24, rl.Fade(atmo, 0.16))
+		// Sun glint: small bright dot toward the fixed light direction.
+		glint_dir := rl.Vector3Normalize({-0.45, 0.75, -0.35})
+		glint_pos := planet.position + glint_dir * (planet.radius * 0.82)
+		rl.DrawSphereEx(glint_pos, planet.radius * 0.10, 6, 8, rl.Color{255, 255, 255, 70})
+		// Drone orbit path: faint ring showing the guard orbit.
+		rl.DrawCircle3D(planet.position + {0, 1.0, 0}, planet.radius + 1.5, {0, 1, 0}, 90, rl.Fade(atmo, 0.30))
+		// Saturn's rings: two tilted bands.
+		if p == SATURN {
+			ring_col := rl.Color{225, 205, 155, 255}
+			if !lit { ring_col = rl.Color{70, 76, 90, 255} }
+			rl.DrawCircle3D(planet.position, planet.radius * 1.55, {0.35, 1, 0.15}, 78, rl.Fade(ring_col, 0.55))
+			rl.DrawCircle3D(planet.position, planet.radius * 1.95, {0.35, 1, 0.15}, 78, rl.Fade(ring_col, 0.30))
+		}
 		if p == selected_planet {
-			rl.DrawCircle3D(planet.position, planet.radius + 0.35, {0, 1, 0}, 90, NEON_CYAN)
+			pulse := 0.75 + 0.25 * math.sin(laser_anim_time * 3.0)
+			rl.DrawCircle3D(planet.position, planet.radius + 0.35, {0, 1, 0}, 90, rl.Fade(NEON_CYAN, pulse))
 			rl.DrawCircle3D(planet.position, planet.radius + 0.55, {0, 1, 0}, 90, NEON_DIM)
 		}
 	}
-	// The enemy HQ fortress at Neptune's old orbit: dark red (bright once
-	// scouted), a dead grey husk once destroyed.
+	// The enemy HQ fortress at Neptune's old orbit: layered battlestation —
+	// dark red hull (bright once scouted), a dead grey husk once destroyed.
 	hq_color := rl.Color{96, 34, 40, 255}
+	hq_trim := rl.Color{150, 55, 62, 255}
+	hq_glow := rl.Color{255, 90, 90, 255}
 	if enemy_hq_destroyed() {
 		hq_color = rl.Color{58, 60, 66, 255}
+		hq_trim = rl.Color{80, 84, 94, 255}
+		hq_glow = rl.Color{100, 105, 115, 255}
 	} else if has_vision(ENEMY_HOME) {
 		hq_color = rl.Color{205, 50, 58, 255}
+		hq_trim = rl.Color{255, 120, 125, 255}
 	}
-	rl.DrawCubeV(ENEMY_HQ_POSITION, {3.6, 3.6, 3.6}, hq_color)
+	draw_hq_fortress(ENEMY_HQ_POSITION, hq_color, hq_trim, hq_glow)
 	if selected_planet == ENEMY_HOME {
-		rl.DrawCubeWiresV(ENEMY_HQ_POSITION, {4.2, 4.2, 4.2}, NEON_CYAN)
+		rl.DrawCubeWiresV(ENEMY_HQ_POSITION, {4.6, 4.6, 4.6}, NEON_CYAN)
 	}
 	draw_rally_flag()
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if is_concealed(u) { continue }
 		if u.kind == .MINING {
-			color := rl.ORANGE
-			if u.enemy { color = rl.MAROON }
-			rl.DrawCubeV(u.position, {0.55, 0.55, 0.55}, color)
+			draw_miner_drone(u.position, u.enemy)
 		}
 		if !u.enemy && selected_units[i] { draw_selection_ring(u.position, 0.78) }
 	}
-	// Fighting drones render representationally per side and group: one cube
-	// per up-to-10 drones (ceil(count/10)), so a 5-fighter enemy wave in
-	// transit shows as one red cube and the 40-strong Jupiter garrison as
+	// Fighting drones render representationally per side and group: one drone
+	// model per up-to-10 drones (ceil(count/10)), so a 5-fighter enemy wave in
+	// transit shows as one fighter and the 40-strong Jupiter garrison as
 	// four. This applies in orbit (guarding) and in transit (per target
 	// planet). Rosters, tracking and selection still use the real unit list.
 	for p in 0..<SECTOR_COUNT {
@@ -1383,8 +1426,8 @@ draw_world :: proc() {
 			if u.kind != .COMBAT || u.state != .GUARDING || u.affiliation != p { continue }
 			if u.enemy { enemy_spots[ec] = u.position; ec += 1 } else { player_spots[pc] = u.position; pc += 1 }
 		}
-		for d in 0..<rep_count(pc) { draw_fighter(player_spots[d], false) }
-		for d in 0..<rep_count(ec) { draw_fighter(enemy_spots[d], true) }
+		for d in 0..<rep_count(pc) { draw_fighter_drone(player_spots[d], false, drone_heading(player_spots[d], sector_pos(p))) }
+		for d in 0..<rep_count(ec) { draw_fighter_drone(enemy_spots[d], true, drone_heading(enemy_spots[d], sector_pos(p))) }
 		draw_combat_lasers(p, player_spots[:], enemy_spots[:], pc, ec)
 	}
 	for p in 0..<SECTOR_COUNT {
@@ -1397,7 +1440,14 @@ draw_world :: proc() {
 				u := &units[i]
 				if u.kind != .COMBAT || u.state != .TRANSIT || u.target_planet != p || u.enemy != enemy { continue }
 				if drawn >= visible { break }
-				draw_fighter(u.position, u.enemy)
+				to := sector_pos(u.target_planet)
+				heading := to - u.position
+				draw_fighter_drone(u.position, u.enemy, heading)
+				// Engine trail streak behind transit fighters.
+				if rl.Vector3Length(heading) > 0.001 {
+					trail := u.position - rl.Vector3Normalize(heading) * 1.2
+					rl.DrawLine3D(u.position, trail, rl.Fade(u.enemy ? rl.RED : NEON_CYAN, 0.6))
+				}
 				drawn += 1
 			}
 		}
@@ -1418,7 +1468,8 @@ draw_world :: proc() {
 				w := rl.MeasureText(label, 14)
 				draw_target_brackets({pos.x - f32(w)/2 - 8, pos.y - planets[p].radius * 5 - 20, f32(w) + 16, 24}, NEON_CYAN)
 			}
-			rl.DrawText(label, c.int(pos.x - 28), c.int(pos.y - planets[p].radius * 5 - 14), 14, p == selected_planet ? NEON_CYAN : NEON_TEXT)
+			rl.DrawText(label, c.int(pos.x - 28 + 1), c.int(pos.y - planets[p].radius * 5 - 14 + 1), 14, rl.Color{0, 0, 0, 170})
+		rl.DrawText(label, c.int(pos.x - 28), c.int(pos.y - planets[p].radius * 5 - 14), 14, p == selected_planet ? NEON_CYAN : NEON_TEXT)
 		}
 	}
 	// Enemy HQ label, anchored to the 3D position like the planet labels.
@@ -1440,7 +1491,9 @@ draw_world :: proc() {
 	// Floating tech dock: 20px inner padding, 24px column gaps with a centered
 	// 20px-tall NEON_DIM divider between metrics.
 	bar_w := (HUD_TEXT_X - HUD_PAD) + min_w + mps_w + speed_w + 2 * HUD_COL_GAP + (HUD_TEXT_X - HUD_PAD)
-	rl.DrawRectangle(HUD_PAD, HUD_PAD, bar_w, HUD_DOCK_H, NEON_PANEL)
+	rl.DrawRectangle(HUD_PAD + 2, HUD_PAD + 3, bar_w, HUD_DOCK_H, rl.Color{0, 0, 0, 130})
+	rl.DrawRectangleGradientV(HUD_PAD, HUD_PAD, bar_w, HUD_DOCK_H, rl.Color{24, 34, 58, 245}, rl.Color{10, 14, 26, 245})
+	rl.DrawLine(HUD_PAD + 1, HUD_PAD + 1, HUD_PAD + bar_w - 1, HUD_PAD + 1, rl.Color{255, 255, 255, 45})
 	rl.DrawRectangleLinesEx({HUD_PAD, HUD_PAD, f32(bar_w), HUD_DOCK_H}, 1, NEON_DIM)
 	rl.DrawLine(HUD_TEXT_X + min_w + HUD_COL_GAP / 2, HUD_PAD + 10, HUD_TEXT_X + min_w + HUD_COL_GAP / 2, HUD_PAD + 30, NEON_DIM)
 	rl.DrawLine(HUD_TEXT_X + min_w + HUD_COL_GAP + mps_w + HUD_COL_GAP / 2, HUD_PAD + 10, HUD_TEXT_X + min_w + HUD_COL_GAP + mps_w + HUD_COL_GAP / 2, HUD_PAD + 30, NEON_DIM)
@@ -1457,7 +1510,9 @@ draw_world :: proc() {
 	// the full keybind guide and the zoom readout never collide mid-dock.
 	dock_y := f32(rl.GetScreenHeight() - BOTTOM_DOCK_H - 12)
 	dock_w := f32(viewport_w - 2 * HUD_PAD)
-	rl.DrawRectangle(HUD_PAD, c.int(dock_y), c.int(dock_w), BOTTOM_DOCK_H, NEON_PANEL)
+	rl.DrawRectangle(HUD_PAD + 2, c.int(dock_y + 3), c.int(dock_w), BOTTOM_DOCK_H, rl.Color{0, 0, 0, 130})
+	rl.DrawRectangleGradientV(HUD_PAD, c.int(dock_y), c.int(dock_w), BOTTOM_DOCK_H, rl.Color{24, 34, 58, 245}, rl.Color{10, 14, 26, 245})
+	rl.DrawLine(HUD_PAD + 1, c.int(dock_y + 1), HUD_PAD + c.int(dock_w) - 1, c.int(dock_y + 1), rl.Color{255, 255, 255, 40})
 	rl.DrawRectangleLinesEx({HUD_PAD, dock_y, dock_w, BOTTOM_DOCK_H}, 1, NEON_DIM)
 	rl.DrawText(status, HUD_TEXT_X, c.int(dock_y + 12), 12, NEON_MUTED)
 	draw_squad_hud()
@@ -1469,22 +1524,51 @@ draw_world :: proc() {
 draw_inspector :: proc() {
 	x := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
 	h := f32(rl.GetScreenHeight())
-	rl.DrawRectangle(c.int(x), 0, SCREEN_PANEL_WIDTH, rl.GetScreenHeight(), NEON_PANEL)
-	rl.DrawRectangle(c.int(x), 0, 1, rl.GetScreenHeight(), NEON_CYAN)
-	rl.DrawRectangle(c.int(x + 1), 0, 1, rl.GetScreenHeight(), rl.Color{0, 225, 255, 40})
+	// Depth: soft drop shadow spilling into the viewport and a vertical
+	// gradient body (lighter crown, darker well).
+	rl.DrawRectangle(c.int(x - 14), 0, 14, rl.GetScreenHeight(), rl.Color{0, 0, 0, 70})
+	rl.DrawRectangle(c.int(x - 6), 0, 6, rl.GetScreenHeight(), rl.Color{0, 0, 0, 90})
+	rl.DrawRectangleGradientV(c.int(x), 0, SCREEN_PANEL_WIDTH, rl.GetScreenHeight(), rl.Color{20, 28, 48, 250}, rl.Color{7, 10, 20, 250})
+	// Header banner: gradient strip + planet color chip + oversized title so
+	// the inspector reads as a dedicated command console, not a flat list.
+	rl.DrawRectangleGradientV(c.int(x), 0, SCREEN_PANEL_WIDTH, PANEL_DIVIDER_Y + 4, rl.Color{26, 38, 66, 250}, rl.Color{14, 20, 36, 250})
+	header_sub: cstring = "ORBITAL COMMAND // LIVE FEED"
+	if selected_planet == ENEMY_HOME {
+		header_sub = "HOSTILE SECTOR // WEAPONS FREE"
+	} else if selected_planet == EARTH {
+		header_sub = ""
+	} else if planet_liberated(selected_planet) {
+		header_sub = "LIBERATED // MINING CLEAR"
+	} else {
+		header_sub = "CONTESTED // ENEMY STRONGHOLD"
+	}
 	if selected_planet == ENEMY_HOME {
 		hq_title: cstring = "ENEMY FORTRESS"
 		if enemy_hq_destroyed() { hq_title = "ENEMY FORTRESS (DESTROYED)" }
+		rl.DrawText(hq_title, c.int(x + PANEL_PAD_X + 1), PANEL_HEADER_Y + 1, 20, rl.Color{0, 0, 0, 160})
 		rl.DrawText(hq_title, c.int(x + PANEL_PAD_X), PANEL_HEADER_Y, 20, rl.Color{235, 110, 110, 255})
 	} else {
-		rl.DrawText(planets[selected_planet].name, c.int(x + PANEL_PAD_X), PANEL_HEADER_Y, 20, NEON_CYAN)
+		chip := rl.Rectangle{x + PANEL_PAD_X, PANEL_HEADER_Y + 4, 12, 12}
+		rl.DrawRectangleRec({chip.x + 1, chip.y + 1, chip.width, chip.height}, rl.Color{0, 0, 0, 140})
+		rl.DrawRectangleRec(chip, planets[selected_planet].color)
+		rl.DrawRectangleLinesEx(chip, 1, rl.Color{255, 255, 255, 90})
+		title_x := x + PANEL_PAD_X + 20
+		rl.DrawText(planets[selected_planet].name, c.int(title_x + 1), PANEL_HEADER_Y + 1, 20, rl.Color{0, 0, 0, 160})
+		rl.DrawText(planets[selected_planet].name, c.int(title_x), PANEL_HEADER_Y, 20, NEON_CYAN)
 		if selected_planet == EARTH || has_vision(selected_planet) || intel_recorded[selected_planet] {
 			mps_text := rl.TextFormat("MPS %.1f", planet_mps(selected_planet))
-			mps_w := rl.MeasureText(mps_text, 14)
-			rl.DrawText(mps_text, c.int(x + SCREEN_PANEL_WIDTH - PANEL_PAD_X - f32(mps_w)), PANEL_HEADER_Y + 4, 14, NEON_AMBER)
+			mps_w := rl.MeasureText(mps_text, 13)
+			pill := rl.Rectangle{x + SCREEN_PANEL_WIDTH - PANEL_PAD_X - f32(mps_w) - 14, PANEL_HEADER_Y + 1, f32(mps_w) + 14, 20}
+			rl.DrawRectangleRec({pill.x + 1, pill.y + 2, pill.width, pill.height}, rl.Color{0, 0, 0, 120})
+			rl.DrawRectangleRec(pill, rl.Color{30, 26, 12, 250})
+			rl.DrawRectangleLinesEx(pill, 1, NEON_AMBER_DIM)
+			rl.DrawText(mps_text, c.int(pill.x + 7), c.int(pill.y + 4), 13, NEON_AMBER)
 		}
 	}
-	rl.DrawLine(c.int(x + PANEL_PAD_X), PANEL_DIVIDER_Y, c.int(x + SCREEN_PANEL_WIDTH - PANEL_PAD_X), PANEL_DIVIDER_Y, NEON_DIM)
+	if len(header_sub) > 0 {
+		rl.DrawText(header_sub, c.int(x + PANEL_PAD_X + 1), PANEL_SUB_Y - 11, 10, rl.Color{0, 0, 0, 160})
+		rl.DrawText(header_sub, c.int(x + PANEL_PAD_X), PANEL_SUB_Y - 11, 10, NEON_MUTED)
+	}
 	if selected_planet == EARTH {
 		draw_earth_inspector(x)
 	} else if selected_planet == ENEMY_HOME {
@@ -1623,19 +1707,18 @@ draw_earth_inspector :: proc(x: f32) {
 draw_hq_inspector :: proc(x: f32) {
 	card := rl.Rectangle{x + PANEL_PAD_X, OUTPOST_CARD_Y, PANEL_CONTENT_W, CARD_H}
 	if enemy_hq_destroyed() {
-		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
-		rl.DrawRectangleLinesEx(card, 1, rl.Color{58, 60, 66, 255})
+		draw_status_card(card, rl.Color{58, 60, 66, 255})
 		rl.DrawText("HUSK — SECTOR SILENCED", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 14, rl.Color{120, 125, 135, 255})
 		rl.DrawText("NO WAVES LAUNCH FROM A DEAD HQ", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 12, NEON_TEXT)
 	} else if has_vision(ENEMY_HOME) {
 		_, garrison := planet_combatants(ENEMY_HOME)
-		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
-		rl.DrawRectangleLinesEx(card, 1, rl.Color{205, 50, 58, 255})
+		draw_status_card(card, rl.Color{205, 50, 58, 255})
+		rl.DrawText("ENEMY FORTRESS", c.int(x + PANEL_PAD_X + CARD_INSET + 1), CARD_LINE_1 + 1, 14, rl.Color{0, 0, 0, 150})
 		rl.DrawText("ENEMY FORTRESS", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 14, rl.Color{235, 110, 110, 255})
 		rl.DrawText(rl.TextFormat("FIGHTERS %d  //  INTEGRITY %d/%d", garrison, enemy_base_hp[ENEMY_HOME], ENEMY_HQ_BASE_HP), c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 12, NEON_TEXT)
+		draw_progress({x + PANEL_PAD_X + CARD_INSET, CARD_LINE_2 + 15, PANEL_CONTENT_W - 2 * CARD_INSET, 5}, f32(enemy_base_hp[ENEMY_HOME]) / f32(ENEMY_HQ_BASE_HP), rl.Color{205, 50, 58, 255})
 	} else {
-		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
-		rl.DrawRectangleLinesEx(card, 1, NEON_STEEL)
+		draw_status_card(card, NEON_STEEL)
 		rl.DrawText("UNSCOUTED", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 14, NEON_MUTED)
 		rl.DrawText("SEND COMBAT DRONES TO REVEAL", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 12, NEON_TEXT)
 	}
@@ -1660,8 +1743,8 @@ draw_outpost_inspector :: proc(x: f32) {
 			_, garrison := planet_combatants(selected_planet)
 			status = rl.TextFormat("%02d FIGHTERS  BASE %02d — SEND COMBAT DRONES", garrison, enemy_base_hp[selected_planet])
 		}
-		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
-		rl.DrawRectangleLinesEx(card, 1, stronghold_color)
+		draw_status_card(card, stronghold_color)
+		rl.DrawText(title, c.int(x + PANEL_PAD_X + CARD_INSET + 1), CARD_LINE_1 + 1, 14, rl.Color{0, 0, 0, 150})
 		rl.DrawText(title, c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 14, stronghold_color)
 		rl.DrawText(status, c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 12, NEON_TEXT)
 	} else if intel_recorded[selected_planet] {
@@ -1674,14 +1757,12 @@ draw_outpost_inspector :: proc(x: f32) {
 		title: cstring = "ENEMY STRONGHOLD"
 		status := rl.TextFormat("%02d FIGHTERS  BASE %02d/%02d — STALE INTEL", intel.fighters, intel.base_hp, GARRISON_BASE_HP[selected_planet])
 		if intel.base_hp <= 0 { title = "LIBERATED" }
-		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
-		rl.DrawRectangleLinesEx(card, 1, amber)
+		draw_status_card(card, amber)
 		rl.DrawText(title, c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 14, amber)
 		rl.DrawText(status, c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 12, grey)
 	} else {
 		// Never scouted: no intel exists at all.
-		rl.DrawRectangleRec(card, NEON_PANEL_SOLID)
-		rl.DrawRectangleLinesEx(card, 1, NEON_STEEL)
+		draw_status_card(card, NEON_STEEL)
 		rl.DrawText("UNSCOUTED", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 14, NEON_MUTED)
 		rl.DrawText("STATUS UNKNOWN — SEND SCOUT DRONE", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 12, NEON_TEXT)
 	}
@@ -1895,9 +1976,14 @@ draw_unit_tile_data :: proc(kind: Unit_Type, state: Unit_State, selected: bool, 
 		fill = rl.Color{58, 32, 36, 255}
 		border = rl.Color{140, 72, 78, 255}
 	} else if selected { fill = rl.Color{0, 60, 80, 255}; border = NEON_CYAN }
+	rl.DrawRectangleRec({rect.x + 1, rect.y + 1, rect.width, rect.height}, rl.Color{0, 0, 0, 110})
 	rl.DrawRectangleRec(rect, fill)
+	rl.DrawLine(c.int(rect.x + 1), c.int(rect.y + 1), c.int(rect.x + rect.width - 2), c.int(rect.y + 1), rl.Color{255, 255, 255, 50})
 	rl.DrawRectangleLinesEx(rect, 1, border)
-	if selected && !enemy { rl.DrawRectangleLinesEx({rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2}, 1, rl.Color{0, 225, 255, 90}) }
+	if selected && !enemy {
+		rl.DrawRectangleLinesEx({rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2}, 1, rl.Color{0, 225, 255, 90})
+		rl.DrawRectangleLinesEx({rect.x - 2, rect.y - 2, rect.width + 4, rect.height + 4}, 1, rl.Color{0, 225, 255, 30})
+	}
 	symbol: cstring = "M"
 	accent := rl.ORANGE
 	if kind == .COMBAT { symbol = "C"; accent = NEON_BLUE }
@@ -1906,11 +1992,109 @@ draw_unit_tile_data :: proc(kind: Unit_Type, state: Unit_State, selected: bool, 
 	rl.DrawCircle(c.int(rect.x + rect.width - 4), c.int(rect.y + 4), 2, state_color(state))
 }
 
+// Layered enemy HQ battlestation: stacked hull, command tower, corner
+// turrets with barrels, emissive window band and a pulsing beacon spire.
+draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
+	dark := rl.Color{u8(f32(hull.r) * 0.55), u8(f32(hull.g) * 0.55), u8(f32(hull.b) * 0.55), 255}
+	rl.DrawCubeV(center, {3.6, 2.6, 3.6}, hull)
+	rl.DrawCubeV(center + {0, -1.45, 0}, {2.6, 0.5, 2.6}, dark)
+	rl.DrawCubeV(center + {0, 2.3, 0}, {1.7, 2.2, 1.7}, hull)
+	rl.DrawCubeV(center + {0, 2.3, 0}, {1.85, 0.35, 1.85}, trim)
+	// Emissive window band around the main hull.
+	rl.DrawCubeV(center + {0, 0.4, 0}, {3.66, 0.20, 3.66}, glow)
+	// Corner turrets with outward barrels.
+	for sx in -1..=1 {
+		for sz in -1..=1 {
+			if sx == 0 || sz == 0 { continue }
+			base := center + {f32(sx) * 1.9, 1.0, f32(sz) * 1.9}
+			rl.DrawCubeV(base, {0.55, 0.55, 0.55}, dark)
+			rl.DrawCubeV(base + {0, 0.45, 0}, {0.34, 0.34, 0.34}, trim)
+			out := rl.Vector3Normalize({f32(sx), 0.15, f32(sz)})
+			rl.DrawCylinderEx(base + {0, 0.5, 0}, base + {0, 0.5, 0} + out * 1.1, 0.09, 0.09, 6, dark)
+		}
+	}
+	// Beacon spire with pulsing tip.
+	rl.DrawCylinderEx(center + {0, 3.4, 0}, center + {0, 5.0, 0}, 0.12, 0.05, 6, trim)
+	pulse := 0.6 + 0.4 * math.sin(laser_anim_time * 4.0)
+	rl.DrawSphereEx(center + {0, 5.1, 0}, 0.22 * pulse + 0.12, 8, 12, rl.Fade(glow, 0.9))
+	// Rotating radar sweep off the tower.
+	sweep := laser_anim_time * 1.4
+	sweep_dir := rl.Vector3{math.cos(sweep), 0, math.sin(sweep)}
+	rl.DrawLine3D(center + {0, 3.1, 0}, center + {0, 3.1, 0} + sweep_dir * 2.6, rl.Fade(glow, 0.7))
+}
+
+// Orbit tangent used as a fighter's forward vector while guarding.
+drone_heading :: proc(pos, center: rl.Vector3) -> rl.Vector3 {
+	t := rl.Vector3{-(pos.z - center.z), 0, pos.x - center.x}
+	if rl.Vector3Length(t) < 0.001 { return {1, 0, 0} }
+	return rl.Vector3Normalize(t)
+}
+
+// Mining drone: faceted hull sphere, canopy, twin cargo pods, drill boom
+// and a pulsing engine glow — no longer a bare cube.
+draw_miner_drone :: proc(position: rl.Vector3, enemy: bool) {
+	hull := rl.ORANGE
+	dark := rl.Color{150, 85, 20, 255}
+	canopy := NEON_CYAN
+	glow := rl.Color{255, 200, 90, 255}
+	if enemy {
+		hull = rl.Color{150, 45, 50, 255}
+		dark = rl.Color{85, 25, 30, 255}
+		canopy = rl.Color{255, 120, 120, 255}
+		glow = rl.Color{255, 80, 80, 255}
+	}
+	bob := math.sin(laser_anim_time * 3.0 + position.x * 2.1 + position.z * 1.7) * 0.06
+	pos := position + {0, bob, 0}
+	rl.DrawSphereEx(pos, 0.34, 8, 12, hull)
+	rl.DrawSphereEx(pos + {0, 0.22, 0}, 0.15, 6, 8, canopy)
+	rl.DrawCubeV(pos + {0.38, -0.05, 0}, {0.24, 0.24, 0.30}, dark)
+	rl.DrawCubeV(pos + {-0.38, -0.05, 0}, {0.24, 0.24, 0.30}, dark)
+	rl.DrawCylinderEx(pos + {0, -0.28, 0}, pos + {0, -0.75, 0}, 0.06, 0.02, 6, dark)
+	pulse := 0.5 + 0.5 * math.sin(laser_anim_time * 5.0 + position.z * 3.0)
+	rl.DrawSphereEx(pos + {0, 0.02, -0.38}, 0.08 + 0.05 * pulse, 6, 8, rl.Fade(glow, 0.85))
+}
+
+// Combat drone: cylindrical fuselage along its heading, nose cone, swept
+// wings + tail fin as triangles, glowing cockpit and engine flare.
+draw_fighter_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector3) {
+	h := heading
+	if rl.Vector3Length(h) < 0.001 { h = {1, 0, 0} }
+	h = rl.Vector3Normalize(h)
+	up := rl.Vector3{0, 1, 0}
+	side := rl.Vector3CrossProduct(h, up)
+	if rl.Vector3Length(side) < 0.001 { side = {0, 0, 1} }
+	side = rl.Vector3Normalize(side)
+	hull := NEON_BLUE
+	light := rl.Color{150, 230, 255, 255}
+	canopy := rl.Color{220, 250, 255, 255}
+	flame := NEON_CYAN
+	if enemy {
+		hull = rl.Color{215, 55, 60, 255}
+		light = rl.Color{255, 150, 150, 255}
+		canopy = rl.Color{255, 200, 200, 255}
+		flame = rl.Color{255, 90, 70, 255}
+	}
+	dark := rl.Color{u8(f32(hull.r) * 0.45), u8(f32(hull.g) * 0.45), u8(f32(hull.b) * 0.45), 255}
+	nose := position + h * 0.85
+	tail := position - h * 0.55
+	rl.DrawCylinderEx(tail, position + h * 0.5, 0.17, 0.17, 8, hull)
+	rl.DrawCylinderEx(position + h * 0.5, nose, 0.17, 0.0, 8, light)
+	// Swept wings.
+	root_f := position + h * 0.25
+	root_b := position - h * 0.30
+	rl.DrawTriangle3D(root_f, root_b, root_b + side * 0.95 - h * 0.25, hull)
+	rl.DrawTriangle3D(root_f, root_b, root_b - side * 0.95 - h * 0.25, hull)
+	// Tail fin.
+	rl.DrawTriangle3D(position - h * 0.45, position - h * 0.15, position - h * 0.35 + up * 0.55, dark)
+	// Cockpit + engine flare.
+	rl.DrawSphereEx(position + h * 0.12 + up * 0.14, 0.13, 6, 8, canopy)
+	pulse := 0.5 + 0.5 * math.sin(laser_anim_time * 6.0 + position.x * 4.0)
+	rl.DrawSphereEx(tail, 0.10 + 0.06 * pulse, 6, 8, rl.Fade(flame, 0.9))
+}
+
 // Player fighters are neon blue, enemy fighters red.
 draw_fighter :: proc(position: rl.Vector3, enemy: bool) {
-	color := NEON_BLUE
-	if enemy { color = rl.RED }
-	rl.DrawCubeV(position, {0.7, 0.32, 0.7}, color)
+	draw_fighter_drone(position, enemy, {1, 0, 0})
 }
 
 // Visible laser fire during battles: short flying bolts from each shooter
@@ -1981,13 +2165,21 @@ transit_fighters_at :: proc(target_planet: int, enemy: bool) -> int {
 
 draw_selection_ring :: proc(center: rl.Vector3, radius: f32) {
 	segments :: 24
+	pulse := 0.65 + 0.35 * math.sin(laser_anim_time * 5.0)
 	for segment := 0; segment < segments; segment += 1 {
 		a := f32(segment) * 2 * math.PI / f32(segments)
 		b := f32(segment + 1) * 2 * math.PI / f32(segments)
 		rl.DrawLine3D(
 			{center.x + math.cos(a) * radius, center.y - 0.25, center.z + math.sin(a) * radius},
 			{center.x + math.cos(b) * radius, center.y - 0.25, center.z + math.sin(b) * radius},
-			NEON_CYAN,
+			rl.Fade(NEON_CYAN, pulse),
+		)
+		// Outer halo ring for depth.
+		or_ := radius + 0.22
+		rl.DrawLine3D(
+			{center.x + math.cos(a) * or_, center.y - 0.25, center.z + math.sin(a) * or_},
+			{center.x + math.cos(b) * or_, center.y - 0.25, center.z + math.sin(b) * or_},
+			rl.Fade(NEON_CYAN, 0.25 * pulse),
 		)
 	}
 }
@@ -2056,6 +2248,16 @@ draw_button :: proc(rect: rl.Rectangle, label: cstring, color: rl.Color, enabled
 	rl.DrawText(label, c.int(rect.x + BTN_TEXT_PAD_X), c.int(text_y), 12, text_color)
 }
 
+// Status card body with depth: drop shadow, vertical gradient, top
+// highlight line and colored border. Shared by the HQ + outpost cards.
+draw_status_card :: proc(card: rl.Rectangle, border: rl.Color) {
+	rl.DrawRectangleRec({card.x + 2, card.y + 3, card.width, card.height}, rl.Color{0, 0, 0, 130})
+	rl.DrawRectangleGradientV(c.int(card.x), c.int(card.y), c.int(card.width), c.int(card.height), rl.Color{26, 36, 62, 255}, rl.Color{12, 17, 30, 255})
+	rl.DrawLine(c.int(card.x + 1), c.int(card.y + 1), c.int(card.x + card.width - 2), c.int(card.y + 1), rl.Color{255, 255, 255, 40})
+	rl.DrawRectangleLinesEx(card, 1, border)
+	rl.DrawRectangleLinesEx({card.x - 2, card.y - 2, card.width + 4, card.height + 4}, 1, rl.Color{255, 255, 255, 12})
+}
+
 draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type) {
 	color := rl.Color{14, 20, 34, 255}
 	border := NEON_DIM
@@ -2068,15 +2270,26 @@ draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type) {
 		symbol = "M"
 		if kind == .COMBAT { symbol = "C" }
 	}
+	rl.DrawRectangleRec({rect.x + 1, rect.y + 1, rect.width, rect.height}, rl.Color{0, 0, 0, 110})
 	rl.DrawRectangleRec(rect, color)
+	rl.DrawLine(c.int(rect.x + 1), c.int(rect.y + 1), c.int(rect.x + rect.width - 2), c.int(rect.y + 1), rl.Color{255, 255, 255, 45})
 	rl.DrawRectangleLinesEx(rect, 1, border)
-	if queued { rl.DrawText(symbol, c.int(rect.x + 5), c.int(rect.y + 3), 12, accent) }
+	if queued {
+		rl.DrawText(symbol, c.int(rect.x + 6), c.int(rect.y + 4), 12, rl.Color{0, 0, 0, 140})
+		rl.DrawText(symbol, c.int(rect.x + 5), c.int(rect.y + 3), 12, accent)
+	}
 }
 
 draw_progress :: proc(rect: rl.Rectangle, value: f32, color: rl.Color) {
 	v := clamp_f32(value, 0, 1)
+	rl.DrawRectangleRec({rect.x + 1, rect.y + 2, rect.width, rect.height}, rl.Color{0, 0, 0, 120})
 	rl.DrawRectangleRec(rect, rl.Color{14, 20, 34, 255})
-	rl.DrawRectangle(c.int(rect.x), c.int(rect.y), c.int(rect.width * v), c.int(rect.height), color)
+	if v > 0 {
+		fw := rect.width * v
+		dim := rl.Color{u8(f32(color.r) * 0.35), u8(f32(color.g) * 0.35), u8(f32(color.b) * 0.35), 255}
+		rl.DrawRectangleGradientH(c.int(rect.x), c.int(rect.y), c.int(fw), c.int(rect.height), dim, color)
+		rl.DrawLine(c.int(rect.x), c.int(rect.y), c.int(rect.x + fw), c.int(rect.y), rl.Color{255, 255, 255, 70})
+	}
 	if v > 0 && v < 1 { rl.DrawLine(c.int(rect.x + rect.width * v), c.int(rect.y), c.int(rect.x + rect.width * v), c.int(rect.y + rect.height), NEON_TEXT) }
 	rl.DrawRectangleLinesEx(rect, 1, NEON_DIM)
 }
@@ -2111,6 +2324,135 @@ selection_count :: proc() -> int {
 	count := 0
 	for i := 0; i < unit_count; i += 1 { if selected_units[i] { count += 1 } }
 	return count
+}
+
+// ---- Planet visuals -------------------------------------------------------
+
+planet_spin_speed :: proc(p: int) -> f32 {
+	switch p {
+	case JUPITER: return 0.22
+	case SATURN: return 0.20
+	case URANUS, NEPTUNE: return 0.16
+	case MERCURY, VENUS: return 0.10
+	}
+	return 0.12
+}
+
+update_planet_spin :: proc(dt: f32) {
+	for p in 0..<PLANET_COUNT {
+		planet_spin[p] += dt * planet_spin_speed(p)
+		if planet_spin[p] > 2 * math.PI { planet_spin[p] -= 2 * math.PI }
+	}
+}
+
+// Linear blend between two opaque colors (t = 0 keeps a, t = 1 takes b).
+mix_color :: proc(a, b: rl.Color, t: f32) -> rl.Color {
+	return rl.Color{
+		u8(f32(a.r) * (1 - t) + f32(b.r) * t),
+		u8(f32(a.g) * (1 - t) + f32(b.g) * t),
+		u8(f32(a.b) * (1 - t) + f32(b.b) * t),
+		255,
+	}
+}
+
+PLANET_TEX_SIZE :: 128
+
+// One deterministic surface blob (center + radius, in texels).
+planet_blob :: struct { x, y, r: f32 }
+
+// Build one procedural surface texture per planet. Deterministic per planet
+// (offsets derive from the index), independent of the gameplay RNG. The whole
+// pipeline is RGBA from the first pixel: the base image is GenImageColor and
+// every texel is shaded in code from the perlin luminance, so no grayscale
+// image op can ever drop the hue (which rendered as grey surface gores).
+init_planet_visuals :: proc() {
+	if planet_visuals_ready { return }
+	for p in 0..<PLANET_COUNT {
+		base := planets[p].color
+		img := rl.GenImageColor(PLANET_TEX_SIZE, PLANET_TEX_SIZE, base)
+		noise := rl.GenImagePerlinNoise(PLANET_TEX_SIZE, PLANET_TEX_SIZE, c.int(p * 17 + 3), c.int(p * 29 + 7), 6.0)
+		lum := rl.LoadImageColors(noise)
+		// Deterministic blotches via a tiny LCG (no gameplay RNG use).
+		seed := u32(0x9E3779B9 + u32(p) * 0x85EBCA6B)
+		next := proc(seed: ^u32) -> f32 {
+			seed^ = seed^ * 1664525 + 1013904223
+			return f32((seed^ >> 8) & 0xFFFF) / f32(0xFFFF)
+		}
+		blobs: [9]planet_blob
+		for b in 0..<9 {
+			blobs[b] = {next(&seed) * PLANET_TEX_SIZE, next(&seed) * PLANET_TEX_SIZE, 4 + next(&seed) * 11}
+		}
+		oceans: [6]planet_blob
+		for b in 0..<6 {
+			oceans[b] = {next(&seed) * PLANET_TEX_SIZE, next(&seed) * PLANET_TEX_SIZE, 6 + next(&seed) * 13}
+		}
+		blotch := rl.Color{u8(min(int(base.r) + 34, 255)), u8(min(int(base.g) + 34, 255)), u8(min(int(base.b) + 34, 255)), 255}
+		ocean := rl.Color{18, 60, 150, 255}
+		for y in 0..<PLANET_TEX_SIZE {
+			for x in 0..<PLANET_TEX_SIZE {
+				l := f32(lum[y * PLANET_TEX_SIZE + x].r) / 255.0
+				shade := 0.70 + l * 0.60
+				col := rl.Color{
+					u8(min(f32(base.r) * shade, 255)),
+					u8(min(f32(base.g) * shade, 255)),
+					u8(min(f32(base.b) * shade, 255)),
+					255,
+				}
+				if p >= JUPITER {
+					// Horizontal marble bands for gas giants.
+					for b in 0..<6 {
+						y0 := 8 + b * 20 + (p * 7 + b * 13) % 9
+						if y >= y0 && y < y0 + 7 {
+							if b % 2 == 0 {
+								col = rl.Color{u8(min(f32(col.r) * 1.15 + 10, 255)), u8(min(f32(col.g) * 1.15 + 10, 255)), u8(min(f32(col.b) * 1.15 + 10, 255)), 255}
+							} else {
+								col = rl.Color{u8(f32(col.r) * 0.78), u8(f32(col.g) * 0.78), u8(f32(col.b) * 0.78), 255}
+							}
+							break
+						}
+					}
+				} else {
+					fx, fy := f32(x), f32(y)
+					for b in 0..<9 {
+						dx, dy := fx - blobs[b].x, fy - blobs[b].y
+						if dx * dx + dy * dy <= blobs[b].r * blobs[b].r {
+							col = mix_color(col, blotch, 0.5)
+							break
+						}
+					}
+					// Earth oceans: deep-blue patches over the marble.
+					if p == EARTH {
+						for b in 0..<6 {
+							dx, dy := fx - oceans[b].x, fy - oceans[b].y
+							if dx * dx + dy * dy <= oceans[b].r * oceans[b].r {
+								col = mix_color(col, ocean, 0.65)
+								break
+							}
+						}
+					}
+				}
+				rl.ImageDrawPixel(&img, c.int(x), c.int(y), col)
+			}
+		}
+		rl.UnloadImageColors(lum)
+		rl.UnloadImage(noise)
+		tex := rl.LoadTextureFromImage(img)
+		rl.UnloadImage(img)
+		planet_textures[p] = tex
+		model := rl.LoadModelFromMesh(rl.GenMeshSphere(planets[p].radius, 32, 32))
+		rl.SetMaterialTexture(&model.materials[0], .ALBEDO, tex)
+		planet_models[p] = model
+	}
+	planet_visuals_ready = true
+}
+
+unload_planet_visuals :: proc() {
+	if !planet_visuals_ready { return }
+	for p in 0..<PLANET_COUNT {
+		rl.UnloadModel(planet_models[p])
+		rl.UnloadTexture(planet_textures[p])
+	}
+	planet_visuals_ready = false
 }
 
 // ---- Starfield ----------------------------------------------------------
@@ -2204,7 +2546,8 @@ draw_squad_hud :: proc() {
 		label := rl.TextFormat("[%d:%d]", g, count)
 		w := f32(rl.MeasureText(label, 13))
 		badge := rl.Rectangle{x, BADGE_Y, w + 2 * BADGE_PAD, BADGE_H}
-		rl.DrawRectangleRec(badge, NEON_PANEL)
+		rl.DrawRectangleRec({badge.x + 1, badge.y + 2, badge.width, badge.height}, rl.Color{0, 0, 0, 120})
+		rl.DrawRectangleGradientV(c.int(badge.x), c.int(badge.y), c.int(badge.width), c.int(badge.height), rl.Color{24, 34, 58, 245}, rl.Color{10, 14, 26, 245})
 		rl.DrawRectangleLinesEx(badge, 1, NEON_DIM)
 		rl.DrawText(label, c.int(x + BADGE_PAD), BADGE_Y + 4, 13, NEON_CYAN)
 		x += badge.width + BADGE_GAP
@@ -2255,6 +2598,7 @@ step_simulation :: proc(dt: f32) {
 	update_production(dt)
 	update_units(dt)
 	update_enemy_waves(dt)
+	update_planet_spin(dt)
 	update_intel()
 	// Wrapping the laser clock keeps f32 precision stable across long sessions.
 	laser_anim_time = math.mod(laser_anim_time + dt, 3600.0)
@@ -2288,22 +2632,17 @@ update_intel :: proc() {
 	}
 }
 
-// Shared by the box autosizing and the render so the label never drifts.
-PAUSE_STATUS :: "SIMULATION FROZEN // P/F10 RESUME // ARROWS NAVIGATE + ENTER SELECT"
-
 pause_menu_rects :: proc() -> (box, continue_rect, quit_rect: rl.Rectangle) {
 	w := f32(rl.GetScreenWidth())
 	h := f32(rl.GetScreenHeight())
-	status: cstring = PAUSE_STATUS
-	status_w := f32(rl.MeasureText(status, 14))
 	title_w := f32(rl.MeasureText("PAUSED", 36))
-	// Dialog is sized to the widest label plus balanced 28px padding, so no
-	// text ever overflows horizontally.
-	box_w := max(status_w, title_w) + 56
-	box_h: f32 = 270.0
+	// Dialog fits the title with a 280px minimum so the buttons keep a
+	// comfortable width; balanced 28px padding, nothing overflows.
+	box_w := max(title_w, f32(280)) + 56
+	box_h: f32 = 240.0
 	box = rl.Rectangle{(w - box_w) / 2, (h - box_h) / 2, box_w, box_h}
-	continue_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 140, box.width - 2 * DIALOG_PAD, DIALOG_BTN_H}
-	quit_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 196, box.width - 2 * DIALOG_PAD, DIALOG_BTN_H}
+	continue_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 110, box.width - 2 * DIALOG_PAD, DIALOG_BTN_H}
+	quit_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 166, box.width - 2 * DIALOG_PAD, DIALOG_BTN_H}
 	return
 }
 
@@ -2330,25 +2669,21 @@ draw_pause_menu :: proc() {
 	rl.DrawRectangleRec(box, NEON_PANEL_SOLID)
 	rl.DrawRectangleLinesEx(box, 1, NEON_CYAN)
 	rl.DrawRectangleLinesEx({box.x - 3, box.y - 3, box.width + 6, box.height + 6}, 1, rl.Color{0, 225, 255, 40})
-	// Title and status are centered under a 36px / 14px heading with balanced
-	// vertical padding between all elements, keeping every line inside the box.
+	// Title centered under a 36px heading with balanced vertical padding
+	// between all elements, keeping every line inside the box.
 	title: cstring = "PAUSED"
 	title_w := f32(rl.MeasureText(title, 36))
 	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 30), 36, NEON_CYAN)
-	status: cstring = PAUSE_STATUS
-	status_w := f32(rl.MeasureText(status, 14))
-	rl.DrawText(status, c.int(box.x + (box.width - status_w) / 2), c.int(box.y + 76), 14, NEON_MUTED)
 	draw_button(continue_rect, "CONTINUE", NEON_PANEL_SOLID)
 	draw_button(quit_rect, "QUIT", NEON_PANEL_SOLID)
 	draw_pause_focus(pause_menu_selection == 0 ? continue_rect : quit_rect)
 }
 
-// Keyboard focus highlight: a neon ring just outside the focused button plus
-// a ">" marker — distinct from draw_button's mouse-hover border.
+// Keyboard focus highlight: a neon ring just outside the focused button —
+// distinct from draw_button's mouse-hover border.
 draw_pause_focus :: proc(rect: rl.Rectangle) {
 	ring := rl.Rectangle{rect.x - 4, rect.y - 4, rect.width + 8, rect.height + 8}
 	rl.DrawRectangleLinesEx(ring, 1, NEON_CYAN)
-	rl.DrawText(">", c.int(rect.x - 18), c.int(rect.y + rect.height / 2 - 7), 14, NEON_CYAN)
 }
 
 // ---- Victory & restart --------------------------------------------------
