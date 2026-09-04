@@ -1,6 +1,7 @@
 package main
 
 import "core:math"
+import "core:mem"
 import "core:c"
 import "core:os"
 import "core:fmt"
@@ -259,6 +260,15 @@ planet_visuals_ready := false
 // freezes on pause. Outer giants turn a touch faster for visible motion.
 planet_spin: [PLANET_COUNT]f32
 
+Drone_Model_Kind :: enum {
+	PLAYER_MINER,
+	ENEMY_MINER,
+	PLAYER_FIGHTER,
+	ENEMY_FIGHTER,
+}
+drone_models: [Drone_Model_Kind]rl.Model
+drone_visuals_ready := false
+
 units: [MAX_UNITS]Unit
 unit_count: int
 selected_units: [MAX_UNITS]bool
@@ -326,12 +336,22 @@ main :: proc() {
 	rl.SetConfigFlags({.VSYNC_HINT, .WINDOW_HIGHDPI, .WINDOW_RESIZABLE})
 	rl.InitWindow(1280, 760, "STARFALL COMMAND: Planetary RTS Prototype")
 	defer rl.CloseWindow()
-	rl.SetTargetFPS(60)
+
+	// VSYNC handles refresh timing (60Hz / 120Hz). Setting target FPS to 2x the monitor
+	// refresh rate acts as an upper safety cap for unconstrained runs while ensuring raylib's
+	// internal WaitTime nanosleep never oversleeps into the next hardware vblank cycle (which
+	// would otherwise cause the display to drop cadence from 60 FPS down to 30 FPS).
+	refresh := rl.GetMonitorRefreshRate(rl.GetCurrentMonitor())
+	target_fps := refresh > 0 ? max(refresh, 60) : 60
+	rl.SetTargetFPS(target_fps * 2)
+
 	rl.SetExitKey(.KEY_NULL) // ESC cancels the last queued build instead of closing the window; P/F10 pause.
 
 	initialize_game()
 	init_planet_visuals()
 	defer unload_planet_visuals()
+	init_drone_visuals()
+	defer unload_drone_visuals()
 	camera = rl.Camera3D{
 		position = {camera_target.x, CAMERA_START_Y, camera_target.z + CAMERA_START_Y},
 		target = camera_target,
@@ -629,10 +649,14 @@ box_select :: proc(mouse: rl.Vector2, panel_x: f32) {
 	rect := rect_between(inspector_drag_start, mouse)
 	replace := !ctrl_down() && !shift_down()
 	if replace { clear_selection() }
+	m_ord := 0
+	c_ord := 0
 	for i := 0; i < unit_count; i += 1 {
 		kind := units[i].kind
 		if !unit_in_roster(i, kind) { continue }
-		tile := unit_tile_rect(panel_x, unit_tile_y(kind), roster_ordinal(i, kind))
+		ord := kind == .MINING ? m_ord : c_ord
+		if kind == .MINING { m_ord += 1 } else { c_ord += 1 }
+		tile := unit_tile_rect(panel_x, unit_tile_y(kind), ord)
 		if rl.CheckCollisionRecs(tile, rect) {
 			if ctrl_down() { selected_units[i] = !selected_units[i] } else { selected_units[i] = true }
 		}
@@ -1491,10 +1515,10 @@ draw_world :: proc() {
 	// transit shows as one fighter and the 40-strong Jupiter garrison as
 	// four. This applies in orbit (guarding) and in transit (per target
 	// planet). Rosters, tracking and selection still use the real unit list.
+	player_spots: [MAX_UNITS]rl.Vector3
+	enemy_spots: [MAX_UNITS]rl.Vector3
 	for p in 0..<SECTOR_COUNT {
 		if !has_vision(p) { continue } // Enemy garrison under fog renders nothing.
-		player_spots: [MAX_UNITS]rl.Vector3
-		enemy_spots: [MAX_UNITS]rl.Vector3
 		pc, ec := 0, 0
 		for i := 0; i < unit_count; i += 1 {
 			u := &units[i]
@@ -1505,11 +1529,19 @@ draw_world :: proc() {
 		for d in 0..<rep_count(ec) { draw_fighter_drone(enemy_spots[d], true, drone_heading(enemy_spots[d], sector_pos(p))) }
 		draw_combat_lasers(p, player_spots[:], enemy_spots[:], pc, ec)
 	}
+	transit_counts: [SECTOR_COUNT][2]int
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .COMBAT && u.state == .TRANSIT && u.target_planet >= 0 && u.target_planet < SECTOR_COUNT {
+			transit_counts[u.target_planet][u.enemy ? 1 : 0] += 1
+		}
+	}
 	for p in 0..<SECTOR_COUNT {
 		for side in 0..<2 {
 			enemy := side == 1
 			if enemy && !has_vision(p) { continue } // Enemy transits to a dark planet are hidden.
-			visible := rep_count(transit_fighters_at(p, enemy))
+			visible := rep_count(transit_counts[p][enemy ? 1 : 0])
+			if visible == 0 { continue }
 			drawn := 0
 			for i := 0; i < unit_count; i += 1 {
 				u := &units[i]
@@ -1683,24 +1715,40 @@ draw_inspector :: proc() {
 		} else {
 			rl.DrawText(rl.TextFormat("MINING DRONES (%d)", roster_count(.MINING)), c.int(x + PANEL_PAD_X), c.int(unit_tile_y(.MINING) - 23), 13, SCIFI_AMBER)
 		}
+		m_ord := 0
 		for i := 0; i < unit_count; i += 1 {
-			if unit_in_roster(i, .MINING) { draw_unit_tile(i, x, unit_tile_y(.MINING), roster_ordinal(i, .MINING), false) }
+			if unit_in_roster(i, .MINING) {
+				draw_unit_tile(i, x, unit_tile_y(.MINING), m_ord, false)
+				m_ord += 1
+			}
 		}
 		rl.DrawText(rl.TextFormat("FIGHTING DRONES (%d)", roster_count(.COMBAT)), c.int(x + PANEL_PAD_X), c.int(unit_tile_y(.COMBAT) - 23), 13, SCIFI_BLUE)
+		c_ord := 0
 		for i := 0; i < unit_count; i += 1 {
-			if unit_in_roster(i, .COMBAT) { draw_unit_tile(i, x, unit_tile_y(.COMBAT), roster_ordinal(i, .COMBAT), false) }
+			if unit_in_roster(i, .COMBAT) {
+				draw_unit_tile(i, x, unit_tile_y(.COMBAT), c_ord, false)
+				c_ord += 1
+			}
 		}
 		if has_vision(selected_planet) {
 			if enemy_roster_count(.MINING) > 0 {
 				rl.DrawText(rl.TextFormat("HOSTILE MINING (%d)", enemy_roster_count(.MINING)), c.int(x + PANEL_PAD_X), c.int(enemy_tile_y(.MINING) - 23), 13, SCIFI_RED)
+				em_ord := 0
 				for i := 0; i < unit_count; i += 1 {
-					if enemy_in_roster(i, .MINING) { draw_unit_tile(i, x, enemy_tile_y(.MINING), enemy_roster_ordinal(i, .MINING), true) }
+					if enemy_in_roster(i, .MINING) {
+						draw_unit_tile(i, x, enemy_tile_y(.MINING), em_ord, true)
+						em_ord += 1
+					}
 				}
 			}
 			if enemy_roster_count(.COMBAT) > 0 {
 				rl.DrawText(rl.TextFormat("HOSTILE FIGHTERS (%d)", enemy_roster_count(.COMBAT)), c.int(x + PANEL_PAD_X), c.int(enemy_tile_y(.COMBAT) - 23), 13, SCIFI_RED)
+				ec_ord := 0
 				for i := 0; i < unit_count; i += 1 {
-					if enemy_in_roster(i, .COMBAT) { draw_unit_tile(i, x, enemy_tile_y(.COMBAT), enemy_roster_ordinal(i, .COMBAT), true) }
+					if enemy_in_roster(i, .COMBAT) {
+						draw_unit_tile(i, x, enemy_tile_y(.COMBAT), ec_ord, true)
+						ec_ord += 1
+					}
 				}
 			}
 		}
@@ -2053,6 +2101,7 @@ draw_unit_tile :: proc(index: int, x: f32, y: int, ordinal: int, enemy: bool) {
 // Core tile renderer; the ghost view calls it directly with snapshot data.
 draw_unit_tile_data :: proc(kind: Unit_Type, state: Unit_State, selected: bool, x: f32, y: int, ordinal: int, enemy: bool) {
 	rect := unit_tile_rect(x, y, ordinal)
+	if rect.y > f32(rl.GetScreenHeight()) || rect.y + rect.height < 0 { return }
 	fill := rl.Color{10, 24, 34, 255}
 	border := SCIFI_STEEL
 	if enemy {
@@ -2112,40 +2161,165 @@ drone_heading :: proc(pos, center: rl.Vector3) -> rl.Vector3 {
 	return rl.Vector3Normalize(t)
 }
 
-// Mining drone: rugged industrial extraction rig inspired by the heavy mining
-// spider-walker reference (Greycat Cydnus):
-// - High-mounted spherical ore globe / cargo tank with exoskeleton cradle
-// - Heavy industrial amber/yellow chassis with dark cast-iron frame
-// - Operator cab with visor and bright golden work floodlight
-// - Articulated hydraulic outrigger stabilizer legs with foot clamps
-// - Downward heavy rotary excavation drill / cutter tool
-// - Twin rear hover/transit thrusters with pulsing engine flare
-draw_miner_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector3 = {1, 0, 0}) {
-	h := heading
-	if rl.Vector3Length(h) < 0.001 { h = {1, 0, 0} }
-	h = rl.Vector3Normalize(h)
+// Procedural drone models: baked once into GPU VRAM at startup and drawn via
+// DrawModelEx (1 draw call per drone instead of dozens of immediate-mode calls).
+add_triangle :: proc(
+	verts: ^[dynamic]f32, norms: ^[dynamic]f32, cols: ^[dynamic]u8,
+	v1, v2, v3: rl.Vector3, color: rl.Color,
+) {
+	e1 := v2 - v1
+	e2 := v3 - v1
+	n := rl.Vector3Normalize(rl.Vector3CrossProduct(e1, e2))
+	if rl.Vector3Length(n) < 0.001 { n = {0, 1, 0} }
 
-	// Orthonormal basis
-	world_up := rl.Vector3{0, 1, 0}
-	if math.abs(rl.Vector3DotProduct(h, world_up)) > 0.95 {
-		world_up = {0, 0, 1}
+	pts := [3]rl.Vector3{v1, v2, v3}
+	for p in pts {
+		append(verts, p.x, p.y, p.z)
+		append(norms, n.x, n.y, n.z)
+		append(cols, color.r, color.g, color.b, color.a)
 	}
-	side := rl.Vector3Normalize(rl.Vector3CrossProduct(h, world_up))
-	up := rl.Vector3Normalize(rl.Vector3CrossProduct(side, h))
+}
 
-	// Gentle ambient bobbing while working/hovering
-	bob := math.sin(laser_anim_time * 3.0 + position.x * 2.1 + position.z * 1.7) * 0.04
-	pos := position + up * bob
+add_cylinder :: proc(
+	verts: ^[dynamic]f32, norms: ^[dynamic]f32, cols: ^[dynamic]u8,
+	start, end: rl.Vector3, r_start, r_end: f32, sides: int, color: rl.Color,
+) {
+	dir := end - start
+	dist := rl.Vector3Length(dir)
+	if dist < 0.0001 { return }
+	d := dir / dist
 
-	// Industrial Color Palette
+	up := rl.Vector3{0, 1, 0}
+	if math.abs(rl.Vector3DotProduct(d, up)) > 0.95 {
+		up = {0, 0, 1}
+	}
+	u := rl.Vector3Normalize(rl.Vector3CrossProduct(d, up))
+	v := rl.Vector3CrossProduct(d, u)
+
+	n_sides := max(sides, 3)
+	for i in 0..<n_sides {
+		a1 := f32(i) * 2.0 * math.PI / f32(n_sides)
+		a2 := f32(i + 1) * 2.0 * math.PI / f32(n_sides)
+
+		c1, s1 := math.cos(a1), math.sin(a1)
+		c2, s2 := math.cos(a2), math.sin(a2)
+
+		n1 := u * c1 + v * s1
+		n2 := u * c2 + v * s2
+
+		b1 := start + n1 * r_start
+		b2 := start + n2 * r_start
+		t1 := end + n1 * r_end
+		t2 := end + n2 * r_end
+
+		// Side quad (2 triangles)
+		append(verts, b1.x, b1.y, b1.z,  b2.x, b2.y, b2.z,  t1.x, t1.y, t1.z)
+		append(norms, n1.x, n1.y, n1.z,  n2.x, n2.y, n2.z,  n1.x, n1.y, n1.z)
+		append(cols, color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a)
+
+		append(verts, b2.x, b2.y, b2.z,  t2.x, t2.y, t2.z,  t1.x, t1.y, t1.z)
+		append(norms, n2.x, n2.y, n2.z,  n2.x, n2.y, n2.z,  n1.x, n1.y, n1.z)
+		append(cols, color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a)
+
+		// Start cap
+		if r_start > 0 {
+			append(verts, start.x, start.y, start.z,  b2.x, b2.y, b2.z,  b1.x, b1.y, b1.z)
+			append(norms, -d.x, -d.y, -d.z,  -d.x, -d.y, -d.z,  -d.x, -d.y, -d.z)
+			append(cols, color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a)
+		}
+
+		// End cap
+		if r_end > 0 {
+			append(verts, end.x, end.y, end.z,  t1.x, t1.y, t1.z,  t2.x, t2.y, t2.z)
+			append(norms, d.x, d.y, d.z,  d.x, d.y, d.z,  d.x, d.y, d.z)
+			append(cols, color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a)
+		}
+	}
+}
+
+add_sphere :: proc(
+	verts: ^[dynamic]f32, norms: ^[dynamic]f32, cols: ^[dynamic]u8,
+	center: rl.Vector3, radius: f32, rings, slices: int, color: rl.Color,
+) {
+	nRings := max(rings, 3)
+	nSlices := max(slices, 3)
+
+	for r in 0..<nRings {
+		phi1 := f32(r) * math.PI / f32(nRings)
+		phi2 := f32(r + 1) * math.PI / f32(nRings)
+
+		y1 := math.cos(phi1)
+		y2 := math.cos(phi2)
+		r1 := math.sin(phi1)
+		r2 := math.sin(phi2)
+
+		for s in 0..<nSlices {
+			th1 := f32(s) * 2.0 * math.PI / f32(nSlices)
+			th2 := f32(s + 1) * 2.0 * math.PI / f32(nSlices)
+
+			x11, z11 := r1 * math.cos(th1), r1 * math.sin(th1)
+			x12, z12 := r1 * math.cos(th2), r1 * math.sin(th2)
+			x21, z21 := r2 * math.cos(th1), r2 * math.sin(th1)
+			x22, z22 := r2 * math.cos(th2), r2 * math.sin(th2)
+
+			n00 := rl.Vector3{x11, y1, z11}
+			n01 := rl.Vector3{x12, y1, z12}
+			n10 := rl.Vector3{x21, y2, z21}
+			n11 := rl.Vector3{x22, y2, z22}
+
+			p00 := center + n00 * radius
+			p01 := center + n01 * radius
+			p10 := center + n10 * radius
+			p11 := center + n11 * radius
+
+			// Triangle 1
+			append(verts, p00.x, p00.y, p00.z,  p10.x, p10.y, p10.z,  p01.x, p01.y, p01.z)
+			append(norms, n00.x, n00.y, n00.z,  n10.x, n10.y, n10.z,  n01.x, n01.y, n01.z)
+			append(cols, color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a)
+
+			// Triangle 2
+			append(verts, p01.x, p01.y, p01.z,  p10.x, p10.y, p10.z,  p11.x, p11.y, p11.z)
+			append(norms, n01.x, n01.y, n01.z,  n10.x, n10.y, n10.z,  n11.x, n11.y, n11.z)
+			append(cols, color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a)
+		}
+	}
+}
+
+make_mesh_from_arrays :: proc(vertices: []f32, normals: []f32, colors: []u8) -> rl.Mesh {
+	mesh := rl.Mesh{}
+	mesh.vertexCount = c.int(len(vertices) / 3)
+	mesh.triangleCount = c.int(len(vertices) / 9)
+
+	mesh.vertices = cast([^]f32)rl.MemAlloc(c.uint(len(vertices) * size_of(f32)))
+	mem.copy(mesh.vertices, raw_data(vertices), len(vertices) * size_of(f32))
+
+	mesh.normals = cast([^]f32)rl.MemAlloc(c.uint(len(normals) * size_of(f32)))
+	mem.copy(mesh.normals, raw_data(normals), len(normals) * size_of(f32))
+
+	mesh.colors = cast([^]u8)rl.MemAlloc(c.uint(len(colors) * size_of(u8)))
+	mem.copy(mesh.colors, raw_data(colors), len(colors) * size_of(u8))
+
+	mesh.texcoords = cast([^]f32)rl.MemAlloc(c.uint(int(mesh.vertexCount) * 2 * size_of(f32)))
+	mem.zero(mesh.texcoords, int(mesh.vertexCount) * 2 * size_of(f32))
+
+	rl.UploadMesh(&mesh, false)
+	return mesh
+}
+
+build_miner_model :: proc(enemy: bool) -> rl.Model {
+	verts := make([dynamic]f32)
+	defer delete(verts)
+	norms := make([dynamic]f32)
+	defer delete(norms)
+	cols  := make([dynamic]u8)
+	defer delete(cols)
+
 	hull_main:   rl.Color
 	hull_plate:  rl.Color
 	frame_dark:  rl.Color
 	metal_trim:  rl.Color
 	tank_mesh:   rl.Color
-	tank_wire:   rl.Color
 	light_glow:  rl.Color
-	light_core:  rl.Color
 
 	if enemy {
 		hull_main  = rl.Color{160, 42, 48, 255}
@@ -2153,129 +2327,95 @@ draw_miner_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector3 
 		frame_dark = rl.Color{36, 18, 22, 255}
 		metal_trim = rl.Color{135, 120, 125, 255}
 		tank_mesh  = rl.Color{55, 34, 38, 255}
-		tank_wire  = rl.Color{85, 48, 54, 200}
 		light_glow = SCIFI_RED
-		light_core = rl.Color{255, 180, 140, 255}
 	} else {
-		hull_main  = rl.Color{230, 155, 22, 255}  // Rugged industrial Caterpillar amber-yellow
-		hull_plate = rl.Color{255, 190, 40, 255}  // Hazard yellow highlight
-		frame_dark = rl.Color{26, 28, 34, 255}    // Heavy cast-iron undercarriage
-		metal_trim = rl.Color{145, 158, 172, 255} // Hydraulic pistons & machined steel
-		tank_mesh  = rl.Color{42, 48, 58, 255}    // Dark mesh ore tank
-		tank_wire  = rl.Color{70, 82, 98, 200}    // Outer cage wireframe
-		light_glow = rl.Color{255, 215, 95, 255}  // Golden halogen worklight
-		light_core = rl.Color{255, 250, 210, 255} // Incandescent lamp core
+		hull_main  = rl.Color{230, 155, 22, 255}
+		hull_plate = rl.Color{255, 190, 40, 255}
+		frame_dark = rl.Color{26, 28, 34, 255}
+		metal_trim = rl.Color{145, 158, 172, 255}
+		tank_mesh  = rl.Color{42, 48, 58, 255}
+		light_glow = rl.Color{255, 215, 95, 255}
 	}
+
+	h := rl.Vector3{1, 0, 0}
+	up := rl.Vector3{0, 1, 0}
+	side := rl.Vector3{0, 0, 1}
+	pos := rl.Vector3{0, 0, 0}
 
 	// 1. Central Heavy Flatbed Chassis
 	deck_f := pos + h * 0.16 - up * 0.02
 	deck_b := pos - h * 0.22 - up * 0.02
-	rl.DrawCylinderEx(deck_b, deck_f, 0.22, 0.20, 6, frame_dark)
-	rl.DrawCylinderEx(deck_b + up * 0.04, deck_f + up * 0.04, 0.18, 0.16, 6, hull_main)
+	add_cylinder(&verts, &norms, &cols, deck_b, deck_f, 0.22, 0.20, 6, frame_dark)
+	add_cylinder(&verts, &norms, &cols, deck_b + up * 0.04, deck_f + up * 0.04, 0.18, 0.16, 6, hull_main)
 
 	// 2. Giant Spherical Ore Tank (Mounted High at the Rear)
 	tank_pos := pos - h * 0.14 + up * 0.24
 	tank_r: f32 = 0.24
-	rl.DrawSphereEx(tank_pos, tank_r, 8, 10, tank_mesh)
-	rl.DrawSphereWires(tank_pos, tank_r + 0.005, 6, 8, tank_wire)
+	add_sphere(&verts, &norms, &cols, tank_pos, tank_r, 8, 10, tank_mesh)
 
-	// Exoskeleton Cradle Arms hugging the tank
 	s_signs := [2]f32{-1.0, 1.0}
 	for s in s_signs {
 		cradle_base := pos - h * 0.18 + side * (s * 0.16) + up * 0.04
 		cradle_top  := tank_pos + side * (s * 0.18) + up * 0.04
-		rl.DrawCylinderEx(cradle_base, cradle_top, 0.032, 0.022, 4, hull_main)
+		add_cylinder(&verts, &norms, &cols, cradle_base, cradle_top, 0.030, 0.020, 4, hull_main)
 	}
-	// Rear support spine behind the sphere
-	rl.DrawCylinderEx(pos - h * 0.22 + up * 0.04, tank_pos - h * 0.16 + up * 0.04, 0.035, 0.025, 4, hull_plate)
+	add_cylinder(&verts, &norms, &cols, pos - h * 0.22 + up * 0.04, tank_pos - h * 0.16 + up * 0.04, 0.035, 0.025, 4, hull_plate)
 
 	// 3. Operator Cabin with Visor (Front-Left Deck)
 	cab_pos := pos + h * 0.14 + up * 0.08 - side * 0.07
-	rl.DrawCylinderEx(cab_pos - h * 0.08, cab_pos + h * 0.08, 0.09, 0.07, 5, hull_main)
-	// Glass visor window
-	rl.DrawCylinderEx(cab_pos + h * 0.05, cab_pos + h * 0.09, 0.06, 0.045, 5, SCIFI_CYAN)
+	add_cylinder(&verts, &norms, &cols, cab_pos - h * 0.08, cab_pos + h * 0.08, 0.09, 0.07, 5, hull_main)
+	add_cylinder(&verts, &norms, &cols, cab_pos + h * 0.05, cab_pos + h * 0.09, 0.06, 0.045, 5, SCIFI_CYAN)
 
 	// 4. Heavy Halogen Work Floodlight (Front-Right Deck)
 	light_pos := pos + h * 0.22 + up * 0.06 + side * 0.08
-	rl.DrawCylinderEx(light_pos - h * 0.04, light_pos, 0.042, 0.042, 6, frame_dark)
-	rl.DrawSphereEx(light_pos + h * 0.01, 0.032, 6, 6, light_glow)
-	rl.DrawSphereEx(light_pos + h * 0.02, 0.016, 4, 4, light_core)
+	add_cylinder(&verts, &norms, &cols, light_pos - h * 0.04, light_pos, 0.040, 0.040, 4, frame_dark)
+	add_sphere(&verts, &norms, &cols, light_pos + h * 0.015, 0.030, 4, 4, light_glow)
 
 	// 5. Four Articulated Hydraulic Outrigger Legs (Spider Stabilizers)
-	leg_offsets := [4][2]f32{
-		{ 0.12,  0.18},  // Front-Right
-		{ 0.12, -0.18},  // Front-Left
-		{-0.16,  0.20},  // Rear-Right
-		{-0.16, -0.20},  // Rear-Left
-	}
-	leg_targets := [4][2]f32{
-		{ 0.26,  0.36},  // Front-Right Foot
-		{ 0.26, -0.36},  // Front-Left Foot
-		{-0.28,  0.38},  // Rear-Right Foot
-		{-0.28, -0.38},  // Rear-Left Foot
-	}
+	leg_offsets := [4][2]f32{ {0.12, 0.18}, {0.12, -0.18}, {-0.16, 0.20}, {-0.16, -0.20} }
+	leg_targets := [4][2]f32{ {0.26, 0.36}, {0.26, -0.36}, {-0.28, 0.38}, {-0.28, -0.38} }
 
 	for l in 0..<4 {
 		hip  := pos + h * leg_offsets[l][0] + side * leg_offsets[l][1] - up * 0.02
 		foot := pos + h * leg_targets[l][0] + side * leg_targets[l][1] - up * 0.28
 		knee := (hip + foot) * 0.5 + up * 0.08 + side * (leg_targets[l][1] > 0 ? 0.06 : -0.06)
 
-		// Upper leg boom (hip -> knee)
-		rl.DrawCylinderEx(hip, knee, 0.038, 0.028, 4, hull_main)
-		// Knee knuckle joint
-		rl.DrawSphereEx(knee, 0.035, 4, 4, metal_trim)
-		// Lower leg strut (knee -> foot)
-		rl.DrawCylinderEx(knee, foot, 0.028, 0.020, 4, metal_trim)
-		// Foot excavator pad / clamp
-		rl.DrawCylinderEx(foot, foot - up * 0.04, 0.035, 0.030, 6, frame_dark)
+		add_cylinder(&verts, &norms, &cols, hip, knee, 0.036, 0.026, 4, hull_main)
+		add_cylinder(&verts, &norms, &cols, knee, foot, 0.026, 0.018, 4, metal_trim)
+		add_cylinder(&verts, &norms, &cols, foot, foot - up * 0.035, 0.032, 0.028, 4, frame_dark)
 	}
 
 	// 6. Ventral Excavation Drill / Rotary Cutter Tool
 	drill_base := pos + h * 0.08 - up * 0.12
 	drill_tip  := pos + h * 0.22 - up * 0.40
-	// Rotary spindle
-	rl.DrawCylinderEx(drill_base, drill_base - up * 0.08, 0.05, 0.05, 6, frame_dark)
-	// Tapered drill bit
-	rl.DrawCylinderEx(drill_base - up * 0.06, drill_tip, 0.055, 0.012, 8, metal_trim)
-	// Active mining energy tip
-	pulse := 0.5 + 0.5 * math.sin(laser_anim_time * 6.0 + position.z * 3.0)
-	rl.DrawSphereEx(drill_tip, 0.025 + 0.015 * pulse, 4, 4, rl.Fade(light_glow, 0.85))
+	add_cylinder(&verts, &norms, &cols, drill_base, drill_base - up * 0.06, 0.05, 0.05, 5, frame_dark)
+	add_cylinder(&verts, &norms, &cols, drill_base - up * 0.05, drill_tip, 0.05, 0.012, 5, metal_trim)
+	add_sphere(&verts, &norms, &cols, drill_tip, 0.032, 4, 4, light_glow)
 
 	// 7. Twin Rear Hover / Transit Thrusters
 	for s in s_signs {
 		nozzle_f := pos - h * 0.22 + side * (s * 0.12) - up * 0.04
-		nozzle_b := nozzle_f - h * 0.07
-		rl.DrawCylinderEx(nozzle_f, nozzle_b, 0.05, 0.04, 6, frame_dark)
-		rl.DrawCylinderEx(nozzle_b, nozzle_b - h * 0.02, 0.04, 0.03, 6, metal_trim)
-
-		// Thruster plasma glow
-		flame_r := 0.035 + 0.02 * pulse
-		rl.DrawSphereEx(nozzle_b - h * 0.02, flame_r, 4, 6, rl.Fade(light_glow, 0.9))
+		nozzle_b := nozzle_f - h * 0.08
+		add_cylinder(&verts, &norms, &cols, nozzle_f, nozzle_b, 0.045, 0.035, 4, frame_dark)
+		add_sphere(&verts, &norms, &cols, nozzle_b - h * 0.02, 0.045, 4, 4, light_glow)
 	}
+
+	mesh := make_mesh_from_arrays(verts[:], norms[:], cols[:])
+	return rl.LoadModelFromMesh(mesh)
 }
 
-// Combat drone: assault chassis inspired by the heavy attack drone reference:
-// central armored cowl, circular glowing ocular sensor with concentric bezel,
-// forward chin sensor needle, flanking twin-railgun weapon pods with glowing
-// accelerator channels, ventral stabilizer mandibles, and rear plasma thruster.
-draw_fighter_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector3) {
-	h := heading
-	if rl.Vector3Length(h) < 0.001 { h = {1, 0, 0} }
-	h = rl.Vector3Normalize(h)
+build_fighter_model :: proc(enemy: bool) -> rl.Model {
+	verts := make([dynamic]f32)
+	defer delete(verts)
+	norms := make([dynamic]f32)
+	defer delete(norms)
+	cols  := make([dynamic]u8)
+	defer delete(cols)
 
-	// Build a stable orthonormal basis around heading
-	world_up := rl.Vector3{0, 1, 0}
-	if math.abs(rl.Vector3DotProduct(h, world_up)) > 0.95 {
-		world_up = {0, 0, 1}
-	}
-	side := rl.Vector3Normalize(rl.Vector3CrossProduct(h, world_up))
-	up := rl.Vector3Normalize(rl.Vector3CrossProduct(side, h))
-
-	// Sci-Fi Palette: tactical slate armor with vibrant energy accents
-	armor_main: rl.Color
-	armor_dark: rl.Color
+	armor_main:  rl.Color
+	armor_dark:  rl.Color
 	armor_plate: rl.Color
-	metal_trim: rl.Color
+	metal_trim:  rl.Color
 	energy_glow: rl.Color
 	energy_core: rl.Color
 
@@ -2295,95 +2435,152 @@ draw_fighter_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector
 		energy_core = SCIFI_MINT
 	}
 
+	h := rl.Vector3{1, 0, 0}
+	up := rl.Vector3{0, 1, 0}
+	side := rl.Vector3{0, 0, 1}
+	pos := rl.Vector3{0, 0, 0}
+
 	// 1. Central Core & Armored Dorsal Cowling
-	core_f := position + h * 0.18
-	core_b := position - h * 0.28
-	rl.DrawCylinderEx(core_b, core_f, 0.22, 0.20, 8, armor_dark)
+	core_f := pos + h * 0.18
+	core_b := pos - h * 0.28
+	add_cylinder(&verts, &norms, &cols, core_b, core_f, 0.20, 0.18, 6, armor_dark)
 
-	hood_f := position + h * 0.20 + up * 0.16
-	hood_b := position - h * 0.30 + up * 0.18
-	rl.DrawCylinderEx(hood_b, hood_f, 0.16, 0.13, 6, armor_main)
-
-	// Dorsal ridge running along top of cowling
-	rl.DrawCylinderEx(hood_b + up * 0.03, hood_f + up * 0.02, 0.05, 0.03, 6, metal_trim)
+	hood_f := pos + h * 0.20 + up * 0.16
+	hood_b := pos - h * 0.30 + up * 0.18
+	add_cylinder(&verts, &norms, &cols, hood_b, hood_f, 0.15, 0.12, 5, armor_main)
 
 	s_signs := [2]f32{-1.0, 1.0}
-
-	// Slanted shoulder armor plates flanking the core
 	for s_sign in s_signs {
 		s_vec := side * s_sign
-		sh_f := position + h * 0.18 + up * 0.06 + s_vec * 0.24
-		sh_b := position - h * 0.26 + up * 0.08 + s_vec * 0.26
-		sh_tip := position + s_vec * 0.30 - up * 0.06
+		sh_f := pos + h * 0.18 + up * 0.06 + s_vec * 0.24
+		sh_b := pos - h * 0.26 + up * 0.08 + s_vec * 0.26
+		sh_tip := pos + s_vec * 0.30 - up * 0.06
 
-		rl.DrawTriangle3D(hood_f, sh_f, hood_b, armor_plate)
-		rl.DrawTriangle3D(hood_b, sh_f, sh_b, armor_plate)
-		rl.DrawTriangle3D(sh_f, sh_tip + h * 0.08, sh_b, armor_main)
-		rl.DrawTriangle3D(sh_b, sh_tip + h * 0.08, sh_tip - h * 0.16, armor_main)
+		add_triangle(&verts, &norms, &cols, hood_f, sh_f, hood_b, armor_plate)
+		add_triangle(&verts, &norms, &cols, hood_b, sh_f, sh_tip, armor_main)
 	}
 
 	// 2. Central Circular Ocular Sensor (The "Eye")
-	eye_pos := position + h * 0.22
-	// Outer metallic bezel ring
-	rl.DrawCylinderEx(eye_pos, eye_pos + h * 0.05, 0.15, 0.14, 10, metal_trim)
-	// Dark inner iris ring
-	rl.DrawCylinderEx(eye_pos + h * 0.03, eye_pos + h * 0.06, 0.12, 0.10, 10, armor_dark)
-	// Glowing central eye lens
-	rl.DrawSphereEx(eye_pos + h * 0.05, 0.08, 8, 8, energy_glow)
-	// Bright pupil center
-	rl.DrawSphereEx(eye_pos + h * 0.08, 0.04, 6, 6, energy_core)
+	eye_pos := pos + h * 0.22
+	add_cylinder(&verts, &norms, &cols, eye_pos, eye_pos + h * 0.04, 0.14, 0.13, 6, metal_trim)
+	add_sphere(&verts, &norms, &cols, eye_pos + h * 0.045, 0.075, 6, 6, energy_glow)
+	add_sphere(&verts, &norms, &cols, eye_pos + h * 0.070, 0.035, 4, 4, energy_core)
 
 	// Forward chin sensor probe / needle
-	probe_base := position + h * 0.18 - up * 0.11
-	probe_tip  := position + h * 0.52 - up * 0.20
-	rl.DrawCylinderEx(probe_base, probe_tip, 0.03, 0.008, 4, metal_trim)
+	probe_base := pos + h * 0.18 - up * 0.11
+	probe_tip  := pos + h * 0.52 - up * 0.20
+	add_cylinder(&verts, &norms, &cols, probe_base, probe_tip, 0.025, 0.008, 4, metal_trim)
 
 	// 3. Ventral Stabilizer Mandibles / Struts
 	for s_sign in s_signs {
 		s_vec := side * s_sign
-		strut_top := position - h * 0.06 - up * 0.10 + s_vec * 0.14
-		strut_tip := position + h * 0.04 - up * 0.34 + s_vec * 0.18
-		rl.DrawCylinderEx(strut_top, strut_tip, 0.032, 0.014, 4, metal_trim)
+		strut_top := pos - h * 0.06 - up * 0.10 + s_vec * 0.14
+		strut_tip := pos + h * 0.04 - up * 0.34 + s_vec * 0.18
+		add_cylinder(&verts, &norms, &cols, strut_top, strut_tip, 0.030, 0.014, 4, metal_trim)
 	}
-	// Underbelly power node glow
-	rl.DrawSphereEx(position - up * 0.14 - h * 0.04, 0.05, 6, 6, rl.Fade(energy_glow, 0.75))
 
 	// 4. Outboard Twin Heavy Weapon Sponsons (Flanking Railguns)
 	for s_sign in s_signs {
 		s_vec := side * s_sign
-		pod_pos := position + s_vec * 0.40 - up * 0.02
+		pod_pos := pos + s_vec * 0.40 - up * 0.02
 
-		// Heavy mounting pylon
-		rl.DrawCylinderEx(position + s_vec * 0.20, pod_pos, 0.035, 0.035, 4, armor_dark)
+		add_cylinder(&verts, &norms, &cols, pos + s_vec * 0.20, pod_pos, 0.032, 0.032, 4, armor_dark)
+		add_cylinder(&verts, &norms, &cols, pod_pos - h * 0.20, pod_pos + h * 0.10, 0.068, 0.058, 5, armor_main)
 
-		// Armored cannon receiver housing
-		rl.DrawCylinderEx(pod_pos - h * 0.20, pod_pos + h * 0.10, 0.07, 0.06, 6, armor_main)
-		rl.DrawCylinderEx(pod_pos - h * 0.18 + up * 0.04, pod_pos + h * 0.06 + up * 0.03, 0.04, 0.03, 4, armor_plate)
-
-		// Dual forward railgun prongs (upper and lower rails)
 		rail_len := f32(0.36)
-		p_top_start := pod_pos + h * 0.08 + up * 0.042
+		p_top_start := pod_pos + h * 0.08 + up * 0.040
 		p_top_end   := p_top_start + h * rail_len
-		rl.DrawCylinderEx(p_top_start, p_top_end, 0.024, 0.016, 4, metal_trim)
+		add_cylinder(&verts, &norms, &cols, p_top_start, p_top_end, 0.022, 0.014, 4, metal_trim)
 
-		p_bot_start := pod_pos + h * 0.08 - up * 0.042
+		p_bot_start := pod_pos + h * 0.08 - up * 0.040
 		p_bot_end   := p_bot_start + h * rail_len
-		rl.DrawCylinderEx(p_bot_start, p_bot_end, 0.024, 0.016, 4, metal_trim)
+		add_cylinder(&verts, &norms, &cols, p_bot_start, p_bot_end, 0.022, 0.014, 4, metal_trim)
 
-		// Glowing rail accelerator channel between the prongs
-		rl.DrawCylinderEx(pod_pos + h * 0.07, pod_pos + h * 0.38, 0.014, 0.014, 4, energy_glow)
+		add_cylinder(&verts, &norms, &cols, pod_pos + h * 0.07, pod_pos + h * 0.38, 0.014, 0.014, 4, energy_glow)
 	}
 
 	// 5. Rear Propulsion & Thruster Flare
-	engine_pos := position - h * 0.32
-	rl.DrawCylinderEx(position - h * 0.24, engine_pos, 0.13, 0.10, 8, armor_dark)
-	rl.DrawCylinderEx(engine_pos, engine_pos - h * 0.05, 0.10, 0.08, 8, metal_trim)
+	engine_pos := pos - h * 0.32
+	add_cylinder(&verts, &norms, &cols, pos - h * 0.24, engine_pos, 0.12, 0.09, 6, armor_dark)
+	add_cylinder(&verts, &norms, &cols, engine_pos, engine_pos - h * 0.04, 0.09, 0.07, 6, metal_trim)
 
-	// Animated pulsing thruster flare
-	pulse := 0.5 + 0.5 * math.sin(laser_anim_time * 8.0 + position.x * 4.0 + position.z * 2.0)
-	flame_r := 0.07 + 0.04 * pulse
-	rl.DrawSphereEx(engine_pos - h * 0.06, flame_r, 6, 8, rl.Fade(energy_glow, 0.9))
-	rl.DrawSphereEx(engine_pos - h * 0.04, flame_r * 0.5, 6, 6, energy_core)
+	add_sphere(&verts, &norms, &cols, engine_pos - h * 0.05, 0.075, 4, 6, energy_glow)
+	add_sphere(&verts, &norms, &cols, engine_pos - h * 0.03, 0.040, 4, 4, energy_core)
+
+	mesh := make_mesh_from_arrays(verts[:], norms[:], cols[:])
+	return rl.LoadModelFromMesh(mesh)
+}
+
+init_drone_visuals :: proc() {
+	if drone_visuals_ready { return }
+	drone_models[.PLAYER_MINER]   = build_miner_model(false)
+	drone_models[.ENEMY_MINER]    = build_miner_model(true)
+	drone_models[.PLAYER_FIGHTER] = build_fighter_model(false)
+	drone_models[.ENEMY_FIGHTER]  = build_fighter_model(true)
+	drone_visuals_ready = true
+}
+
+unload_drone_visuals :: proc() {
+	if !drone_visuals_ready { return }
+	for kind in Drone_Model_Kind {
+		rl.UnloadModel(drone_models[kind])
+	}
+	drone_visuals_ready = false
+}
+
+draw_miner_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector3 = {1, 0, 0}) {
+	if !drone_visuals_ready {
+		rl.DrawSphere(position, 0.35, enemy ? rl.RED : rl.ORANGE)
+		return
+	}
+	h := heading
+	if rl.Vector3Length(h) < 0.001 { h = {1, 0, 0} }
+	h = rl.Vector3Normalize(h)
+
+	bob := math.sin(laser_anim_time * 3.0 + position.x * 2.1 + position.z * 1.7) * 0.04
+	pos := position + {0, bob, 0}
+
+	model := enemy ? drone_models[.ENEMY_MINER] : drone_models[.PLAYER_MINER]
+
+	v_from := rl.Vector3{1, 0, 0}
+	dot := rl.Vector3DotProduct(v_from, h)
+	axis := rl.Vector3{0, 1, 0}
+	angle: f32 = 0.0
+	if dot < -0.9999 {
+		axis = {0, 1, 0}
+		angle = 180.0
+	} else if dot < 0.9999 {
+		axis = rl.Vector3Normalize(rl.Vector3CrossProduct(v_from, h))
+		angle = math.acos(math.clamp(dot, -1.0, 1.0)) * (180.0 / math.PI)
+	}
+
+	rl.DrawModelEx(model, pos, axis, angle, {1, 1, 1}, rl.WHITE)
+}
+
+draw_fighter_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector3) {
+	if !drone_visuals_ready {
+		rl.DrawSphere(position, 0.35, enemy ? rl.RED : NEON_BLUE)
+		return
+	}
+	h := heading
+	if rl.Vector3Length(h) < 0.001 { h = {1, 0, 0} }
+	h = rl.Vector3Normalize(h)
+
+	model := enemy ? drone_models[.ENEMY_FIGHTER] : drone_models[.PLAYER_FIGHTER]
+
+	v_from := rl.Vector3{1, 0, 0}
+	dot := rl.Vector3DotProduct(v_from, h)
+	axis := rl.Vector3{0, 1, 0}
+	angle: f32 = 0.0
+	if dot < -0.9999 {
+		axis = {0, 1, 0}
+		angle = 180.0
+	} else if dot < 0.9999 {
+		axis = rl.Vector3Normalize(rl.Vector3CrossProduct(v_from, h))
+		angle = math.acos(math.clamp(dot, -1.0, 1.0)) * (180.0 / math.PI)
+	}
+
+	rl.DrawModelEx(model, position, axis, angle, {1, 1, 1}, rl.WHITE)
 }
 
 // Player fighters are neon blue, enemy fighters red.
@@ -2395,34 +2592,44 @@ draw_fighter :: proc(position: rl.Vector3, enemy: bool) {
 // toward its target (player fire neon cyan, enemy fire RED), mirroring the
 // update_planet_combat rules — dogfights, miner sweeps and base sieges.
 draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, ec: int) {
-	target_spots: [MAX_UNITS]rl.Vector3
+	target_spots: [256]rl.Vector3
 	tc := 0
-	if pc > 0 && ec > 0 {
-		// Dogfight: each fighter trades fire with the opposing line.
-		for i in 0..<pc { draw_laser_bolt(player_spots[i], enemy_spots[i % ec], f32(i) * 2.3, NEON_CYAN) }
-		for j in 0..<ec { draw_laser_bolt(enemy_spots[j], player_spots[j % pc], f32(j) * 2.3 + 1.1, rl.RED) }
-	} else if ec > 0 {
+	num_p := min(pc, rep_count(pc))
+	num_e := min(ec, rep_count(ec))
+	if num_p > 0 && num_e > 0 {
+		// Dogfight: visible fighters trade fire.
+		for i in 0..<num_p { draw_laser_bolt(player_spots[i], enemy_spots[i % num_e], f32(i) * 2.3, NEON_CYAN) }
+		for j in 0..<num_e { draw_laser_bolt(enemy_spots[j], player_spots[j % num_p], f32(j) * 2.3 + 1.1, rl.RED) }
+	} else if num_e > 0 {
 		// Enemy fighters strafing unescorted player miners (kill_player_miner).
 		for i := 0; i < unit_count; i += 1 {
 			u := &units[i]
-			if u.kind == .MINING && !u.enemy && u.target_planet == p && u.state != .TRANSIT { target_spots[tc] = u.position; tc += 1 }
+			if u.kind == .MINING && !u.enemy && u.target_planet == p && u.state != .TRANSIT {
+				target_spots[tc] = u.position
+				tc += 1
+				if tc >= len(target_spots) { break }
+			}
 		}
-		for j in 0..<ec {
+		for j in 0..<num_e {
 			if tc == 0 { break }
 			draw_laser_bolt(enemy_spots[j], target_spots[j % tc], f32(j) * 2.3, rl.RED)
 		}
-	} else if pc > 0 {
+	} else if num_p > 0 {
 		// Player fighters sweeping enemy miners (kill_enemy_miner), then
 		// besieging the enemy base itself.
 		for i := 0; i < unit_count; i += 1 {
 			u := &units[i]
-			if u.kind == .MINING && u.enemy && u.affiliation == p { target_spots[tc] = u.position; tc += 1 }
+			if u.kind == .MINING && u.enemy && u.affiliation == p {
+				target_spots[tc] = u.position
+				tc += 1
+				if tc >= len(target_spots) { break }
+			}
 		}
 		if tc > 0 {
-			for i in 0..<pc { draw_laser_bolt(player_spots[i], target_spots[i % tc], f32(i) * 2.3, NEON_CYAN) }
+			for i in 0..<num_p { draw_laser_bolt(player_spots[i], target_spots[i % tc], f32(i) * 2.3, NEON_CYAN) }
 		} else if enemy_base_hp[p] > 0 {
 			base := sector_pos(p) + rl.Vector3{0, sector_radius(p) * 0.6, 0}
-			for i in 0..<pc { draw_laser_bolt(player_spots[i], base, f32(i) * 2.3, NEON_CYAN) }
+			for i in 0..<num_p { draw_laser_bolt(player_spots[i], base, f32(i) * 2.3, NEON_CYAN) }
 		}
 	}
 }
