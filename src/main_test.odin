@@ -49,11 +49,16 @@ earth_miner_mines_earth_immediately :: proc(t: ^testing.T) {
 @(test)
 enemy_wave_spawns_from_enemy_hq :: proc(t: ^testing.T) {
 	reset_world()
-	spawn_enemy_wave()
-	testing.expect(t, unit_count == WAVE_SIZE, "wave size")
-	target := units[0].target_planet
-	testing.expect(t, target >= 0 && target < PLANET_COUNT, "wave targets a valid planet")
-	for i in 0..<unit_count {
+	// A second liberated world arms the wave: (2 - 1) * 15 = 15 fighters.
+	enemy_base_hp[NEPTUNE] = 0
+	add_miner(EARTH)
+	add_miner(NEPTUNE)
+	before := unit_count
+	spawn_enemy_wave() // debug N key: force the next attack immediately.
+	testing.expect(t, unit_count - before == 15, "wave size scales with liberation")
+	target := units[before].target_planet
+	testing.expect(t, target == NEPTUNE, "wave strikes the liberated planet closest to the HQ")
+	for i := before; i < unit_count; i += 1 {
 		testing.expect(t, units[i].kind == .COMBAT, "enemy is combat")
 		testing.expect(t, units[i].enemy, "enemy flag set")
 		testing.expect(t, units[i].target_planet == target && units[i].affiliation == target, "wave shares one target")
@@ -61,19 +66,28 @@ enemy_wave_spawns_from_enemy_hq :: proc(t: ^testing.T) {
 	}
 	selected_planet = target
 	testing.expect(t, roster_count(.COMBAT) == 0, "enemies never appear in the player roster")
+	selected_planet = EARTH
 }
 
 @(test)
-wave_timer_first_at_180_seconds_then_every_120 :: proc(t: ^testing.T) {
+wave_timer_first_at_180_seconds_then_every_180 :: proc(t: ^testing.T) {
 	reset_world()
+	enemy_base_hp[VENUS] = 0
+	add_miner(EARTH)
+	add_miner(VENUS)
+	before := unit_count
+	// First wave at the 3-minute mark, then every 3 minutes. Venus is mined
+	// and liberated, yet both waves strike Earth: targeting follows HQ
+	// distance, not mining.
 	update_enemy_waves(WAVE_FIRST_DELAY - 0.1)
-	testing.expect(t, unit_count == 0, "no wave before the 3-minute mark")
+	testing.expect(t, unit_count == before, "no wave before the 3-minute mark")
 	update_enemy_waves(0.2)
-	testing.expect(t, unit_count == WAVE_SIZE, "first wave spawns at 180s")
+	testing.expect(t, unit_count - before == 15, "first wave spawns at 180s")
+	testing.expect(t, units[before].target_planet == EARTH, "Earth is closer to the HQ than Venus")
 	update_enemy_waves(WAVE_INTERVAL - 0.1)
-	testing.expect(t, unit_count == WAVE_SIZE, "no extra wave before 2 minutes elapse")
+	testing.expect(t, unit_count - before == 15, "no extra wave before 3 minutes elapse")
 	update_enemy_waves(0.2)
-	testing.expect(t, unit_count == 2 * WAVE_SIZE, "second wave spawns 2 minutes after the first")
+	testing.expect(t, unit_count - before == 30, "second wave spawns 3 minutes after the first")
 }
 
 @(test)
@@ -102,123 +116,124 @@ mined_planet_count_counts_distinct_planets_with_player_miners :: proc(t: ^testin
 }
 
 @(test)
-regular_wave_spawns_one_wave_per_mined_planet :: proc(t: ^testing.T) {
+waves_require_two_mining_planets :: proc(t: ^testing.T) {
 	reset_world()
-	// unit_count includes the miners we seeded, so compare against the pre-wave count.
+	enemy_base_hp[VENUS] = 0 // armed size-wise, but nobody mines.
+	update_enemy_waves(f32(WAVE_FIRST_DELAY))
+	testing.expect(t, unit_count == 0, "no mining draws no retaliation")
+	testing.expect(t, enemy_wave_timer == 0, "clock frozen below 2 mined planets")
 	add_miner(EARTH)
-	add_miner(MARS)
-	before := unit_count
 	update_enemy_waves(f32(WAVE_FIRST_DELAY))
-	testing.expect(t, unit_count - before == 2 * WAVE_SIZE, "two mined planets spawn two waves")
-	// 0 mined planets still spawns at least one default wave.
-	reset_world()
-	update_enemy_waves(f32(WAVE_FIRST_DELAY))
-	testing.expect(t, unit_count == WAVE_SIZE, "no mining spawns one default wave")
-	reset_world()
-	add_miner(EARTH)
-	add_miner(MARS)
-	add_miner(JUPITER)
-	before = unit_count
-	update_enemy_waves(f32(WAVE_FIRST_DELAY))
-	testing.expect(t, unit_count - before == 3 * WAVE_SIZE, "three mined planets spawn three waves")
-}
-
-@(test)
-attack_wave_size_doubles_at_four_mined_planets :: proc(t: ^testing.T) {
-	testing.expect(t, WAVE_SIZE == 5, "standard wave is 5 fighters")
-	testing.expect(t, WAVE_DOUBLE_MIN_MINED_PLANETS == 4, "doubling threshold is 4 mined planets")
-	reset_world()
-	testing.expect(t, attack_wave_size() == WAVE_SIZE, "0 mined: standard wave")
-	add_miner(MERCURY)
-	testing.expect(t, attack_wave_size() == WAVE_SIZE, "1 mined: standard wave")
+	testing.expect(t, unit_count == 1, "one mined planet still draws no retaliation")
+	testing.expect(t, enemy_wave_timer == 0, "clock frozen at 1 mined planet")
 	add_miner(VENUS)
-	testing.expect(t, attack_wave_size() == WAVE_SIZE, "2 mined: standard wave")
+	before := unit_count
+	update_enemy_waves(f32(WAVE_FIRST_DELAY))
+	testing.expect(t, unit_count - before == 15, "two mined planets draw the wave")
+}
+
+@(test)
+attack_wave_size_scales_with_liberation :: proc(t: ^testing.T) {
+	reset_world()
+	testing.expect(t, WAVE_FIGHTERS_PER_LIBERATED == 15, "15 fighters per liberated world past the first")
+	testing.expect(t, liberated_planet_count() == 1, "Earth starts as the sole liberated world")
+	testing.expect(t, attack_wave_size() == 0, "one liberated world musters nothing")
+	enemy_base_hp[VENUS] = 0
+	testing.expect(t, attack_wave_size() == 15, "two liberated worlds send 15 fighters")
+	enemy_base_hp[MARS] = 0
+	testing.expect(t, attack_wave_size() == 30, "three liberated worlds send 30 fighters")
+	for p in 0..<PLANET_COUNT { enemy_base_hp[p] = 0 }
+	testing.expect(t, liberated_planet_count() == 8, "all eight planets liberated")
+	testing.expect(t, attack_wave_size() == 7 * WAVE_FIGHTERS_PER_LIBERATED, "eight liberated worlds send 105 fighters")
+}
+
+@(test)
+wave_strikes_closest_liberated_planet_to_hq :: proc(t: ^testing.T) {
+	reset_world()
+	// Liberate three off-world planets; Neptune sits closest to the HQ,
+	// then Mars, then Earth, then Venus.
+	enemy_base_hp[VENUS] = 0
+	enemy_base_hp[MARS] = 0
+	enemy_base_hp[NEPTUNE] = 0
+	testing.expect(t, closest_liberated_planet_to_hq() == NEPTUNE, "Neptune is closest to the HQ")
+	add_miner(EARTH)
 	add_miner(MARS)
-	testing.expect(t, attack_wave_size() == WAVE_SIZE, "3 mined: standard wave")
-	add_miner(JUPITER)
-	testing.expect(t, attack_wave_size() == 2 * WAVE_SIZE, "4 mined: doubled wave")
-	testing.expect(t, 2 * WAVE_SIZE == 10, "doubled wave is 10 fighters")
-	add_miner(SATURN); add_miner(URANUS); add_miner(NEPTUNE)
-	testing.expect(t, attack_wave_size() == 2 * WAVE_SIZE, "8 mined: still doubled wave")
-}
-
-@(test)
-four_mined_planets_spawn_four_doubled_waves :: proc(t: ^testing.T) {
-	reset_world()
-	add_miner(MERCURY); add_miner(MARS); add_miner(JUPITER); add_miner(NEPTUNE)
 	before := unit_count
 	update_enemy_waves(f32(WAVE_FIRST_DELAY))
-	testing.expect(t, unit_count - before == 4 * 2 * WAVE_SIZE, "4 mined planets -> 4 waves of 10")
-}
-
-@(test)
-waves_strike_each_mined_planet_once :: proc(t: ^testing.T) {
-	reset_world()
-	add_miner(VENUS); add_miner(SATURN); add_miner(URANUS)
-	before := unit_count
-	update_enemy_waves(f32(WAVE_FIRST_DELAY))
-	testing.expect(t, unit_count - before == 3 * WAVE_SIZE, "three mined planets, three standard waves")
-	// Each wave is a contiguous block sharing one target; collect the targets.
-	targets := [PLANET_COUNT]int{}
-	for i := before; i < unit_count; i += WAVE_SIZE {
-		target := units[i].target_planet
-		testing.expect(t, target == VENUS || target == SATURN || target == URANUS, "wave targets a mined planet")
-		targets[target] += 1
+	// (4 liberated - 1) * 15 = 45 fighters in a single wave.
+	testing.expect(t, unit_count - before == 45, "one wave of 45 fighters")
+	for i := before; i < unit_count; i += 1 {
+		testing.expect(t, units[i].target_planet == NEPTUNE, "every fighter strikes Neptune")
 	}
-	testing.expect(t, targets[VENUS] == 1 && targets[SATURN] == 1 && targets[URANUS] == 1, "each mined planet struck exactly once")
+	// Losing Neptune hands the target to the next-closest liberated world.
+	enemy_base_hp[NEPTUNE] = GARRISON_BASE_HP[NEPTUNE]
+	testing.expect(t, closest_liberated_planet_to_hq() == MARS, "Mars is next-closest")
+	before = unit_count
+	update_enemy_waves(f32(WAVE_INTERVAL))
+	testing.expect(t, unit_count - before == 30, "(3 liberated - 1) * 15 = 30 fighters")
+	for i := before; i < unit_count; i += 1 {
+		testing.expect(t, units[i].target_planet == MARS, "every fighter strikes Mars")
+	}
 }
 
 @(test)
-mega_wave_advances_and_spawns_at_five_mined_planets :: proc(t: ^testing.T) {
+player_attacking_hq_covers_stationed_and_inbound :: proc(t: ^testing.T) {
 	reset_world()
-	// Below the 5-planet threshold: the mega clock does not advance (stays 0)
-	// and the invasion stays disarmed.
-	add_miner(EARTH); add_miner(MARS); add_miner(JUPITER); add_miner(SATURN)
-	update_enemy_waves(50.0)
-	testing.expect(t, mega_wave_timer == 0 && !mega_wave_armed, "mega clock frozen below 5 mined planets")
-	// Crossing into 5 mined planets fires the first 100-fighter invasion
-	// immediately — no 300s wait.
-	add_miner(URANUS)
-	before := unit_count
-	update_enemy_waves(0.1)
-	testing.expect(t, unit_count - before == MEGA_WAVE_SIZE, "first mega wave fires immediately at the 5th mined planet")
-	testing.expect(t, mega_wave_armed, "transition arms the mega clock")
-	testing.expect(t, mega_wave_timer == 0, "clock starts from 0 after the immediate assault")
-	// Armed: the clock advances and the next 100-fighter assault strikes at 300s.
-	mega_wave_timer = MEGA_WAVE_INTERVAL_SECONDS - 0.1
-	before = unit_count
-	update_enemy_waves(0.1)
-	testing.expect(t, unit_count - before == MEGA_WAVE_SIZE, "subsequent mega wave spawns 100 fighters at 300s")
-	testing.expect(t, mega_wave_timer == 0, "mega clock resets after the assault")
+	testing.expect(t, !player_attacking_hq(), "no attack with no fighters")
+	add_guarding_fighter(MARS, false)
+	testing.expect(t, !player_attacking_hq(), "fighters elsewhere are not an HQ attack")
+	add_guarding_fighter(ENEMY_HOME, false)
+	testing.expect(t, player_attacking_hq(), "fighters stationed at the HQ count as an attack")
+	// Inbound instead of stationed: a fighter sortied from Earth.
+	reset_world()
+	units[unit_count] = Unit{kind = .COMBAT, state = .TRANSIT, position = planets[EARTH].position, home_planet = EARTH, affiliation = ENEMY_HOME, target_planet = ENEMY_HOME}
+	unit_count += 1
+	testing.expect(t, player_attacking_hq(), "fighters inbound to the HQ count as an attack")
 }
 
 @(test)
-mega_wave_resets_when_mined_planets_drop_below_five :: proc(t: ^testing.T) {
+wave_reinforces_attacked_hq_instead_of_planets :: proc(t: ^testing.T) {
 	reset_world()
-	add_miner(EARTH); add_miner(MARS); add_miner(JUPITER); add_miner(SATURN); add_miner(URANUS)
-	// Park the regular timer below its next boundary so short steps never fire
-	// a regular wave and muddy the mega-clock assertions.
-	wave_started = true
-	enemy_wave_timer = 0
-	// Crossing into 5 mined planets fires the immediate invasion; afterwards
-	// the clock advances while the player stays at 5+.
+	enemy_base_hp[VENUS] = 0
+	add_miner(EARTH)
+	add_miner(VENUS)
+	// Player fighters inbound to the HQ while a single defender holds it;
+	// inbound attackers never join planet_combatants, so no dogfight muddies
+	// the reinforcement count.
+	units[unit_count] = Unit{kind = .COMBAT, state = .TRANSIT, position = planets[EARTH].position, home_planet = EARTH, affiliation = ENEMY_HOME, target_planet = ENEMY_HOME}
+	unit_count += 1
+	add_guarding_fighter(ENEMY_HOME, true)
 	before := unit_count
-	update_enemy_waves(100.0)
-	testing.expect(t, unit_count - before == MEGA_WAVE_SIZE, "immediate invasion on crossing 5 mined planets")
-	testing.expect(t, mega_wave_timer == 0, "clock starts from 0 after the immediate invasion")
-	update_enemy_waves(50.0)
-	testing.expect(t, mega_wave_timer == 50.0, "clock advances while >=5 mined planets")
-	// Player stops mining one planet: clock resets to 0 immediately and the
-	// invasion re-arms.
-	units[0].state = .CONSTRUCTING
-	update_enemy_waves(1.0)
-	testing.expect(t, mega_wave_timer == 0 && !mega_wave_armed, "clock resets and re-arms when mined planets drop below 5")
-	// Re-expanding fires a fresh immediate invasion (not a 300s wait).
-	before = unit_count
-	units[0].state = .MINING
-	update_enemy_waves(10.0)
-	testing.expect(t, unit_count - before == MEGA_WAVE_SIZE, "re-expansion fires the invasion again immediately")
-	testing.expect(t, mega_wave_timer == 0, "clock restarts fresh from 0 on re-expansion")
+	update_enemy_waves(f32(WAVE_FIRST_DELAY))
+	// (2 liberated - 1) * 15 = 15 fighters muster as HQ defenders, not as a
+	// wave against a planet.
+	testing.expect(t, unit_count - before == 15, "wave musters 15 defenders")
+	_, defenders := planet_combatants(ENEMY_HOME)
+	testing.expect(t, defenders == 16, "reinforcements join the HQ garrison")
+	for i := before; i < unit_count; i += 1 {
+		testing.expect(t, units[i].enemy, "reinforcements are enemy fighters")
+		testing.expect(t, units[i].state == .GUARDING && units[i].affiliation == ENEMY_HOME, "reinforcements guard the HQ")
+	}
+}
+
+@(test)
+planet_attacks_resume_once_hq_garrison_replenished :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[VENUS] = 0
+	add_miner(EARTH)
+	add_miner(VENUS)
+	// Full-strength HQ garrison with a player attacker inbound: the wave
+	// sorties against planets instead of reinforcing.
+	for i in 0..<ENEMY_HQ_GARRISON { add_guarding_fighter(ENEMY_HOME, true) }
+	units[unit_count] = Unit{kind = .COMBAT, state = .TRANSIT, position = planets[EARTH].position, home_planet = EARTH, affiliation = ENEMY_HOME, target_planet = ENEMY_HOME}
+	unit_count += 1
+	testing.expect(t, player_attacking_hq(), "HQ is under attack")
+	before := unit_count
+	update_enemy_waves(f32(WAVE_FIRST_DELAY))
+	testing.expect(t, unit_count - before == 15, "wave sorties while the garrison is whole")
+	testing.expect(t, units[before].target_planet == EARTH, "closest liberated planet is struck")
+	_, defenders := planet_combatants(ENEMY_HOME)
+	testing.expect(t, defenders == ENEMY_HQ_GARRISON, "whole garrison gains no defenders")
 }
 
 @(test)
@@ -226,16 +241,23 @@ step_simulation_advances_wave_timer_and_spawns_on_schedule :: proc(t: ^testing.T
 	reset_world()
 	production = {}
 	pending_count = {}
-	// Unpaused play drives the wave clock through step_simulation, not just
-	// direct calls: first wave at 3:00, then every 2:00.
-	step_simulation(f32(WAVE_FIRST_DELAY) - 0.1)
-	testing.expect(t, unit_count == 0, "no wave before 3 minutes of unpaused play")
-	step_simulation(0.1)
-	testing.expect(t, unit_count == WAVE_SIZE, "first wave spawns at the 3-minute mark")
-	step_simulation(f32(WAVE_INTERVAL) - 0.1)
-	testing.expect(t, unit_count == WAVE_SIZE, "no wave before 2 minutes elapse")
-	step_simulation(0.1)
-	testing.expect(t, unit_count == 2 * WAVE_SIZE, "second wave spawns 2 minutes after the first")
+	enemy_base_hp[VENUS] = 0
+	add_miner(EARTH)
+	add_miner(VENUS)
+	// Unpaused play drives the wave clock through step_simulation: first wave
+	// at 3:00, then every 3:00 — but only while 2+ worlds are mined.
+	enemy_wave_timer = 0
+	wave_started = false
+	before := unit_count
+	step_simulation(1.0)
+	testing.expect(t, unit_count == before, "no wave before 3 minutes of unpaused play")
+	enemy_wave_timer = f32(WAVE_FIRST_DELAY) - 1.0
+	step_simulation(1.0)
+	testing.expect(t, unit_count - before == 15, "first wave spawns at the 3-minute mark")
+	enemy_wave_timer = f32(WAVE_INTERVAL) - 1.0
+	before = unit_count
+	step_simulation(1.0)
+	testing.expect(t, unit_count - before == 15, "second wave spawns 3 minutes after the first")
 }
 
 @(test)
@@ -542,28 +564,6 @@ queue_unit_is_earth_only :: proc(t: ^testing.T) {
 }
 
 @(test)
-enemy_waves_target_any_planet :: proc(t: ^testing.T) {
-	// The default/debug wave (nothing mined) picks a seeded random target
-	// among all eight planets; each one must show up across seeds.
-	seen := [PLANET_COUNT]bool{}
-	for seed in 0..<200 {
-		reset_world()
-		rl.SetRandomSeed(u32(seed))
-		spawn_enemy_wave()
-		testing.expect(t, unit_count == WAVE_SIZE, "wave size")
-		target := units[0].target_planet
-		testing.expect(t, target >= 0 && target < PLANET_COUNT, "wave targets a valid planet")
-		for i in 1..<unit_count {
-			testing.expect(t, units[i].target_planet == target, "every unit in a wave shares one target")
-		}
-		seen[target] = true
-	}
-	for p in 0..<PLANET_COUNT {
-		testing.expectf(t, seen[p], "planet %d must be a reachable wave target", p)
-	}
-}
-
-@(test)
 representational_rendering_one_cube_per_ten :: proc(t: ^testing.T) {
 	reset_world()
 	testing.expect(t, rep_count(0) == 0, "empty fleet renders nothing")
@@ -581,14 +581,16 @@ transit_fleets_render_representationally :: proc(t: ^testing.T) {
 		units[unit_count] = Unit{kind = .COMBAT, state = .TRANSIT, position = {}, home_planet = EARTH, affiliation = MARS, target_planet = MARS}
 		unit_count += 1
 	}
-	spawn_enemy_wave() // 5 enemies in transit to a random target.
-	wave_target := units[unit_count - WAVE_SIZE].target_planet
+	// (2 liberated - 1) * 15 = 15 enemies in transit to Neptune, the
+	// liberated planet closest to the HQ.
+	enemy_base_hp[NEPTUNE] = 0
+	spawn_enemy_wave()
 	testing.expect(t, transit_fighters_at(MARS, false) == 12, "12 player fighters in transit to Mars")
 	testing.expect(t, rep_count(transit_fighters_at(MARS, false)) == 2, "12 transit fighters render as 2 cubes")
-	testing.expect(t, transit_fighters_at(wave_target, true) == WAVE_SIZE, "enemy wave in transit to its target")
-	testing.expect(t, rep_count(transit_fighters_at(wave_target, true)) == 1, "5-enemy wave renders as 1 cube")
+	testing.expect(t, transit_fighters_at(NEPTUNE, true) == 15, "enemy wave in transit to its target")
+	testing.expect(t, rep_count(transit_fighters_at(NEPTUNE, true)) == 2, "15-enemy wave renders as 2 cubes")
 	for p in 0..<PLANET_COUNT {
-		expected := p == wave_target ? WAVE_SIZE : 0
+		expected := p == NEPTUNE ? 15 : 0
 		testing.expectf(t, transit_fighters_at(p, true) == expected, "planet %d enemy transit count %d != %d", p, transit_fighters_at(p, true), expected)
 	}
 }
@@ -650,6 +652,8 @@ all_non_earth_planets_start_occupied :: proc(t: ^testing.T) {
 @(test)
 enemy_fighters_guard_and_orbit_after_arriving :: proc(t: ^testing.T) {
 	reset_world()
+	// A second liberated world arms the debug wave.
+	enemy_base_hp[NEPTUNE] = 0
 	spawn_enemy_wave()
 	// One long update: everyone reaches its target this frame (transit is
 	// slow, so pass a large dt).
@@ -852,18 +856,21 @@ enemy_garrisons_concealed_until_player_presence :: proc(t: ^testing.T) {
 @(test)
 enemy_wave_concealed_in_transit_until_target_lit :: proc(t: ^testing.T) {
 	reset_world()
+	// A second liberated world arms the debug wave; Neptune is the closest
+	// liberated planet to the HQ, so the wave lifts off toward it.
+	enemy_base_hp[NEPTUNE] = 0
 	spawn_enemy_wave()
-	testing.expect(t, unit_count == WAVE_SIZE, "wave spawned")
+	testing.expect(t, unit_count == 15, "wave spawned")
 	target := units[0].target_planet
+	testing.expect(t, target == NEPTUNE, "wave strikes Neptune")
 	lit := has_vision(target)
 	for i in 0..<unit_count {
 		testing.expect(t, is_concealed(&units[i]) != lit, "wave hidden while the target is dark, visible once lit")
 	}
-	if target != EARTH { // Earth is always lit, so only off-world targets can be darkened then lit.
-		add_guarding_fighter(target, false)
-		for i in 0..<unit_count {
-			testing.expect(t, !is_concealed(&units[i]), "enemy wave visible once the target planet is lit")
-		}
+	// Neptune starts dark: a player fighter on site lights it.
+	add_guarding_fighter(target, false)
+	for i in 0..<unit_count {
+		testing.expect(t, !is_concealed(&units[i]), "enemy wave visible once the target planet is lit")
 	}
 }
 
@@ -1382,11 +1389,12 @@ enemy_attackers_appear_in_target_roster :: proc(t: ^testing.T) {
 	// A wave bound for a planet joins that planet's enemy roster, so the
 	// inspector shows inbound attackers (wave fighters carry the target as
 	// their affiliation from the moment they lift off).
+	enemy_base_hp[NEPTUNE] = 0 // a second liberated world arms the debug wave.
 	before := unit_count
 	spawn_enemy_wave()
 	target := units[before].target_planet
 	selected_planet = target
-	testing.expect(t, enemy_roster_count(.COMBAT) == WAVE_SIZE, "wave fighters count in the target roster")
+	testing.expect(t, enemy_roster_count(.COMBAT) == 15, "wave fighters count in the target roster")
 	testing.expect(t, enemy_roster_ordinal(before, .COMBAT) == 0, "first attacker is ordinal 0")
 	selected_planet = EARTH
 }
@@ -1570,39 +1578,16 @@ enemy_hq_falls_after_garrison_trade :: proc(t: ^testing.T) {
 	update_enemy_waves(f32(COMBAT_TICK))
 	testing.expect(t, enemy_base_hp[ENEMY_HOME] == 0, "HQ base takes damage per fighter per tick")
 	testing.expect(t, planet_liberated(ENEMY_HOME) && enemy_hq_destroyed(), "HQ falls once its HP hits 0")
-	// A destroyed HQ never launches another wave, ever.
+	// A destroyed HQ never launches another wave, ever — even fully armed
+	// (2 mined planets, a second liberated world for wave size).
 	wave_started = false
 	enemy_wave_timer = 0
+	enemy_base_hp[VENUS] = 0
+	add_miner(EARTH)
+	add_miner(VENUS)
 	before := unit_count
 	update_enemy_waves(f32(WAVE_FIRST_DELAY))
 	testing.expect(t, unit_count == before, "no waves launch from a destroyed HQ")
-}
-
-// ---- Wave stop rule at 5 mined planets ----------------------------------
-
-@(test)
-regular_waves_stop_completely_at_five_mined_planets :: proc(t: ^testing.T) {
-	reset_world()
-	add_miner(MERCURY); add_miner(VENUS); add_miner(MARS); add_miner(JUPITER); add_miner(SATURN)
-	base := unit_count
-	// Crossing into 5 mined planets fires the first 100-fighter invasion at
-	// once; no regular wave ever launches past the boundary.
-	update_enemy_waves(MEGA_WAVE_INTERVAL_SECONDS - 1.0)
-	testing.expect(t, unit_count == base + MEGA_WAVE_SIZE, "immediate mega assault fires at 5 mined planets")
-	testing.expect(t, enemy_wave_timer == 0, "regular clock frozen while >= 5 mined planets")
-	testing.expect(t, mega_wave_timer == 0, "mega clock armed from 0 after the immediate assault")
-	// The next mega assault lands exactly 300s later (299s pass: nothing).
-	update_enemy_waves(MEGA_WAVE_INTERVAL_SECONDS - 1.0)
-	testing.expect(t, unit_count == base + MEGA_WAVE_SIZE, "no further assault before the 5-minute boundary")
-	update_enemy_waves(1.0)
-	testing.expect(t, unit_count == base + 2 * MEGA_WAVE_SIZE, "second mega assault strikes at the 5-minute mark")
-	// Dropping back below 5 resumes regular waves on the normal schedule.
-	units[0].state = .CONSTRUCTING
-	update_enemy_waves(f32(WAVE_FIRST_DELAY) - 0.1)
-	testing.expect(t, unit_count == base + 2 * MEGA_WAVE_SIZE, "still no new wave before the schedule boundary")
-	update_enemy_waves(0.2)
-	// 4 mined planets now -> 4 doubled waves (attack_wave_size doubles at 4).
-	testing.expect(t, unit_count == base + 2 * MEGA_WAVE_SIZE + 4 * 2 * WAVE_SIZE, "regular waves resume below 5 mined planets")
 }
 
 // ---- Victory condition & restart ----------------------------------------
@@ -1705,28 +1690,6 @@ hq_garrison_trade_resolves_five_times_faster :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, players == 0 && enemies == 0, "50v50 HQ dogfight fully trades")
 	testing.expect(t, ticks == 50, "50 trades at 0.2s each = 10s (was 50s at the old 1s tick)")
-}
-
-// ---- Immediate 100-fighter invasion on the 5th mined planet --------------
-
-@(test)
-fifth_mined_planet_triggers_immediate_invasion :: proc(t: ^testing.T) {
-	reset_world()
-	// Four mined planets: no mega pressure at all.
-	add_miner(MERCURY); add_miner(VENUS); add_miner(MARS); add_miner(JUPITER)
-	wave_started = true
-	enemy_wave_timer = 0
-	base := unit_count
-	update_enemy_waves(1.0)
-	testing.expect(t, unit_count == base, "no mega wave at 4 mined planets")
-	testing.expect(t, !mega_wave_armed, "invasion disarmed below 5 mined planets")
-	// The 5th mined planet: the 100-fighter invasion fires immediately, not
-	// after the 300s mega-wave interval.
-	add_miner(SATURN)
-	base = unit_count
-	update_enemy_waves(0.01)
-	testing.expect(t, unit_count - base == MEGA_WAVE_SIZE, "100 fighters invade the instant the 5th planet is mined")
-	testing.expect(t, mega_wave_armed, "transition arms the mega clock")
 }
 
 // ---- Enemy HQ inspector & recall ---------------------------------------
