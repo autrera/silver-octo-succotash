@@ -1470,7 +1470,19 @@ draw_world :: proc() {
 		u := &units[i]
 		if is_concealed(u) { continue }
 		if u.kind == .MINING {
-			draw_miner_drone(u.position, u.enemy)
+			heading: rl.Vector3
+			if u.state == .TRANSIT {
+				heading = sector_pos(u.target_planet) - u.position
+			} else if u.state == .RETURNING {
+				heading = planets[EARTH].position - u.position
+			} else {
+				center := planets[EARTH].position
+				if u.target_planet >= 0 && u.target_planet < SECTOR_COUNT {
+					center = sector_pos(u.target_planet)
+				}
+				heading = drone_heading(u.position, center)
+			}
+			draw_miner_drone(u.position, u.enemy, heading)
 		}
 		if !u.enemy && selected_units[i] { draw_selection_ring(u.position, 0.78) }
 	}
@@ -2100,28 +2112,146 @@ drone_heading :: proc(pos, center: rl.Vector3) -> rl.Vector3 {
 	return rl.Vector3Normalize(t)
 }
 
-// Mining drone: faceted hull sphere, canopy, twin cargo pods, drill boom
-// and a pulsing engine glow — no longer a bare cube.
-draw_miner_drone :: proc(position: rl.Vector3, enemy: bool) {
-	hull := rl.ORANGE
-	dark := rl.Color{150, 85, 20, 255}
-	canopy := NEON_CYAN
-	glow := rl.Color{255, 200, 90, 255}
-	if enemy {
-		hull = rl.Color{150, 45, 50, 255}
-		dark = rl.Color{85, 25, 30, 255}
-		canopy = rl.Color{255, 120, 120, 255}
-		glow = rl.Color{255, 80, 80, 255}
+// Mining drone: rugged industrial extraction rig inspired by the heavy mining
+// spider-walker reference (Greycat Cydnus):
+// - High-mounted spherical ore globe / cargo tank with exoskeleton cradle
+// - Heavy industrial amber/yellow chassis with dark cast-iron frame
+// - Operator cab with visor and bright golden work floodlight
+// - Articulated hydraulic outrigger stabilizer legs with foot clamps
+// - Downward heavy rotary excavation drill / cutter tool
+// - Twin rear hover/transit thrusters with pulsing engine flare
+draw_miner_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector3 = {1, 0, 0}) {
+	h := heading
+	if rl.Vector3Length(h) < 0.001 { h = {1, 0, 0} }
+	h = rl.Vector3Normalize(h)
+
+	// Orthonormal basis
+	world_up := rl.Vector3{0, 1, 0}
+	if math.abs(rl.Vector3DotProduct(h, world_up)) > 0.95 {
+		world_up = {0, 0, 1}
 	}
-	bob := math.sin(laser_anim_time * 3.0 + position.x * 2.1 + position.z * 1.7) * 0.06
-	pos := position + {0, bob, 0}
-	rl.DrawSphereEx(pos, 0.34, 8, 12, hull)
-	rl.DrawSphereEx(pos + {0, 0.22, 0}, 0.15, 6, 8, canopy)
-	rl.DrawCubeV(pos + {0.38, -0.05, 0}, {0.24, 0.24, 0.30}, dark)
-	rl.DrawCubeV(pos + {-0.38, -0.05, 0}, {0.24, 0.24, 0.30}, dark)
-	rl.DrawCylinderEx(pos + {0, -0.28, 0}, pos + {0, -0.75, 0}, 0.06, 0.02, 6, dark)
-	pulse := 0.5 + 0.5 * math.sin(laser_anim_time * 5.0 + position.z * 3.0)
-	rl.DrawSphereEx(pos + {0, 0.02, -0.38}, 0.08 + 0.05 * pulse, 6, 8, rl.Fade(glow, 0.85))
+	side := rl.Vector3Normalize(rl.Vector3CrossProduct(h, world_up))
+	up := rl.Vector3Normalize(rl.Vector3CrossProduct(side, h))
+
+	// Gentle ambient bobbing while working/hovering
+	bob := math.sin(laser_anim_time * 3.0 + position.x * 2.1 + position.z * 1.7) * 0.04
+	pos := position + up * bob
+
+	// Industrial Color Palette
+	hull_main:   rl.Color
+	hull_plate:  rl.Color
+	frame_dark:  rl.Color
+	metal_trim:  rl.Color
+	tank_mesh:   rl.Color
+	tank_wire:   rl.Color
+	light_glow:  rl.Color
+	light_core:  rl.Color
+
+	if enemy {
+		hull_main  = rl.Color{160, 42, 48, 255}
+		hull_plate = rl.Color{205, 68, 76, 255}
+		frame_dark = rl.Color{36, 18, 22, 255}
+		metal_trim = rl.Color{135, 120, 125, 255}
+		tank_mesh  = rl.Color{55, 34, 38, 255}
+		tank_wire  = rl.Color{85, 48, 54, 200}
+		light_glow = SCIFI_RED
+		light_core = rl.Color{255, 180, 140, 255}
+	} else {
+		hull_main  = rl.Color{230, 155, 22, 255}  // Rugged industrial Caterpillar amber-yellow
+		hull_plate = rl.Color{255, 190, 40, 255}  // Hazard yellow highlight
+		frame_dark = rl.Color{26, 28, 34, 255}    // Heavy cast-iron undercarriage
+		metal_trim = rl.Color{145, 158, 172, 255} // Hydraulic pistons & machined steel
+		tank_mesh  = rl.Color{42, 48, 58, 255}    // Dark mesh ore tank
+		tank_wire  = rl.Color{70, 82, 98, 200}    // Outer cage wireframe
+		light_glow = rl.Color{255, 215, 95, 255}  // Golden halogen worklight
+		light_core = rl.Color{255, 250, 210, 255} // Incandescent lamp core
+	}
+
+	// 1. Central Heavy Flatbed Chassis
+	deck_f := pos + h * 0.16 - up * 0.02
+	deck_b := pos - h * 0.22 - up * 0.02
+	rl.DrawCylinderEx(deck_b, deck_f, 0.22, 0.20, 6, frame_dark)
+	rl.DrawCylinderEx(deck_b + up * 0.04, deck_f + up * 0.04, 0.18, 0.16, 6, hull_main)
+
+	// 2. Giant Spherical Ore Tank (Mounted High at the Rear)
+	tank_pos := pos - h * 0.14 + up * 0.24
+	tank_r: f32 = 0.24
+	rl.DrawSphereEx(tank_pos, tank_r, 8, 10, tank_mesh)
+	rl.DrawSphereWires(tank_pos, tank_r + 0.005, 6, 8, tank_wire)
+
+	// Exoskeleton Cradle Arms hugging the tank
+	s_signs := [2]f32{-1.0, 1.0}
+	for s in s_signs {
+		cradle_base := pos - h * 0.18 + side * (s * 0.16) + up * 0.04
+		cradle_top  := tank_pos + side * (s * 0.18) + up * 0.04
+		rl.DrawCylinderEx(cradle_base, cradle_top, 0.032, 0.022, 4, hull_main)
+	}
+	// Rear support spine behind the sphere
+	rl.DrawCylinderEx(pos - h * 0.22 + up * 0.04, tank_pos - h * 0.16 + up * 0.04, 0.035, 0.025, 4, hull_plate)
+
+	// 3. Operator Cabin with Visor (Front-Left Deck)
+	cab_pos := pos + h * 0.14 + up * 0.08 - side * 0.07
+	rl.DrawCylinderEx(cab_pos - h * 0.08, cab_pos + h * 0.08, 0.09, 0.07, 5, hull_main)
+	// Glass visor window
+	rl.DrawCylinderEx(cab_pos + h * 0.05, cab_pos + h * 0.09, 0.06, 0.045, 5, SCIFI_CYAN)
+
+	// 4. Heavy Halogen Work Floodlight (Front-Right Deck)
+	light_pos := pos + h * 0.22 + up * 0.06 + side * 0.08
+	rl.DrawCylinderEx(light_pos - h * 0.04, light_pos, 0.042, 0.042, 6, frame_dark)
+	rl.DrawSphereEx(light_pos + h * 0.01, 0.032, 6, 6, light_glow)
+	rl.DrawSphereEx(light_pos + h * 0.02, 0.016, 4, 4, light_core)
+
+	// 5. Four Articulated Hydraulic Outrigger Legs (Spider Stabilizers)
+	leg_offsets := [4][2]f32{
+		{ 0.12,  0.18},  // Front-Right
+		{ 0.12, -0.18},  // Front-Left
+		{-0.16,  0.20},  // Rear-Right
+		{-0.16, -0.20},  // Rear-Left
+	}
+	leg_targets := [4][2]f32{
+		{ 0.26,  0.36},  // Front-Right Foot
+		{ 0.26, -0.36},  // Front-Left Foot
+		{-0.28,  0.38},  // Rear-Right Foot
+		{-0.28, -0.38},  // Rear-Left Foot
+	}
+
+	for l in 0..<4 {
+		hip  := pos + h * leg_offsets[l][0] + side * leg_offsets[l][1] - up * 0.02
+		foot := pos + h * leg_targets[l][0] + side * leg_targets[l][1] - up * 0.28
+		knee := (hip + foot) * 0.5 + up * 0.08 + side * (leg_targets[l][1] > 0 ? 0.06 : -0.06)
+
+		// Upper leg boom (hip -> knee)
+		rl.DrawCylinderEx(hip, knee, 0.038, 0.028, 4, hull_main)
+		// Knee knuckle joint
+		rl.DrawSphereEx(knee, 0.035, 4, 4, metal_trim)
+		// Lower leg strut (knee -> foot)
+		rl.DrawCylinderEx(knee, foot, 0.028, 0.020, 4, metal_trim)
+		// Foot excavator pad / clamp
+		rl.DrawCylinderEx(foot, foot - up * 0.04, 0.035, 0.030, 6, frame_dark)
+	}
+
+	// 6. Ventral Excavation Drill / Rotary Cutter Tool
+	drill_base := pos + h * 0.08 - up * 0.12
+	drill_tip  := pos + h * 0.22 - up * 0.40
+	// Rotary spindle
+	rl.DrawCylinderEx(drill_base, drill_base - up * 0.08, 0.05, 0.05, 6, frame_dark)
+	// Tapered drill bit
+	rl.DrawCylinderEx(drill_base - up * 0.06, drill_tip, 0.055, 0.012, 8, metal_trim)
+	// Active mining energy tip
+	pulse := 0.5 + 0.5 * math.sin(laser_anim_time * 6.0 + position.z * 3.0)
+	rl.DrawSphereEx(drill_tip, 0.025 + 0.015 * pulse, 4, 4, rl.Fade(light_glow, 0.85))
+
+	// 7. Twin Rear Hover / Transit Thrusters
+	for s in s_signs {
+		nozzle_f := pos - h * 0.22 + side * (s * 0.12) - up * 0.04
+		nozzle_b := nozzle_f - h * 0.07
+		rl.DrawCylinderEx(nozzle_f, nozzle_b, 0.05, 0.04, 6, frame_dark)
+		rl.DrawCylinderEx(nozzle_b, nozzle_b - h * 0.02, 0.04, 0.03, 6, metal_trim)
+
+		// Thruster plasma glow
+		flame_r := 0.035 + 0.02 * pulse
+		rl.DrawSphereEx(nozzle_b - h * 0.02, flame_r, 4, 6, rl.Fade(light_glow, 0.9))
+	}
 }
 
 // Combat drone: assault chassis inspired by the heavy attack drone reference:
