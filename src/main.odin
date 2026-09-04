@@ -2446,16 +2446,78 @@ init_planet_visuals :: proc() {
 					255,
 				}
 				if p >= JUPITER {
-					// Horizontal marble bands for gas giants.
-					for b in 0..<6 {
-						y0 := 8 + b * 20 + (p * 7 + b * 13) % 9
-						if y >= y0 && y < y0 + 7 {
-							if b % 2 == 0 {
-								col = rl.Color{u8(min(f32(col.r) * 1.15 + 10, 255)), u8(min(f32(col.g) * 1.15 + 10, 255)), u8(min(f32(col.b) * 1.15 + 10, 255)), 255}
-							} else {
-								col = rl.Color{u8(f32(col.r) * 0.78), u8(f32(col.g) * 0.78), u8(f32(col.b) * 0.78), 255}
+					// Planetary latitude cloud bands for gas giants.
+					// In par_shapes sphere, x is latitude (0 = North Pole, 127 = South Pole).
+					// Subtle perlin perturbation (l) adds atmospheric turbulence.
+					x_lat := f32(x) + (l - 0.5) * 5.0
+					band_freq: f32 = 0.38
+					band_phase: f32 = f32(p * 13)
+					if p == JUPITER { band_freq = 0.42 }
+					else if p == SATURN { band_freq = 0.32 }
+					else if p == URANUS { band_freq = 0.22 }
+					else if p == NEPTUNE { band_freq = 0.28 }
+
+					band_val := math.sin(x_lat * band_freq + band_phase) + 0.35 * math.sin(x_lat * band_freq * 2.1 + band_phase * 1.5)
+
+					contrast: f32 = 0.26
+					if p == JUPITER { contrast = 0.32 }
+					else if p == SATURN { contrast = 0.18 }
+					else if p == URANUS { contrast = 0.12 }
+					else if p == NEPTUNE { contrast = 0.22 }
+
+					if band_val > 0.1 {
+						boost := 1.0 + contrast * (band_val * 0.7)
+						col = rl.Color{
+							u8(min(f32(col.r) * boost + 8 * boost, 255)),
+							u8(min(f32(col.g) * boost + 8 * boost, 255)),
+							u8(min(f32(col.b) * boost + 8 * boost, 255)),
+							255,
+						}
+					} else {
+						darken := 1.0 + contrast * band_val
+						darken = max(darken, 0.65)
+						if p == JUPITER {
+							col = rl.Color{
+								u8(min(f32(col.r) * darken * 1.08, 255)),
+								u8(f32(col.g) * darken * 0.90),
+								u8(f32(col.b) * darken * 0.80),
+								255,
 							}
-							break
+						} else {
+							col = rl.Color{
+								u8(f32(col.r) * darken),
+								u8(f32(col.g) * darken),
+								u8(f32(col.b) * darken),
+								255,
+							}
+						}
+					}
+
+					if p == JUPITER {
+						spot_x: f32 = 82.0
+						spot_y: f32 = 55.0
+						dx := (f32(x) - spot_x) / 5.5
+						dy_val := f32(y) - spot_y
+						if dy_val > f32(PLANET_TEX_SIZE) / 2.0 { dy_val -= f32(PLANET_TEX_SIZE) }
+						if dy_val < -f32(PLANET_TEX_SIZE) / 2.0 { dy_val += f32(PLANET_TEX_SIZE) }
+						dy := dy_val / 11.0
+						dist_sq := dx * dx + dy * dy
+						if dist_sq <= 1.0 {
+							spot_col := rl.Color{205, 68, 48, 255}
+							col = mix_color(col, spot_col, 0.78 * (1.0 - dist_sq * 0.25))
+						}
+					} else if p == NEPTUNE {
+						spot_x: f32 = 75.0
+						spot_y: f32 = 60.0
+						dx := (f32(x) - spot_x) / 6.0
+						dy_val := f32(y) - spot_y
+						if dy_val > f32(PLANET_TEX_SIZE) / 2.0 { dy_val -= f32(PLANET_TEX_SIZE) }
+						if dy_val < -f32(PLANET_TEX_SIZE) / 2.0 { dy_val += f32(PLANET_TEX_SIZE) }
+						dy := dy_val / 12.0
+						dist_sq := dx * dx + dy * dy
+						if dist_sq <= 1.0 {
+							spot_col := rl.Color{35, 55, 140, 255}
+							col = mix_color(col, spot_col, 0.70)
 						}
 					}
 				} else {
@@ -2476,6 +2538,13 @@ init_planet_visuals :: proc() {
 								break
 							}
 						}
+						if x < 8 || x > 120 {
+							col = mix_color(col, rl.Color{240, 245, 255, 255}, 0.85)
+						}
+					} else if p == MARS {
+						if x < 6 || x > 122 {
+							col = mix_color(col, rl.Color{240, 230, 225, 255}, 0.80)
+						}
 					}
 				}
 				rl.ImageDrawPixel(&img, c.int(x), c.int(y), col)
@@ -2484,9 +2553,12 @@ init_planet_visuals :: proc() {
 		rl.UnloadImageColors(lum)
 		rl.UnloadImage(noise)
 		tex := rl.LoadTextureFromImage(img)
+		rl.SetTextureWrap(tex, .REPEAT)
+		rl.SetTextureFilter(tex, .BILINEAR)
 		rl.UnloadImage(img)
 		planet_textures[p] = tex
 		model := rl.LoadModelFromMesh(rl.GenMeshSphere(planets[p].radius, 32, 32))
+		model.transform = rl.MatrixRotateX(rl.DEG2RAD * -90)
 		rl.SetMaterialTexture(&model.materials[0], .ALBEDO, tex)
 		planet_models[p] = model
 	}
@@ -3200,18 +3272,18 @@ start_menu_rects :: proc(has_save: bool) -> (box, continue_rect, new_game_rect, 
 	w := f32(rl.GetScreenWidth())
 	h := f32(rl.GetScreenHeight())
 	box_w: f32 = 380.0
-	box_h: f32 = has_save ? 350.0 : 290.0
+	box_h: f32 = has_save ? 270.0 : 218.0
 	box = rl.Rectangle{(w - box_w) / 2, (h - box_h) / 2, box_w, box_h}
 
 	btn_w := box.width - 2 * DIALOG_PAD
 	if has_save {
-		continue_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 130, btn_w, DIALOG_BTN_H}
-		new_game_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 186, btn_w, DIALOG_BTN_H}
-		quit_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 242, btn_w, DIALOG_BTN_H}
+		continue_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 78, btn_w, DIALOG_BTN_H}
+		new_game_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 130, btn_w, DIALOG_BTN_H}
+		quit_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 182, btn_w, DIALOG_BTN_H}
 	} else {
 		continue_rect = rl.Rectangle{}
-		new_game_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 130, btn_w, DIALOG_BTN_H}
-		quit_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 186, btn_w, DIALOG_BTN_H}
+		new_game_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 78, btn_w, DIALOG_BTN_H}
+		quit_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 130, btn_w, DIALOG_BTN_H}
 	}
 	return
 }
@@ -3278,18 +3350,7 @@ draw_start_menu :: proc() {
 
 	title: cstring = "STARFALL COMMAND"
 	title_w := f32(rl.MeasureText(title, 32))
-	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 26), 32, NEON_CYAN)
-
-	sub: cstring = "SYSTEM RECLAMATION RTS"
-	sub_w := f32(rl.MeasureText(sub, 12))
-	rl.DrawText(sub, c.int(box.x + (box.width - sub_w) / 2), c.int(box.y + 64), 12, NEON_MUTED)
-
-	rl.DrawLine(c.int(box.x + DIALOG_PAD), c.int(box.y + 86), c.int(box.x + box.width - DIALOG_PAD), c.int(box.y + 86), NEON_DIM)
-
-	status_txt: cstring = has_save ? "SAVED CAMPAIGN DETECTED" : "NO SAVED GAME FOUND"
-	status_col := has_save ? NEON_BLUE : NEON_MUTED
-	status_w := f32(rl.MeasureText(status_txt, 12))
-	rl.DrawText(status_txt, c.int(box.x + (box.width - status_w) / 2), c.int(box.y + 98), 12, status_col)
+	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 24), 32, NEON_CYAN)
 
 	focused_rect: rl.Rectangle
 	if has_save {
@@ -3313,7 +3374,7 @@ draw_start_menu :: proc() {
 
 	footer: cstring = "UP/DOWN : SELECT    ENTER : CONFIRM"
 	footer_w := f32(rl.MeasureText(footer, 10))
-	rl.DrawText(footer, c.int(box.x + (box.width - footer_w) / 2), c.int(box.y + box.height - 24), 10, NEON_MUTED)
+	rl.DrawText(footer, c.int(box.x + (box.width - footer_w) / 2), c.int(box.y + box.height - 22), 10, NEON_MUTED)
 }
 
 // ---- Victory & restart --------------------------------------------------
