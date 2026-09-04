@@ -2680,9 +2680,9 @@ pause_key_pressed :: proc() -> bool {
 	return rl.IsKeyPressed(.P) || rl.IsKeyPressed(.F10)
 }
 
-// Keyboard focus for the pause menu: 0 = CONTINUE, 1 = SAVE GAME, 2 = QUIT. Reopening the
-// menu always resets focus to CONTINUE.
-PAUSE_MENU_OPTIONS :: 3
+// Keyboard focus for the pause menu: 0 = CONTINUE, 1 = SAVE GAME, 2 = LOAD GAME, 3 = NEW GAME, 4 = QUIT.
+// Reopening the menu always resets focus to CONTINUE.
+PAUSE_MENU_OPTIONS :: 5
 pause_menu_selection := 0
 
 toggle_pause :: proc() {
@@ -2708,6 +2708,13 @@ activate_pause_selection :: proc() {
 			save_feedback_timer = 2.0
 		}
 	case 2:
+		if load_game() {
+			game_paused = false
+		}
+	case 3:
+		restart_game()
+		game_paused = false
+	case 4:
 		quit_requested = true
 	}
 }
@@ -2766,18 +2773,19 @@ update_intel :: proc() {
 	}
 }
 
-pause_menu_rects :: proc() -> (box, continue_rect, save_rect, quit_rect: rl.Rectangle) {
+pause_menu_rects :: proc() -> (box, continue_rect, save_rect, load_rect, new_game_rect, quit_rect: rl.Rectangle) {
 	w := f32(rl.GetScreenWidth())
 	h := f32(rl.GetScreenHeight())
 	title_w := f32(rl.MeasureText("PAUSED", 36))
-	// Dialog fits the title with a 280px minimum so the buttons keep a
-	// comfortable width; balanced 28px padding, nothing overflows.
-	box_w := max(title_w, f32(280)) + 56
-	box_h: f32 = 296.0
+	box_w := max(title_w, f32(280)) + 60
+	box_h: f32 = 352.0
 	box = rl.Rectangle{(w - box_w) / 2, (h - box_h) / 2, box_w, box_h}
-	continue_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 100, box.width - 2 * DIALOG_PAD, DIALOG_BTN_H}
-	save_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 156, box.width - 2 * DIALOG_PAD, DIALOG_BTN_H}
-	quit_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 212, box.width - 2 * DIALOG_PAD, DIALOG_BTN_H}
+	btn_w := box.width - 2 * DIALOG_PAD
+	continue_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 82, btn_w, DIALOG_BTN_H}
+	save_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 134, btn_w, DIALOG_BTN_H}
+	load_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 186, btn_w, DIALOG_BTN_H}
+	new_game_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 238, btn_w, DIALOG_BTN_H}
+	quit_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 290, btn_w, DIALOG_BTN_H}
 	return
 }
 
@@ -2787,10 +2795,29 @@ update_pause_menu :: proc(dt: f32 = 0) {
 	}
 	if rl.IsKeyPressed(.UP) { advance_pause_selection(-1) }
 	if rl.IsKeyPressed(.DOWN) { advance_pause_selection(1) }
+	if rl.IsKeyPressed(.C) {
+		game_paused = false
+		return
+	}
 	if rl.IsKeyPressed(.S) {
 		if save_game() {
 			save_feedback_timer = 2.0
 		}
+		return
+	}
+	if rl.IsKeyPressed(.L) {
+		if load_game() {
+			game_paused = false
+		}
+		return
+	}
+	if rl.IsKeyPressed(.N) {
+		restart_game()
+		game_paused = false
+		return
+	}
+	if rl.IsKeyPressed(.Q) {
+		quit_requested = true
 		return
 	}
 	if rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) {
@@ -2798,7 +2825,7 @@ update_pause_menu :: proc(dt: f32 = 0) {
 		return
 	}
 	if !rl.IsMouseButtonPressed(.LEFT) { return }
-	_, continue_rect, save_rect, quit_rect := pause_menu_rects()
+	_, continue_rect, save_rect, load_rect, new_game_rect, quit_rect := pause_menu_rects()
 	mouse := rl.GetMousePosition()
 	if rl.CheckCollisionPointRec(mouse, continue_rect) {
 		game_paused = false
@@ -2806,6 +2833,13 @@ update_pause_menu :: proc(dt: f32 = 0) {
 		if save_game() {
 			save_feedback_timer = 2.0
 		}
+	} else if rl.CheckCollisionPointRec(mouse, load_rect) {
+		if load_game() {
+			game_paused = false
+		}
+	} else if rl.CheckCollisionPointRec(mouse, new_game_rect) {
+		restart_game()
+		game_paused = false
 	} else if rl.CheckCollisionPointRec(mouse, quit_rect) {
 		quit_requested = true
 	}
@@ -2813,28 +2847,38 @@ update_pause_menu :: proc(dt: f32 = 0) {
 
 draw_pause_menu :: proc() {
 	rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), rl.Color{0, 0, 0, 180})
-	box, continue_rect, save_rect, quit_rect := pause_menu_rects()
+	box, continue_rect, save_rect, load_rect, new_game_rect, quit_rect := pause_menu_rects()
 	rl.DrawRectangleRec(box, NEON_PANEL_SOLID)
 	rl.DrawRectangleLinesEx(box, 1, NEON_CYAN)
 	rl.DrawRectangleLinesEx({box.x - 3, box.y - 3, box.width + 6, box.height + 6}, 1, rl.Color{0, 225, 255, 40})
-	// Title centered under a 36px heading with balanced vertical padding
-	// between all elements, keeping every line inside the box.
+
 	title: cstring = "PAUSED"
 	title_w := f32(rl.MeasureText(title, 36))
-	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 26), 36, NEON_CYAN)
+	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 24), 36, NEON_CYAN)
 	if save_feedback_timer > 0 {
 		saved_txt: cstring = "GAME SAVED TO DISK"
 		st_w := f32(rl.MeasureText(saved_txt, 14))
-		rl.DrawText(saved_txt, c.int(box.x + (box.width - st_w) / 2), c.int(box.y + 70), 14, NEON_CYAN)
+		rl.DrawText(saved_txt, c.int(box.x + (box.width - st_w) / 2), c.int(box.y + 64), 14, NEON_CYAN)
 	}
-	draw_button(continue_rect, "CONTINUE", NEON_PANEL_SOLID)
+
+	has_save := save_game_exists()
+	draw_button(continue_rect, "[C] CONTINUE", NEON_PANEL_SOLID)
 	draw_button(save_rect, "[S] SAVE GAME", NEON_PANEL_SOLID)
-	draw_button(quit_rect, "QUIT", NEON_PANEL_SOLID)
+	if has_save {
+		draw_button(load_rect, "[L] LOAD GAME", NEON_PANEL_SOLID)
+	} else {
+		draw_button(load_rect, "[L] LOAD GAME (NO SAVE)", rl.Color{16, 24, 38, 255})
+	}
+	draw_button(new_game_rect, "[N] NEW GAME", NEON_PANEL_SOLID)
+	draw_button(quit_rect, "[Q] QUIT", NEON_PANEL_SOLID)
+
 	focused_rect: rl.Rectangle
 	switch pause_menu_selection {
 	case 0: focused_rect = continue_rect
 	case 1: focused_rect = save_rect
-	case 2: focused_rect = quit_rect
+	case 2: focused_rect = load_rect
+	case 3: focused_rect = new_game_rect
+	case 4: focused_rect = quit_rect
 	}
 	draw_pause_focus(focused_rect)
 }

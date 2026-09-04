@@ -716,17 +716,25 @@ paused_game_skips_simulation_step :: proc(t: ^testing.T) {
 pause_menu_keyboard_navigation_wraps :: proc(t: ^testing.T) {
 	// Arrow keys read false headless (no key events), so the navigation
 	// predicate advance_pause_selection is exercised directly.
-	// 3 options: 0 = CONTINUE, 1 = SAVE GAME, 2 = QUIT.
+	// 5 options: 0 = CONTINUE, 1 = SAVE GAME, 2 = LOAD GAME, 3 = NEW GAME, 4 = QUIT.
 	game_paused = true
 	pause_menu_selection = 0
 	advance_pause_selection(1)
 	testing.expect(t, pause_menu_selection == 1, "DOWN moves focus to SAVE GAME")
 	advance_pause_selection(1)
-	testing.expect(t, pause_menu_selection == 2, "DOWN moves focus to QUIT")
+	testing.expect(t, pause_menu_selection == 2, "DOWN moves focus to LOAD GAME")
+	advance_pause_selection(1)
+	testing.expect(t, pause_menu_selection == 3, "DOWN moves focus to NEW GAME")
+	advance_pause_selection(1)
+	testing.expect(t, pause_menu_selection == 4, "DOWN moves focus to QUIT")
 	advance_pause_selection(1)
 	testing.expect(t, pause_menu_selection == 0, "DOWN wraps back to CONTINUE")
 	advance_pause_selection(-1)
-	testing.expect(t, pause_menu_selection == 2, "UP wraps to QUIT")
+	testing.expect(t, pause_menu_selection == 4, "UP wraps to QUIT")
+	advance_pause_selection(-1)
+	testing.expect(t, pause_menu_selection == 3, "UP returns to NEW GAME")
+	advance_pause_selection(-1)
+	testing.expect(t, pause_menu_selection == 2, "UP returns to LOAD GAME")
 	advance_pause_selection(-1)
 	testing.expect(t, pause_menu_selection == 1, "UP returns to SAVE GAME")
 	advance_pause_selection(-1)
@@ -787,6 +795,19 @@ pause_menu_enter_activates_focused_option :: proc(t: ^testing.T) {
 
 	game_paused = true
 	pause_menu_selection = 2
+	activate_pause_selection()
+	testing.expect(t, !game_paused, "ENTER on LOAD GAME resumes upon loading")
+	testing.expect(t, !quit_requested, "ENTER on LOAD GAME never quits")
+
+	game_paused = true
+	pause_menu_selection = 3
+	activate_pause_selection()
+	testing.expect(t, !game_paused, "ENTER on NEW GAME resumes after restart")
+	testing.expect(t, !quit_requested, "ENTER on NEW GAME never quits")
+	testing.expect(t, unit_count > 0, "NEW GAME initialized units")
+
+	game_paused = true
+	pause_menu_selection = 4
 	activate_pause_selection()
 	testing.expect(t, game_paused, "ENTER on QUIT leaves the pause flag alone")
 	testing.expect(t, quit_requested, "ENTER on QUIT requests exit")
