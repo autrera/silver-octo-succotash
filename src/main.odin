@@ -2,6 +2,11 @@ package main
 
 import "core:math"
 import "core:c"
+import "core:os"
+import "core:fmt"
+import "core:strings"
+import "core:strconv"
+import "core:path/filepath"
 import rl "vendor:raylib"
 
 SCREEN_PANEL_WIDTH :: 330
@@ -100,7 +105,6 @@ Planet :: struct {
 	position: rl.Vector3,
 	radius: f32,
 	color: rl.Color,
-	minerals: int,
 }
 
 Production :: struct {
@@ -217,14 +221,14 @@ Unit :: struct {
 }
 
 planets := [PLANET_COUNT]Planet{
-	{name = "MERCURY", position = {-30, 2, 8}, radius = 1.6, color = rl.Color{150, 148, 145, 255}, minerals = 120},
-	{name = "VENUS", position = {-15, 0.8, -4}, radius = 2.6, color = rl.Color{230, 200, 130, 255}, minerals = 100},
-	{name = "EARTH", position = {0, 0, 0}, radius = 3.0, color = rl.Color{45, 125, 220, 255}, minerals = 80},
-	{name = "MARS", position = {22, 1, 6}, radius = 2.2, color = rl.Color{215, 80, 55, 255}, minerals = 150},
-	{name = "JUPITER", position = {50, 2.5, -12}, radius = 4.2, color = rl.Color{215, 175, 110, 255}, minerals = 300},
-	{name = "SATURN", position = {-25, 3, 18}, radius = 3.8, color = rl.Color{225, 205, 155, 255}, minerals = 350},
-	{name = "URANUS", position = {5, 4, -20}, radius = 3.0, color = rl.Color{170, 225, 230, 255}, minerals = 400},
-	{name = "NEPTUNE", position = {35, 5, 24}, radius = 2.9, color = rl.Color{80, 110, 220, 255}, minerals = 450},
+	{name = "MERCURY", position = {-30, 2, 8}, radius = 1.6, color = rl.Color{150, 148, 145, 255}},
+	{name = "VENUS", position = {-15, 0.8, -4}, radius = 2.6, color = rl.Color{230, 200, 130, 255}},
+	{name = "EARTH", position = {0, 0, 0}, radius = 3.0, color = rl.Color{45, 125, 220, 255}},
+	{name = "MARS", position = {22, 1, 6}, radius = 2.2, color = rl.Color{215, 80, 55, 255}},
+	{name = "JUPITER", position = {50, 2.5, -12}, radius = 4.2, color = rl.Color{215, 175, 110, 255}},
+	{name = "SATURN", position = {-25, 3, 18}, radius = 3.8, color = rl.Color{225, 205, 155, 255}},
+	{name = "URANUS", position = {5, 4, -20}, radius = 3.0, color = rl.Color{170, 225, 230, 255}},
+	{name = "NEPTUNE", position = {35, 5, 24}, radius = 2.9, color = rl.Color{80, 110, 220, 255}},
 }
 
 // ---- Planet visuals -----------------------------------------------------
@@ -297,6 +301,12 @@ intel_recorded: [PLANET_COUNT]bool
 // Game-clock accumulator driving laser bolt flight; frozen while paused.
 laser_anim_time: f32
 
+// Start game menu & save notification state
+in_start_menu := true
+start_menu_selection := 0
+hud_save_notification_timer: f32
+save_feedback_timer: f32
+
 main :: proc() {
 	rl.SetConfigFlags({.VSYNC_HINT, .WINDOW_HIGHDPI, .WINDOW_RESIZABLE})
 	rl.InitWindow(1280, 760, "STARFALL COMMAND // Planetary RTS Prototype")
@@ -314,17 +324,21 @@ main :: proc() {
 		fovy = 45,
 		projection = .PERSPECTIVE,
 	}
+	in_start_menu = true
+	start_menu_selection = 0
 
 	for !rl.WindowShouldClose() && !quit_requested {
 		dt := rl.GetFrameTime()
-		if victory {
+		if in_start_menu {
+			update_start_menu(dt)
+		} else if victory {
 			update_victory_overlay()
 		} else if defeated {
 			update_game_over_overlay()
 		} else {
 			if pause_key_pressed() { toggle_pause() }
 			if game_paused {
-				update_pause_menu()
+				update_pause_menu(dt)
 			} else {
 				step_simulation(dt)
 			}
@@ -333,12 +347,16 @@ main :: proc() {
 		rl.BeginDrawing()
 		rl.ClearBackground(rl.Color{8, 12, 24, 255})
 		draw_world()
-		draw_inspector()
-		if victory {
-			draw_victory_overlay()
-		} else if defeated {
-			draw_game_over_overlay()
-		} else if game_paused { draw_pause_menu() }
+		if in_start_menu {
+			draw_start_menu()
+		} else {
+			draw_inspector()
+			if victory {
+				draw_victory_overlay()
+			} else if defeated {
+				draw_game_over_overlay()
+			} else if game_paused { draw_pause_menu() }
+		}
 		rl.EndDrawing()
 	}
 }
@@ -396,6 +414,9 @@ reset_world :: proc() {
 	victory = false
 	defeated = false
 	game_paused = false
+	in_start_menu = false
+	hud_save_notification_timer = 0
+	save_feedback_timer = 0
 	rl.SetRandomSeed(7)
 }
 
@@ -480,6 +501,12 @@ update_input :: proc() {
 	}
 	// Debug: force the next enemy wave immediately (verify combat without waiting 3 minutes).
 	if rl.IsKeyPressed(.N) { spawn_enemy_wave() }
+	// F5 quick-saves the game.
+	if rl.IsKeyPressed(.F5) {
+		if save_game() {
+			hud_save_notification_timer = 2.0
+		}
+	}
 	mouse := rl.GetMousePosition()
 	panel_x := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
 	if rl.IsMouseButtonPressed(.LEFT) {
@@ -1298,7 +1325,6 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 	case .MINING:
 		u.progress += dt
 		if u.progress >= MINING_DURATION {
-			planets[u.target_planet].minerals = max_int(planets[u.target_planet].minerals - mining_rate(u.target_planet), 0)
 			u.progress = 0
 			u.state = .RETURNING
 		}
@@ -1472,6 +1498,9 @@ draw_world :: proc() {
 		if u.state == .TRANSIT && !is_concealed(u) { rl.DrawLine3D(u.position, sector_pos(u.target_planet), rl.Color{0, 225, 255, 90}) }
 	}
 	rl.EndMode3D()
+	if in_start_menu {
+		return
+	}
 
 	// Overlay labels are anchored to the 3D positions and stay readable while panning.
 	for p in 0..<PLANET_COUNT {
@@ -1493,7 +1522,7 @@ draw_world :: proc() {
 		if enemy_hq_destroyed() { hq_label = "ENEMY HQ (DESTROYED)" }
 		rl.DrawText(hq_label, c.int(hq_screen.x - 30), c.int(hq_screen.y - 26), 13, rl.Color{235, 120, 120, 255})
 	}
-	status := rl.TextFormat("FPS %d   RIGHT-CLICK: ORDER   SHIFT+#: SAVE SQUAD   #: RECALL   P: PAUSE   ESC: CANCEL   N: WAVE", rl.GetFPS())
+	status := rl.TextFormat("FPS %d   RIGHT-CLICK: ORDER   SHIFT+#/#: SQUADS   P: PAUSE   F5: SAVE   ESC: CANCEL   N: WAVE", rl.GetFPS())
 	// Top bar: minerals plus the empire-wide MPS so income is visible without
 	// opening Earth's inspector.
 	min_text := rl.TextFormat("MINERALS: %d", minerals)
@@ -1529,6 +1558,10 @@ draw_world :: proc() {
 	rl.DrawLine(HUD_PAD + 1, c.int(dock_y + 1), HUD_PAD + c.int(dock_w) - 1, c.int(dock_y + 1), rl.Color{255, 255, 255, 40})
 	rl.DrawRectangleLinesEx({HUD_PAD, dock_y, dock_w, BOTTOM_DOCK_H}, 1, NEON_DIM)
 	rl.DrawText(status, HUD_TEXT_X, c.int(dock_y + 12), 12, NEON_MUTED)
+	if hud_save_notification_timer > 0 {
+		saved_lbl: cstring = "[GAME SAVED]"
+		rl.DrawText(saved_lbl, HUD_PAD + c.int(dock_w) - 340, c.int(dock_y + 12), 12, NEON_CYAN)
+	}
 	draw_squad_hud()
 	zoom_text := rl.TextFormat("ZOOM %d%% // ALTITUDE %.0f", zoom_percent(), camera.position.y)
 	zoom_w := f32(rl.MeasureText(zoom_text, 12))
@@ -2575,14 +2608,17 @@ pause_key_pressed :: proc() -> bool {
 	return rl.IsKeyPressed(.P) || rl.IsKeyPressed(.F10)
 }
 
-// Keyboard focus for the pause menu: 0 = CONTINUE, 1 = QUIT. Reopening the
+// Keyboard focus for the pause menu: 0 = CONTINUE, 1 = SAVE GAME, 2 = QUIT. Reopening the
 // menu always resets focus to CONTINUE.
-PAUSE_MENU_OPTIONS :: 2
+PAUSE_MENU_OPTIONS :: 3
 pause_menu_selection := 0
 
 toggle_pause :: proc() {
 	game_paused = !game_paused
-	if game_paused { pause_menu_selection = 0 }
+	if game_paused {
+		pause_menu_selection = 0
+		save_feedback_timer = 0
+	}
 }
 
 // Arrow-key focus movement: dir -1 = up, +1 = down, wrapping around.
@@ -2592,7 +2628,16 @@ advance_pause_selection :: proc(dir: int) {
 
 // ENTER/KP_ENTER on the focused option — the same actions the mouse path takes.
 activate_pause_selection :: proc() {
-	if pause_menu_selection == 0 { game_paused = false } else { quit_requested = true }
+	switch pause_menu_selection {
+	case 0:
+		game_paused = false
+	case 1:
+		if save_game() {
+			save_feedback_timer = 2.0
+		}
+	case 2:
+		quit_requested = true
+	}
 }
 
 // Small diamond glyph for the resource dock: four thin lines (the default
@@ -2607,6 +2652,9 @@ draw_diamond :: proc(cx, cy, r: f32, color: rl.Color) {
 // One unpaused simulation tick. The main loop skips this entirely while the
 // pause menu is open, freezing camera, input, production and units.
 step_simulation :: proc(dt: f32) {
+	if hud_save_notification_timer > 0 {
+		hud_save_notification_timer -= dt
+	}
 	update_camera(dt)
 	update_input()
 	update_production(dt)
@@ -2646,32 +2694,46 @@ update_intel :: proc() {
 	}
 }
 
-pause_menu_rects :: proc() -> (box, continue_rect, quit_rect: rl.Rectangle) {
+pause_menu_rects :: proc() -> (box, continue_rect, save_rect, quit_rect: rl.Rectangle) {
 	w := f32(rl.GetScreenWidth())
 	h := f32(rl.GetScreenHeight())
 	title_w := f32(rl.MeasureText("PAUSED", 36))
 	// Dialog fits the title with a 280px minimum so the buttons keep a
 	// comfortable width; balanced 28px padding, nothing overflows.
 	box_w := max(title_w, f32(280)) + 56
-	box_h: f32 = 240.0
+	box_h: f32 = 296.0
 	box = rl.Rectangle{(w - box_w) / 2, (h - box_h) / 2, box_w, box_h}
-	continue_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 110, box.width - 2 * DIALOG_PAD, DIALOG_BTN_H}
-	quit_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 166, box.width - 2 * DIALOG_PAD, DIALOG_BTN_H}
+	continue_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 100, box.width - 2 * DIALOG_PAD, DIALOG_BTN_H}
+	save_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 156, box.width - 2 * DIALOG_PAD, DIALOG_BTN_H}
+	quit_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 212, box.width - 2 * DIALOG_PAD, DIALOG_BTN_H}
 	return
 }
 
-update_pause_menu :: proc() {
+update_pause_menu :: proc(dt: f32 = 0) {
+	if save_feedback_timer > 0 {
+		save_feedback_timer -= dt
+	}
 	if rl.IsKeyPressed(.UP) { advance_pause_selection(-1) }
 	if rl.IsKeyPressed(.DOWN) { advance_pause_selection(1) }
+	if rl.IsKeyPressed(.S) {
+		if save_game() {
+			save_feedback_timer = 2.0
+		}
+		return
+	}
 	if rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) {
 		activate_pause_selection()
 		return
 	}
 	if !rl.IsMouseButtonPressed(.LEFT) { return }
-	_, continue_rect, quit_rect := pause_menu_rects()
+	_, continue_rect, save_rect, quit_rect := pause_menu_rects()
 	mouse := rl.GetMousePosition()
 	if rl.CheckCollisionPointRec(mouse, continue_rect) {
 		game_paused = false
+	} else if rl.CheckCollisionPointRec(mouse, save_rect) {
+		if save_game() {
+			save_feedback_timer = 2.0
+		}
 	} else if rl.CheckCollisionPointRec(mouse, quit_rect) {
 		quit_requested = true
 	}
@@ -2679,7 +2741,7 @@ update_pause_menu :: proc() {
 
 draw_pause_menu :: proc() {
 	rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), rl.Color{0, 0, 0, 180})
-	box, continue_rect, quit_rect := pause_menu_rects()
+	box, continue_rect, save_rect, quit_rect := pause_menu_rects()
 	rl.DrawRectangleRec(box, NEON_PANEL_SOLID)
 	rl.DrawRectangleLinesEx(box, 1, NEON_CYAN)
 	rl.DrawRectangleLinesEx({box.x - 3, box.y - 3, box.width + 6, box.height + 6}, 1, rl.Color{0, 225, 255, 40})
@@ -2687,10 +2749,22 @@ draw_pause_menu :: proc() {
 	// between all elements, keeping every line inside the box.
 	title: cstring = "PAUSED"
 	title_w := f32(rl.MeasureText(title, 36))
-	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 30), 36, NEON_CYAN)
+	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 26), 36, NEON_CYAN)
+	if save_feedback_timer > 0 {
+		saved_txt: cstring = "GAME SAVED TO DISK"
+		st_w := f32(rl.MeasureText(saved_txt, 14))
+		rl.DrawText(saved_txt, c.int(box.x + (box.width - st_w) / 2), c.int(box.y + 70), 14, NEON_CYAN)
+	}
 	draw_button(continue_rect, "CONTINUE", NEON_PANEL_SOLID)
+	draw_button(save_rect, "[S] SAVE GAME", NEON_PANEL_SOLID)
 	draw_button(quit_rect, "QUIT", NEON_PANEL_SOLID)
-	draw_pause_focus(pause_menu_selection == 0 ? continue_rect : quit_rect)
+	focused_rect: rl.Rectangle
+	switch pause_menu_selection {
+	case 0: focused_rect = continue_rect
+	case 1: focused_rect = save_rect
+	case 2: focused_rect = quit_rect
+	}
+	draw_pause_focus(focused_rect)
 }
 
 // Keyboard focus highlight: a neon ring just outside the focused button —
@@ -2698,6 +2772,548 @@ draw_pause_menu :: proc() {
 draw_pause_focus :: proc(rect: rl.Rectangle) {
 	ring := rl.Rectangle{rect.x - 4, rect.y - 4, rect.width + 8, rect.height + 8}
 	rl.DrawRectangleLinesEx(ring, 1, NEON_CYAN)
+}
+
+// ---- Save & Load system -------------------------------------------------
+
+save_game_path :: proc(custom_path: string = "", allocator := context.temp_allocator) -> string {
+	if len(custom_path) > 0 {
+		return custom_path
+	}
+	exe_dir, err := os.get_executable_directory(allocator)
+	if err == nil && len(exe_dir) > 0 {
+		p, _ := filepath.join({exe_dir, "savegame.txt"}, allocator)
+		return p
+	}
+	return "savegame.txt"
+}
+
+save_game_exists :: proc(custom_path: string = "") -> bool {
+	p := save_game_path(custom_path)
+	if os.exists(p) {
+		return true
+	}
+	if len(custom_path) == 0 && os.exists("savegame.txt") {
+		return true
+	}
+	return false
+}
+
+unit_type_to_string :: proc(k: Unit_Type) -> string {
+	switch k {
+	case .MINING: return "MINING"
+	case .COMBAT: return "COMBAT"
+	}
+	return "MINING"
+}
+
+unit_state_to_string :: proc(s: Unit_State) -> string {
+	switch s {
+	case .IDLE: return "IDLE"
+	case .TRANSIT: return "TRANSIT"
+	case .MINING: return "MINING"
+	case .RETURNING: return "RETURNING"
+	case .DEPOSITING: return "DEPOSITING"
+	case .GUARDING: return "GUARDING"
+	case .CONSTRUCTING: return "CONSTRUCTING"
+	}
+	return "IDLE"
+}
+
+parse_unit_type :: proc(s: string) -> (Unit_Type, bool) {
+	switch s {
+	case "MINING": return .MINING, true
+	case "COMBAT": return .COMBAT, true
+	case: return .MINING, false
+	}
+}
+
+parse_unit_state :: proc(s: string) -> (Unit_State, bool) {
+	switch s {
+	case "IDLE": return .IDLE, true
+	case "TRANSIT": return .TRANSIT, true
+	case "MINING": return .MINING, true
+	case "RETURNING": return .RETURNING, true
+	case "DEPOSITING": return .DEPOSITING, true
+	case "GUARDING": return .GUARDING, true
+	case "CONSTRUCTING": return .CONSTRUCTING, true
+	case: return .IDLE, false
+	}
+}
+
+serialize_game_state :: proc(allocator := context.temp_allocator) -> string {
+	b: strings.Builder
+	strings.builder_init(&b, allocator)
+
+	fmt.sbprintf(&b, "# STARFALL COMMAND SAVE\n")
+	fmt.sbprintf(&b, "VERSION 1\n")
+	fmt.sbprintf(&b, "MINERALS %d\n", minerals)
+	fmt.sbprintf(&b, "DRONE_SPEED_LEVEL %d\n", drone_speed_level)
+	fmt.sbprintf(&b, "EARTH_RALLY %d\n", earth_rally)
+	fmt.sbprintf(&b, "SELECTED_PLANET %d\n", selected_planet)
+	fmt.sbprintf(&b, "BASE_BUILD %d %.4f\n", base_build_planet, base_build_progress)
+	fmt.sbprintf(&b, "WAVES %.4f %d\n", enemy_wave_timer, wave_started ? 1 : 0)
+	fmt.sbprintf(&b, "CAMERA_TARGET %.4f %.4f %.4f\n", camera_target.x, camera_target.y, camera_target.z)
+	fmt.sbprintf(&b, "CAMERA_POS %.4f %.4f %.4f\n", camera.position.x, camera.position.y, camera.position.z)
+
+	for p in 0..<PLANET_COUNT {
+		fmt.sbprintf(&b, "BASE_COUNT %d %d\n", p, base_counts[p])
+		for l in 0..<MAX_BASES {
+			prod := production[p][l]
+			if prod.active || prod.progress > 0 {
+				fmt.sbprintf(&b, "PROD %d %d %s %.4f %d\n",
+					p, l,
+					unit_type_to_string(prod.kind),
+					prod.progress,
+					prod.active ? 1 : 0)
+			}
+		}
+		for slot in 0..<pending_count[p] {
+			fmt.sbprintf(&b, "PENDING %d %d %s\n",
+				p, slot,
+				unit_type_to_string(pending[p][slot]))
+		}
+	}
+
+	for s in 0..<SECTOR_COUNT {
+		fmt.sbprintf(&b, "SECTOR %d %d %.4f %.4f %.4f\n",
+			s,
+			enemy_base_hp[s],
+			combat_timer[s],
+			miner_timer[s],
+			base_timer[s])
+	}
+
+	for p in 0..<PLANET_COUNT {
+		intel := last_known_intel[p]
+		if intel_recorded[p] {
+			fmt.sbprintf(&b, "INTEL %d %d %d %d %d %d\n",
+				p,
+				1,
+				intel.fighters,
+				intel.miners,
+				intel.base_hp,
+				intel.unit_count)
+			for i in 0..<intel.unit_count {
+				u := intel.units[i]
+				fmt.sbprintf(&b, "INTEL_UNIT %d %s %s %d\n",
+					p,
+					unit_type_to_string(u.kind),
+					unit_state_to_string(u.state),
+					u.enemy ? 1 : 0)
+			}
+		}
+	}
+
+	fmt.sbprintf(&b, "UNITS %d\n", unit_count)
+	for i in 0..<unit_count {
+		u := units[i]
+		fmt.sbprintf(&b, "UNIT %s %s %.4f %.4f %.4f %d %d %d %d %.4f %.4f %d\n",
+			unit_type_to_string(u.kind),
+			unit_state_to_string(u.state),
+			u.position.x, u.position.y, u.position.z,
+			u.home_planet, u.affiliation, u.target_planet,
+			u.enemy ? 1 : 0,
+			u.progress, u.orbit_angle, u.squad)
+	}
+
+	return strings.to_string(b)
+}
+
+deserialize_game_state :: proc(content: string) -> bool {
+	lines := strings.split_lines(content, context.temp_allocator)
+	if len(lines) == 0 {
+		return false
+	}
+
+	reset_world()
+	base_counts = {}
+	pending_count = {}
+
+	for line in lines {
+		trimmed := strings.trim_space(line)
+		if len(trimmed) == 0 || trimmed[0] == '#' {
+			continue
+		}
+		fields := strings.fields(trimmed, context.temp_allocator)
+		if len(fields) < 2 {
+			continue
+		}
+
+		switch fields[0] {
+		case "MINERALS":
+			if val, ok := strconv.parse_int(fields[1]); ok {
+				minerals = val
+			}
+		case "DRONE_SPEED_LEVEL":
+			if val, ok := strconv.parse_int(fields[1]); ok {
+				drone_speed_level = val
+			}
+		case "EARTH_RALLY":
+			if val, ok := strconv.parse_int(fields[1]); ok {
+				earth_rally = val
+			}
+		case "SELECTED_PLANET":
+			if val, ok := strconv.parse_int(fields[1]); ok {
+				selected_planet = val
+			}
+		case "BASE_BUILD":
+			if len(fields) >= 3 {
+				p, _ := strconv.parse_int(fields[1])
+				prog, _ := strconv.parse_f32(fields[2])
+				base_build_planet = p
+				base_build_progress = prog
+			}
+		case "WAVES":
+			if len(fields) >= 3 {
+				tm, _ := strconv.parse_f32(fields[1])
+				st := fields[2] == "1"
+				enemy_wave_timer = tm
+				wave_started = st
+			}
+		case "CAMERA_TARGET":
+			if len(fields) >= 4 {
+				x, _ := strconv.parse_f32(fields[1])
+				y, _ := strconv.parse_f32(fields[2])
+				z, _ := strconv.parse_f32(fields[3])
+				camera_target = {x, y, z}
+				camera.target = camera_target
+			}
+		case "CAMERA_POS":
+			if len(fields) >= 4 {
+				x, _ := strconv.parse_f32(fields[1])
+				y, _ := strconv.parse_f32(fields[2])
+				z, _ := strconv.parse_f32(fields[3])
+				camera.position = {x, y, z}
+			}
+		case "PLANET_MINERALS":
+			// Ignored: planets have infinite minerals in Starfall Command.
+		case "BASE_COUNT":
+			if len(fields) >= 3 {
+				p, _ := strconv.parse_int(fields[1])
+				c, _ := strconv.parse_int(fields[2])
+				if p >= 0 && p < PLANET_COUNT {
+					base_counts[p] = c
+				}
+			}
+		case "PROD":
+			if len(fields) >= 6 {
+				p, _ := strconv.parse_int(fields[1])
+				l, _ := strconv.parse_int(fields[2])
+				kind, _ := parse_unit_type(fields[3])
+				prog, _ := strconv.parse_f32(fields[4])
+				act := fields[5] == "1"
+				if p >= 0 && p < PLANET_COUNT && l >= 0 && l < MAX_BASES {
+					production[p][l] = Production{kind = kind, progress = prog, active = act}
+				}
+			}
+		case "PENDING":
+			if len(fields) >= 4 {
+				p, _ := strconv.parse_int(fields[1])
+				slot, _ := strconv.parse_int(fields[2])
+				kind, _ := parse_unit_type(fields[3])
+				if p >= 0 && p < PLANET_COUNT && slot >= 0 && slot < MAX_PENDING {
+					pending[p][slot] = kind
+					if slot + 1 > pending_count[p] {
+						pending_count[p] = slot + 1
+					}
+				}
+			}
+		case "SECTOR":
+			if len(fields) >= 6 {
+				s, _ := strconv.parse_int(fields[1])
+				hp, _ := strconv.parse_int(fields[2])
+				ct, _ := strconv.parse_f32(fields[3])
+				mt, _ := strconv.parse_f32(fields[4])
+				bt, _ := strconv.parse_f32(fields[5])
+				if s >= 0 && s < SECTOR_COUNT {
+					enemy_base_hp[s] = hp
+					combat_timer[s] = ct
+					miner_timer[s] = mt
+					base_timer[s] = bt
+				}
+			}
+		case "INTEL":
+			if len(fields) >= 7 {
+				p, _ := strconv.parse_int(fields[1])
+				rec := fields[2] == "1"
+				f, _ := strconv.parse_int(fields[3])
+				m, _ := strconv.parse_int(fields[4])
+				hp, _ := strconv.parse_int(fields[5])
+				if p >= 0 && p < PLANET_COUNT {
+					intel_recorded[p] = rec
+					last_known_intel[p].fighters = f
+					last_known_intel[p].miners = m
+					last_known_intel[p].base_hp = hp
+					last_known_intel[p].unit_count = 0
+				}
+			}
+		case "INTEL_UNIT":
+			if len(fields) >= 5 {
+				p, _ := strconv.parse_int(fields[1])
+				kind, _ := parse_unit_type(fields[2])
+				state, _ := parse_unit_state(fields[3])
+				enemy := fields[4] == "1"
+				if p >= 0 && p < PLANET_COUNT {
+					cnt := last_known_intel[p].unit_count
+					if cnt < INTEL_UNIT_CAP {
+						last_known_intel[p].units[cnt] = Intel_Unit{kind = kind, state = state, enemy = enemy}
+						last_known_intel[p].unit_count += 1
+					}
+				}
+			}
+		case "UNIT":
+			if len(fields) >= 13 {
+				kind, _ := parse_unit_type(fields[1])
+				state, _ := parse_unit_state(fields[2])
+				x, _ := strconv.parse_f32(fields[3])
+				y, _ := strconv.parse_f32(fields[4])
+				z, _ := strconv.parse_f32(fields[5])
+				home, _ := strconv.parse_int(fields[6])
+				affil, _ := strconv.parse_int(fields[7])
+				target, _ := strconv.parse_int(fields[8])
+				enemy := fields[9] == "1"
+				prog, _ := strconv.parse_f32(fields[10])
+				orbit, _ := strconv.parse_f32(fields[11])
+				squad, _ := strconv.parse_int(fields[12])
+				if unit_count < MAX_UNITS {
+					units[unit_count] = Unit{
+						kind = kind,
+						state = state,
+						position = {x, y, z},
+						home_planet = home,
+						affiliation = affil,
+						target_planet = target,
+						enemy = enemy,
+						progress = prog,
+						orbit_angle = orbit,
+						squad = squad,
+					}
+					unit_count += 1
+				}
+			}
+		}
+	}
+
+	camera.target = camera_target
+	camera.up = {0, 1, 0}
+	camera.fovy = 45
+	camera.projection = .PERSPECTIVE
+	in_start_menu = false
+	game_paused = false
+	return true
+}
+
+save_game :: proc(path: string = "") -> bool {
+	content := serialize_game_state(context.temp_allocator)
+	if len(path) > 0 {
+		err := os.write_entire_file(path, content)
+		return err == nil
+	}
+	err_root := os.write_entire_file("savegame.txt", content)
+	exe_target := save_game_path("")
+	if exe_target != "savegame.txt" {
+		_ = os.write_entire_file(exe_target, content)
+	}
+	return err_root == nil
+}
+
+load_game :: proc(path: string = "") -> bool {
+	target_path := path
+	if len(target_path) == 0 {
+		if os.exists("savegame.txt") {
+			target_path = "savegame.txt"
+		} else {
+			target_path = save_game_path("")
+		}
+	}
+	data, err := os.read_entire_file(target_path, context.temp_allocator)
+	if err != nil || len(data) == 0 {
+		return false
+	}
+	return deserialize_game_state(string(data))
+}
+
+delete_save_game :: proc(custom_path: string = "") -> bool {
+	if len(custom_path) > 0 {
+		if os.exists(custom_path) {
+			return os.remove(custom_path) == nil
+		}
+		return false
+	}
+	removed := false
+	if os.exists("savegame.txt") {
+		if os.remove("savegame.txt") == nil {
+			removed = true
+		}
+	}
+	exe_target := save_game_path("")
+	if exe_target != "savegame.txt" && os.exists(exe_target) {
+		if os.remove(exe_target) == nil {
+			removed = true
+		}
+	}
+	return removed
+}
+
+// ---- Start game menu ----------------------------------------------------
+
+start_menu_options_count :: proc(has_save: bool) -> int {
+	return has_save ? 3 : 2
+}
+
+advance_start_menu_selection :: proc(dir: int) {
+	has_save := save_game_exists()
+	count := start_menu_options_count(has_save)
+	start_menu_selection = (start_menu_selection + dir + count) % count
+}
+
+activate_start_menu_selection :: proc() {
+	has_save := save_game_exists()
+	if has_save {
+		switch start_menu_selection {
+		case 0:
+			if load_game() {
+				in_start_menu = false
+				game_paused = false
+			}
+		case 1:
+			restart_game()
+			in_start_menu = false
+			game_paused = false
+		case 2:
+			quit_requested = true
+		}
+	} else {
+		switch start_menu_selection {
+		case 0:
+			restart_game()
+			in_start_menu = false
+			game_paused = false
+		case 1:
+			quit_requested = true
+		}
+	}
+}
+
+start_menu_rects :: proc(has_save: bool) -> (box, continue_rect, new_game_rect, quit_rect: rl.Rectangle) {
+	w := f32(rl.GetScreenWidth())
+	h := f32(rl.GetScreenHeight())
+	box_w: f32 = 380.0
+	box_h: f32 = has_save ? 350.0 : 290.0
+	box = rl.Rectangle{(w - box_w) / 2, (h - box_h) / 2, box_w, box_h}
+
+	btn_w := box.width - 2 * DIALOG_PAD
+	if has_save {
+		continue_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 130, btn_w, DIALOG_BTN_H}
+		new_game_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 186, btn_w, DIALOG_BTN_H}
+		quit_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 242, btn_w, DIALOG_BTN_H}
+	} else {
+		continue_rect = rl.Rectangle{}
+		new_game_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 130, btn_w, DIALOG_BTN_H}
+		quit_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 186, btn_w, DIALOG_BTN_H}
+	}
+	return
+}
+
+update_start_menu :: proc(dt: f32) {
+	update_planet_spin(dt)
+	has_save := save_game_exists()
+	count := start_menu_options_count(has_save)
+	if start_menu_selection >= count {
+		start_menu_selection = 0
+	}
+
+	if rl.IsKeyPressed(.UP) { advance_start_menu_selection(-1) }
+	if rl.IsKeyPressed(.DOWN) { advance_start_menu_selection(1) }
+
+	if has_save && rl.IsKeyPressed(.C) {
+		if load_game() {
+			in_start_menu = false
+			game_paused = false
+		}
+		return
+	}
+	if rl.IsKeyPressed(.N) {
+		restart_game()
+		in_start_menu = false
+		game_paused = false
+		return
+	}
+	if rl.IsKeyPressed(.Q) || rl.IsKeyPressed(.ESCAPE) {
+		quit_requested = true
+		return
+	}
+
+	if rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) {
+		activate_start_menu_selection()
+		return
+	}
+
+	if !rl.IsMouseButtonPressed(.LEFT) { return }
+	mouse := rl.GetMousePosition()
+	_, continue_rect, new_game_rect, quit_rect := start_menu_rects(has_save)
+	if has_save && rl.CheckCollisionPointRec(mouse, continue_rect) {
+		if load_game() {
+			in_start_menu = false
+			game_paused = false
+		}
+	} else if rl.CheckCollisionPointRec(mouse, new_game_rect) {
+		restart_game()
+		in_start_menu = false
+		game_paused = false
+	} else if rl.CheckCollisionPointRec(mouse, quit_rect) {
+		quit_requested = true
+	}
+}
+
+draw_start_menu :: proc() {
+	rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), rl.Color{4, 8, 18, 200})
+	has_save := save_game_exists()
+	box, continue_rect, new_game_rect, quit_rect := start_menu_rects(has_save)
+
+	rl.DrawRectangleRec(box, NEON_PANEL_SOLID)
+	rl.DrawRectangleLinesEx(box, 1, NEON_CYAN)
+	rl.DrawRectangleLinesEx({box.x - 3, box.y - 3, box.width + 6, box.height + 6}, 1, rl.Color{0, 225, 255, 40})
+
+	title: cstring = "STARFALL COMMAND"
+	title_w := f32(rl.MeasureText(title, 32))
+	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 26), 32, NEON_CYAN)
+
+	sub: cstring = "SYSTEM RECLAMATION RTS"
+	sub_w := f32(rl.MeasureText(sub, 12))
+	rl.DrawText(sub, c.int(box.x + (box.width - sub_w) / 2), c.int(box.y + 64), 12, NEON_MUTED)
+
+	rl.DrawLine(c.int(box.x + DIALOG_PAD), c.int(box.y + 86), c.int(box.x + box.width - DIALOG_PAD), c.int(box.y + 86), NEON_DIM)
+
+	status_txt: cstring = has_save ? "SAVED CAMPAIGN DETECTED" : "NO SAVED GAME FOUND"
+	status_col := has_save ? NEON_BLUE : NEON_MUTED
+	status_w := f32(rl.MeasureText(status_txt, 12))
+	rl.DrawText(status_txt, c.int(box.x + (box.width - status_w) / 2), c.int(box.y + 98), 12, status_col)
+
+	focused_rect: rl.Rectangle
+	if has_save {
+		draw_button(continue_rect, "[C] CONTINUE", NEON_PANEL_SOLID)
+		draw_button(new_game_rect, "[N] NEW GAME", NEON_PANEL_SOLID)
+		draw_button(quit_rect, "[Q] QUIT", NEON_PANEL_SOLID)
+		switch start_menu_selection {
+		case 0: focused_rect = continue_rect
+		case 1: focused_rect = new_game_rect
+		case 2: focused_rect = quit_rect
+		}
+	} else {
+		draw_button(new_game_rect, "[N] NEW GAME", NEON_PANEL_SOLID)
+		draw_button(quit_rect, "[Q] QUIT", NEON_PANEL_SOLID)
+		switch start_menu_selection {
+		case 0: focused_rect = new_game_rect
+		case 1: focused_rect = quit_rect
+		}
+	}
+	draw_pause_focus(focused_rect)
+
+	footer: cstring = "UP/DOWN : SELECT    ENTER : CONFIRM"
+	footer_w := f32(rl.MeasureText(footer, 10))
+	rl.DrawText(footer, c.int(box.x + (box.width - footer_w) / 2), c.int(box.y + box.height - 24), 10, NEON_MUTED)
 }
 
 // ---- Victory & restart --------------------------------------------------

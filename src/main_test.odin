@@ -1,5 +1,6 @@
 package main
 
+import "core:os"
 import "core:testing"
 import rl "vendor:raylib"
 
@@ -715,14 +716,19 @@ paused_game_skips_simulation_step :: proc(t: ^testing.T) {
 pause_menu_keyboard_navigation_wraps :: proc(t: ^testing.T) {
 	// Arrow keys read false headless (no key events), so the navigation
 	// predicate advance_pause_selection is exercised directly.
+	// 3 options: 0 = CONTINUE, 1 = SAVE GAME, 2 = QUIT.
 	game_paused = true
 	pause_menu_selection = 0
 	advance_pause_selection(1)
-	testing.expect(t, pause_menu_selection == 1, "DOWN moves focus to QUIT")
+	testing.expect(t, pause_menu_selection == 1, "DOWN moves focus to SAVE GAME")
+	advance_pause_selection(1)
+	testing.expect(t, pause_menu_selection == 2, "DOWN moves focus to QUIT")
 	advance_pause_selection(1)
 	testing.expect(t, pause_menu_selection == 0, "DOWN wraps back to CONTINUE")
 	advance_pause_selection(-1)
-	testing.expect(t, pause_menu_selection == 1, "UP wraps to QUIT")
+	testing.expect(t, pause_menu_selection == 2, "UP wraps to QUIT")
+	advance_pause_selection(-1)
+	testing.expect(t, pause_menu_selection == 1, "UP returns to SAVE GAME")
 	advance_pause_selection(-1)
 	testing.expect(t, pause_menu_selection == 0, "UP returns to CONTINUE")
 	game_paused = false
@@ -730,14 +736,57 @@ pause_menu_keyboard_navigation_wraps :: proc(t: ^testing.T) {
 
 @(test)
 pause_menu_enter_activates_focused_option :: proc(t: ^testing.T) {
+	// Preserve any real save game files so the test doesn't clobber them
+	backup_root := "savegame.txt.test_bak"
+	has_root := os.exists("savegame.txt")
+	if has_root {
+		if data, err := os.read_entire_file("savegame.txt", context.temp_allocator); err == nil {
+			_ = os.write_entire_file(backup_root, data)
+		}
+	}
+	exe_save := save_game_path("")
+	backup_exe := "savegame_exe.txt.test_bak"
+	has_exe := exe_save != "savegame.txt" && os.exists(exe_save)
+	if has_exe {
+		if data, err := os.read_entire_file(exe_save, context.temp_allocator); err == nil {
+			_ = os.write_entire_file(backup_exe, data)
+		}
+	}
+	defer {
+		if has_root {
+			if data, err := os.read_entire_file(backup_root, context.temp_allocator); err == nil {
+				_ = os.write_entire_file("savegame.txt", data)
+			}
+			_ = os.remove(backup_root)
+		} else {
+			_ = os.remove("savegame.txt")
+		}
+		if has_exe {
+			if data, err := os.read_entire_file(backup_exe, context.temp_allocator); err == nil {
+				_ = os.write_entire_file(exe_save, data)
+			}
+			_ = os.remove(backup_exe)
+		} else if exe_save != "savegame.txt" {
+			_ = os.remove(exe_save)
+		}
+	}
+
 	game_paused = true
 	quit_requested = false
 	pause_menu_selection = 0
 	activate_pause_selection()
 	testing.expect(t, !game_paused, "ENTER on CONTINUE resumes")
 	testing.expect(t, !quit_requested, "ENTER on CONTINUE never quits")
+
 	game_paused = true
 	pause_menu_selection = 1
+	activate_pause_selection()
+	testing.expect(t, game_paused, "ENTER on SAVE GAME leaves game paused")
+	testing.expect(t, !quit_requested, "ENTER on SAVE GAME never quits")
+	testing.expect(t, save_feedback_timer > 0, "ENTER on SAVE GAME triggers save feedback timer")
+
+	game_paused = true
+	pause_menu_selection = 2
 	activate_pause_selection()
 	testing.expect(t, game_paused, "ENTER on QUIT leaves the pause flag alone")
 	testing.expect(t, quit_requested, "ENTER on QUIT requests exit")
@@ -2172,3 +2221,141 @@ losing_base_from_cap_reopens_button_and_restores_positions :: proc(t: ^testing.T
 	testing.expect(t, production_title_y() == PROD_TITLE_Y, "production title returns to PROD_TITLE_Y")
 	testing.expect(t, production_orders_y() == ORDERS_BASE_Y + 3 * PROD_PITCH, "orders return to normal expanded Y")
 }
+
+@(test)
+save_load_game_roundtrip_preserves_state :: proc(t: ^testing.T) {
+	reset_world()
+	test_save_file := "test_savegame_roundtrip.txt"
+	defer delete_save_game(test_save_file)
+
+	minerals = 725
+	drone_speed_level = 3
+	earth_rally = MARS
+	selected_planet = JUPITER
+	base_counts[EARTH] = 3
+	base_build_planet = EARTH
+	base_build_progress = 25.5
+	enemy_wave_timer = 88.0
+	wave_started = true
+	production[EARTH][0] = Production{kind = .COMBAT, progress = 4.5, active = true}
+	pending[EARTH][0] = .MINING
+	pending[EARTH][1] = .COMBAT
+	pending_count[EARTH] = 2
+	enemy_base_hp[VENUS] = 0
+	combat_timer[VENUS] = 0.15
+	intel_recorded[MARS] = true
+	last_known_intel[MARS].fighters = 12
+	last_known_intel[MARS].miners = 4
+	last_known_intel[MARS].base_hp = 15
+	last_known_intel[MARS].units[0] = Intel_Unit{kind = .COMBAT, state = .GUARDING, enemy = true}
+	last_known_intel[MARS].unit_count = 1
+
+	units[0] = Unit{kind = .COMBAT, state = .TRANSIT, position = {10, 2, 5}, home_planet = EARTH, affiliation = EARTH, target_planet = MARS, enemy = false, progress = 0.75, orbit_angle = 1.2, squad = 4}
+	units[1] = Unit{kind = .MINING, state = .MINING, position = {22, 1, 6}, home_planet = EARTH, affiliation = MARS, target_planet = MARS, enemy = false, progress = 2.1, orbit_angle = 0, squad = 0}
+	unit_count = 2
+
+	saved := save_game(test_save_file)
+	testing.expect(t, saved, "save_game successfully wrote file")
+
+	reset_world()
+	testing.expect(t, minerals == 350, "reset_world reset minerals")
+	testing.expect(t, unit_count == 0, "reset_world reset unit count")
+
+	loaded := load_game(test_save_file)
+	testing.expect(t, loaded, "load_game successfully loaded file")
+
+	testing.expect(t, minerals == 725, "minerals restored")
+	testing.expect(t, drone_speed_level == 3, "drone_speed_level restored")
+	testing.expect(t, earth_rally == MARS, "earth_rally restored")
+	testing.expect(t, selected_planet == JUPITER, "selected_planet restored")
+	testing.expect(t, base_counts[EARTH] == 3, "base_counts[EARTH] restored")
+	testing.expect(t, base_build_planet == EARTH, "base_build_planet restored")
+	testing.expect(t, abs(base_build_progress - 25.5) < 0.01, "base_build_progress restored")
+	testing.expect(t, abs(enemy_wave_timer - 88.0) < 0.01, "enemy_wave_timer restored")
+	testing.expect(t, wave_started == true, "wave_started restored")
+	testing.expect(t, production[EARTH][0].kind == .COMBAT, "production line kind restored")
+	testing.expect(t, production[EARTH][0].active == true, "production line active restored")
+	testing.expect(t, abs(production[EARTH][0].progress - 4.5) < 0.01, "production line progress restored")
+	testing.expect(t, pending_count[EARTH] == 2, "pending_count restored")
+	testing.expect(t, pending[EARTH][0] == .MINING, "pending slot 0 restored")
+	testing.expect(t, pending[EARTH][1] == .COMBAT, "pending slot 1 restored")
+	testing.expect(t, enemy_base_hp[VENUS] == 0, "enemy base hp restored")
+	testing.expect(t, abs(combat_timer[VENUS] - 0.15) < 0.01, "combat timer restored")
+	testing.expect(t, intel_recorded[MARS] == true, "intel recorded restored")
+	testing.expect(t, last_known_intel[MARS].fighters == 12, "intel fighters restored")
+	testing.expect(t, last_known_intel[MARS].unit_count == 1, "intel unit count restored")
+	testing.expect(t, last_known_intel[MARS].units[0].kind == .COMBAT, "intel unit kind restored")
+	testing.expect(t, unit_count == 2, "unit count restored")
+	testing.expect(t, units[0].kind == .COMBAT, "unit 0 kind restored")
+	testing.expect(t, units[0].state == .TRANSIT, "unit 0 state restored")
+	testing.expect(t, units[0].squad == 4, "unit 0 squad restored")
+	testing.expect(t, units[0].target_planet == MARS, "unit 0 target restored")
+	testing.expect(t, units[1].kind == .MINING, "unit 1 kind restored")
+	testing.expect(t, units[1].state == .MINING, "unit 1 state restored")
+	testing.expect(t, !in_start_menu, "load_game exits start menu")
+}
+
+@(test)
+save_game_exists_detects_file :: proc(t: ^testing.T) {
+	test_file := "test_existence_check.txt"
+	defer delete_save_game(test_file)
+
+	delete_save_game(test_file)
+	testing.expect(t, !save_game_exists(test_file), "detects missing file as non-existent")
+
+	save_game(test_file)
+	testing.expect(t, save_game_exists(test_file), "detects saved file as existent")
+
+	delete_save_game(test_file)
+	testing.expect(t, !save_game_exists(test_file), "detects deleted file as non-existent")
+}
+
+@(test)
+load_game_returns_false_on_missing_file :: proc(t: ^testing.T) {
+	testing.expect(t, !load_game("definitely_non_existent_file_9999.txt"), "returns false on missing file")
+}
+
+@(test)
+start_menu_options_and_navigation :: proc(t: ^testing.T) {
+	testing.expect(t, start_menu_options_count(false) == 2, "2 options when no save")
+	testing.expect(t, start_menu_options_count(true) == 3, "3 options when save exists")
+
+	test_file := "test_menu_nav.txt"
+	save_game(test_file)
+	defer delete_save_game(test_file)
+
+	// Test navigation with save (3 options: 0=CONTINUE, 1=NEW GAME, 2=QUIT)
+	start_menu_selection = 0
+	advance_start_menu_selection(1)
+	testing.expect(t, start_menu_selection == 1, "DOWN moves to NEW GAME")
+	advance_start_menu_selection(1)
+	testing.expect(t, start_menu_selection == 2, "DOWN moves to QUIT")
+	advance_start_menu_selection(1)
+	testing.expect(t, start_menu_selection == 0, "DOWN wraps to CONTINUE")
+	advance_start_menu_selection(-1)
+	testing.expect(t, start_menu_selection == 2, "UP wraps to QUIT")
+}
+
+@(test)
+start_menu_activations_work :: proc(t: ^testing.T) {
+	test_file := "test_menu_acts.txt"
+	save_game(test_file)
+	defer delete_save_game(test_file)
+
+	in_start_menu = true
+	quit_requested = false
+
+	// Option 1 (NEW GAME)
+	start_menu_selection = 1
+	activate_start_menu_selection()
+	testing.expect(t, !in_start_menu, "NEW GAME exits start menu")
+	testing.expect(t, !quit_requested, "NEW GAME does not quit")
+
+	// Option 2 (QUIT)
+	in_start_menu = true
+	start_menu_selection = 2
+	activate_start_menu_selection()
+	testing.expect(t, quit_requested, "QUIT requests quit")
+	quit_requested = false
+}
+

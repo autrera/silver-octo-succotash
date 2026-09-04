@@ -409,3 +409,5 @@ bin/
 *.swn
 /build/compile_commands.json
 shot_*.png
+savegame.txt
+*.save
