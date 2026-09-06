@@ -2380,5 +2380,102 @@ start_menu_activations_work :: proc(t: ^testing.T) {
 	quit_requested = false
 }
 
+@(test)
+queue_units_five_miners :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	base_counts[EARTH] = 1
+	minerals = 500
+
+	queue_units(.MINING, 5)
+
+	testing.expect(t, minerals == 250, "5 miners cost 250 minerals (500 - 5 * 50)")
+	testing.expect(t, queued_count(EARTH) == 5, "5 units queued (1 active + 4 pending)")
+	testing.expect(t, production[EARTH][0].active, "base 1 active")
+	testing.expect(t, production[EARTH][0].kind == .MINING, "base 1 building mining drone")
+	testing.expect(t, pending_count[EARTH] == 4, "4 pending mining drones")
+	for i in 0..<4 {
+		testing.expect(t, pending[EARTH][i] == .MINING, "pending slot has mining drone")
+	}
+}
+
+@(test)
+queue_units_five_combat :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	base_counts[EARTH] = 2
+	minerals = 1000
+
+	queue_units(.COMBAT, 5)
+
+	testing.expect(t, minerals == 375, "5 combat drones cost 625 minerals (1000 - 5 * 125)")
+	testing.expect(t, queued_count(EARTH) == 5, "5 units queued (2 active + 3 pending)")
+	testing.expect(t, production[EARTH][0].active && production[EARTH][0].kind == .COMBAT, "base 1 building combat")
+	testing.expect(t, production[EARTH][1].active && production[EARTH][1].kind == .COMBAT, "base 2 building combat")
+	testing.expect(t, pending_count[EARTH] == 3, "3 pending combat drones")
+}
+
+@(test)
+queue_units_respects_limits :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	base_counts[EARTH] = 1 // max queue capacity is 1 * 5 = 5
+	minerals = 120 // only enough for 2 miners (50 * 2 = 100)
+
+	queue_units(.MINING, 5)
+	testing.expect(t, queued_count(EARTH) == 2, "stops when minerals run out (queued 2)")
+	testing.expect(t, minerals == 20, "remaining minerals 20")
+
+	// Now add enough minerals to fill queue and beyond
+	minerals = 1000
+	queue_units(.MINING, 5) // only 3 slots open before cap (2 + 3 = 5)
+	testing.expect(t, queued_count(EARTH) == 5, "stops at queue capacity cap 5")
+	testing.expect(t, minerals == 1000 - 3 * 50, "only paid for the 3 units queued")
+}
+
+@(test)
+queue_5_button_rects_align_with_layout :: proc(t: ^testing.T) {
+	panel_x: f32 = 100.0
+	miner_rect := queue_5_miner_button_rect(panel_x)
+	combat_rect := queue_5_combat_button_rect(panel_x)
+
+	testing.expect(t, miner_rect.width == BUILD_BTN_W, "miner button width matches BUILD_BTN_W")
+	testing.expect(t, combat_rect.width == BUILD_BTN_W, "combat button width matches BUILD_BTN_W")
+	testing.expect(t, miner_rect.height == UPGRADE_H, "miner button height matches UPGRADE_H")
+	testing.expect(t, combat_rect.height == UPGRADE_H, "combat button height matches UPGRADE_H")
+	testing.expect(t, miner_rect.y == combat_rect.y, "both buttons share the same Y position")
+	testing.expect(t, combat_rect.x == miner_rect.x + BUILD_BTN_W + BTN_GAP, "combat button is adjacent with BTN_GAP")
+
+	// Total span is BUILD_BTN_W + BTN_GAP + BUILD_BTN_W = PANEL_CONTENT_W
+	testing.expect(t, miner_rect.width + BTN_GAP + combat_rect.width == PANEL_CONTENT_W, "buttons span exactly PANEL_CONTENT_W")
+}
+
+@(test)
+controls_overlay_pauses_and_resumes :: proc(t: ^testing.T) {
+	reset_world()
+	testing.expect(t, !game_paused, "initially unpaused")
+	testing.expect(t, !controls_overlay_open, "initially overlay closed")
+
+	open_controls_overlay()
+	testing.expect(t, game_paused, "game is paused when controls overlay opened")
+	testing.expect(t, controls_overlay_open, "controls overlay is open")
+
+	close_controls_overlay()
+	testing.expect(t, !game_paused, "game is unpaused when controls overlay closed")
+	testing.expect(t, !controls_overlay_open, "controls overlay is closed")
+
+	open_controls_overlay()
+	reset_world()
+	testing.expect(t, !controls_overlay_open, "reset_world resets controls overlay state")
+}
+
+@(test)
+controls_button_rect_is_docked :: proc(t: ^testing.T) {
+	rect := controls_button_rect()
+	testing.expect(t, rect.x == HUD_PAD, "controls button docked at HUD_PAD from left")
+	testing.expect(t, rect.width == 110, "controls button width is 110")
+	testing.expect(t, rect.height == BOTTOM_DOCK_H, "controls button height matches BOTTOM_DOCK_H")
+}
+
 
 

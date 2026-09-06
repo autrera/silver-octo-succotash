@@ -309,6 +309,7 @@ miner_timer: [SECTOR_COUNT]f32
 base_timer: [SECTOR_COUNT]f32
 
 game_paused := false
+controls_overlay_open := false
 quit_requested := false
 // Victory: latched once every planet is liberated AND the enemy HQ falls;
 // freezes the sim behind the victory overlay until restart.
@@ -370,6 +371,8 @@ main :: proc() {
 			update_victory_overlay()
 		} else if defeated {
 			update_game_over_overlay()
+		} else if controls_overlay_open {
+			update_controls_overlay()
 		} else {
 			if pause_key_pressed() { toggle_pause() }
 			if game_paused {
@@ -390,6 +393,8 @@ main :: proc() {
 				draw_victory_overlay()
 			} else if defeated {
 				draw_game_over_overlay()
+			} else if controls_overlay_open {
+				draw_controls_overlay()
 			} else if game_paused { draw_pause_menu() }
 		}
 		rl.EndDrawing()
@@ -449,6 +454,7 @@ reset_world :: proc() {
 	victory = false
 	defeated = false
 	game_paused = false
+	controls_overlay_open = false
 	in_start_menu = false
 	hud_save_notification_timer = 0
 	save_feedback_timer = 0
@@ -523,8 +529,20 @@ update_input :: proc() {
 	// ESC cancels the most recently queued unit and refunds it.
 	if rl.IsKeyPressed(.ESCAPE) { cancel_last_queued() }
 	// Build shortcuts use the same validation path as the inspector buttons.
-	if rl.IsKeyPressed(.M) { queue_unit(.MINING) }
-	if rl.IsKeyPressed(.C) { queue_unit(.COMBAT) }
+	if rl.IsKeyPressed(.M) {
+		if shift_down() && drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
+			queue_units(.MINING, 5)
+		} else {
+			queue_unit(.MINING)
+		}
+	}
+	if rl.IsKeyPressed(.C) {
+		if shift_down() && drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
+			queue_units(.COMBAT, 5)
+		} else {
+			queue_unit(.COMBAT)
+		}
+	}
 	// [U] buys the next drone build-speed upgrade level (Earth only).
 	if rl.IsKeyPressed(.U) { purchase_drone_speed_upgrade() }
 	// Spacebar is a shortcut to select Earth in the inspector.
@@ -545,6 +563,10 @@ update_input :: proc() {
 	mouse := rl.GetMousePosition()
 	panel_x := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
 	if rl.IsMouseButtonPressed(.LEFT) {
+		if rl.CheckCollisionPointRec(mouse, controls_button_rect()) {
+			open_controls_overlay()
+			return
+		}
 		if mouse.x >= panel_x {
 			// Sidebar presses start a potential drag; click vs box-select is
 			// decided on release. World selection never sees sidebar input.
@@ -615,9 +637,20 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 			queue_unit(.COMBAT)
 			return
 		}
-		if rl.CheckCollisionPointRec(mouse, drone_speed_button_rect(panel_x)) {
-			purchase_drone_speed_upgrade()
-			return
+		if drone_speed_level < DRONE_SPEED_UPGRADE_MAX {
+			if rl.CheckCollisionPointRec(mouse, drone_speed_button_rect(panel_x)) {
+				purchase_drone_speed_upgrade()
+				return
+			}
+		} else {
+			if rl.CheckCollisionPointRec(mouse, queue_5_miner_button_rect(panel_x)) {
+				queue_units(.MINING, 5)
+				return
+			}
+			if rl.CheckCollisionPointRec(mouse, queue_5_combat_button_rect(panel_x)) {
+				queue_units(.COMBAT, 5)
+				return
+			}
 		}
 		// Clicking an occupied build-queue slot cancels that unit (refund included).
 		for slot := 0; slot < queued_count(EARTH); slot += 1 {
@@ -800,10 +833,35 @@ queue_unit :: proc(kind: Unit_Type) {
 	pending_count[selected_planet] += 1
 }
 
+// Batch queue up to `count` units as long as minerals and queue space allow.
+queue_units :: proc(kind: Unit_Type, count: int) {
+	for _ in 0..<count {
+		if minerals < unit_cost(kind) || queued_count(selected_planet) >= base_counts[selected_planet] * 5 {
+			break
+		}
+		queue_unit(kind)
+	}
+}
+
 // Screen rect of the drone build-speed upgrade button. Shared by the
 // render and the click hitbox so they cannot drift apart.
 drone_speed_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
 	return rl.Rectangle{panel_x + PANEL_PAD_X, f32(production_orders_y() + UPGRADE_DY), PANEL_CONTENT_W, UPGRADE_H}
+}
+
+// Screen rects for the +5 batch build buttons that replace the upgrade button at speed level 5.
+queue_5_miner_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
+	return rl.Rectangle{panel_x + PANEL_PAD_X, f32(production_orders_y() + UPGRADE_DY), BUILD_BTN_W, UPGRADE_H}
+}
+
+queue_5_combat_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
+	return rl.Rectangle{panel_x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, f32(production_orders_y() + UPGRADE_DY), BUILD_BTN_W, UPGRADE_H}
+}
+
+// Screen rect for the Controls button docked at the bottom of the screen.
+controls_button_rect :: proc() -> rl.Rectangle {
+	dock_y := f32(rl.GetScreenHeight() - BOTTOM_DOCK_H - 12)
+	return rl.Rectangle{HUD_PAD, dock_y, 110, BOTTOM_DOCK_H}
 }
 
 // Screen rect of build-queue slot `slot` (0 = queue head: active production
@@ -1634,30 +1692,26 @@ draw_world :: proc() {
 	cur_x += f32(speed_w) + 10.0
 	draw_segmented_meter({cur_x, HUD_PAD + 14, meter_w, 12}, f32(drone_speed_level) / f32(DRONE_SPEED_UPGRADE_MAX), 5, SCIFI_MINT, SCIFI_DIM)
 
-	// Bottom status dock
-	dock_y := f32(rl.GetScreenHeight() - BOTTOM_DOCK_H - 12)
-	dock_w := f32(viewport_w - 2 * HUD_PAD)
-	bot_dock_rect := rl.Rectangle{HUD_PAD, dock_y, dock_w, BOTTOM_DOCK_H}
-	draw_chamfered_panel(bot_dock_rect, 8, SCIFI_PANEL, SCIFI_STEEL)
-	draw_corner_brackets(bot_dock_rect, 2, 6, SCIFI_CYAN)
-
-	bot_status := rl.TextFormat("FPS %d   R-CLICK: ORDER   SHIFT+1-9: SQUADS   P: PAUSE   F5: SAVE   ESC: CANCEL   N: WAVE", rl.GetFPS())
-	rl.DrawText(bot_status, c.int(HUD_PAD + 14), c.int(dock_y + 12), 12, SCIFI_MUTED)
-
-	// Camera telemetry chip
-	zoom_text := rl.TextFormat("ALT %.0f   ZOOM %d%%", camera.position.y, zoom_percent())
-	zoom_w := f32(rl.MeasureText(zoom_text, 12))
-	chip_x := HUD_PAD + dock_w - zoom_w - 24
-	draw_chamfered_panel({chip_x, dock_y + 6, zoom_w + 16, 24}, 4, SCIFI_PANEL_SOLID, SCIFI_DIM)
-	rl.DrawText(zoom_text, c.int(chip_x + 8), c.int(dock_y + 12), 12, SCIFI_CYAN)
+	// Top right of viewport: telemetry dock (FPS, altitude / latitude, zoom)
+	telemetry_text := rl.TextFormat("FPS %d   ALT %.0f   ZOOM %d%%", rl.GetFPS(), camera.position.y, zoom_percent())
+	telemetry_w := f32(rl.MeasureText(telemetry_text, 12)) + 28
+	telemetry_x := f32(viewport_w) - HUD_PAD - telemetry_w
+	telemetry_rect := rl.Rectangle{telemetry_x, HUD_PAD, telemetry_w, HUD_DOCK_H}
+	draw_chamfered_panel(telemetry_rect, 6, SCIFI_PANEL, SCIFI_STEEL)
+	draw_corner_brackets(telemetry_rect, 2, 6, SCIFI_CYAN)
+	rl.DrawText(telemetry_text, c.int(telemetry_x + 14), c.int(HUD_PAD + 13), 12, SCIFI_CYAN)
 
 	if hud_save_notification_timer > 0 {
 		saved_lbl: cstring = "GAME SAVED"
 		saved_w := f32(rl.MeasureText(saved_lbl, 12))
-		saved_x := chip_x - saved_w - 16
-		draw_chamfered_panel({saved_x - 8, dock_y + 6, saved_w + 16, 24}, 4, rl.Color{30, 20, 10, 240}, SCIFI_AMBER_DIM)
-		rl.DrawText(saved_lbl, c.int(saved_x), c.int(dock_y + 12), 12, SCIFI_AMBER)
+		saved_x := telemetry_x - saved_w - 16
+		draw_chamfered_panel({saved_x - 8, HUD_PAD + 8, saved_w + 16, 24}, 4, rl.Color{30, 20, 10, 240}, SCIFI_AMBER_DIM)
+		rl.DrawText(saved_lbl, c.int(saved_x), c.int(HUD_PAD + 14), 12, SCIFI_AMBER)
 	}
+
+	// Bottom: standalone Controls button
+	draw_button(controls_button_rect(), "Controls", SCIFI_PANEL_SOLID, true)
+
 	draw_squad_hud()
 }
 
@@ -1823,7 +1877,8 @@ draw_earth_inspector :: proc(x: f32) {
 	draw_button({x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, "[C] COMBAT (125)", SCIFI_PANEL_SOLID, can_build_combat)
 
 	if drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
-		draw_button(drone_speed_button_rect(x), rl.TextFormat("DRONE BUILD SPEED  LVL %d/%d (MAX)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX), SCIFI_PANEL_SOLID, false)
+		draw_button(queue_5_miner_button_rect(x), "+5 MINERS (250)", SCIFI_PANEL_SOLID, can_build_miner)
+		draw_button(queue_5_combat_button_rect(x), "+5 FIGHTERS (625)", SCIFI_PANEL_SOLID, can_build_combat)
 	} else {
 		can_upgrade_speed := minerals >= DRONE_SPEED_UPGRADE_COST
 		draw_button(drone_speed_button_rect(x), rl.TextFormat("[U] DRONE BUILD SPEED  LVL %d/%d (%d)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX, DRONE_SPEED_UPGRADE_COST), SCIFI_PANEL_SOLID, can_upgrade_speed)
@@ -3473,6 +3528,137 @@ draw_pause_focus :: proc(rect: rl.Rectangle) {
 	rl.DrawRectangleLinesEx({rect.x - 2, rect.y - 2, rect.width + 4, rect.height + 4}, 1, rl.Fade(SCIFI_CYAN, 0.45))
 }
 
+// ---- Controls overlay ---------------------------------------------------
+
+open_controls_overlay :: proc() {
+	controls_overlay_open = true
+	game_paused = true
+}
+
+close_controls_overlay :: proc() {
+	controls_overlay_open = false
+	game_paused = false
+}
+
+controls_overlay_rects :: proc() -> (box: rl.Rectangle, close_btn: rl.Rectangle) {
+	w := f32(rl.GetScreenWidth())
+	h := f32(rl.GetScreenHeight())
+	box_w: f32 = 740.0
+	box_h: f32 = 470.0
+	box = rl.Rectangle{(w - box_w) / 2, (h - box_h) / 2, box_w, box_h}
+	close_btn_w: f32 = 200.0
+	close_btn_h: f32 = 36.0
+	close_btn = rl.Rectangle{box.x + (box.width - close_btn_w) / 2, box.y + box.height - 50, close_btn_w, close_btn_h}
+	return
+}
+
+update_controls_overlay :: proc() {
+	if rl.IsKeyPressed(.ESCAPE) || rl.IsKeyPressed(.C) || rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) || pause_key_pressed() {
+		close_controls_overlay()
+		return
+	}
+	if rl.IsMouseButtonPressed(.LEFT) {
+		mouse := rl.GetMousePosition()
+		box, close_btn := controls_overlay_rects()
+		if rl.CheckCollisionPointRec(mouse, close_btn) || !rl.CheckCollisionPointRec(mouse, box) {
+			close_controls_overlay()
+			return
+		}
+	}
+}
+
+draw_control_row :: proc(x, y: f32, key, desc: cstring) {
+	rl.DrawText(key, c.int(x), c.int(y), 12, SCIFI_MINT)
+	rl.DrawText(desc, c.int(x + 115), c.int(y), 12, SCIFI_TEXT)
+}
+
+draw_controls_overlay :: proc() {
+	rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), rl.Color{4, 12, 18, 225})
+	box, close_btn := controls_overlay_rects()
+
+	draw_chamfered_panel(box, 14, SCIFI_PANEL, SCIFI_CYAN)
+	draw_corner_brackets(box, 3, 14, SCIFI_CYAN)
+
+	title: cstring = "TACTICAL CONTROLS DIRECTIVE"
+	title_w := f32(rl.MeasureText(title, 22))
+	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 22), 22, SCIFI_CYAN)
+
+	sub: cstring = "OPERATIONAL KEYBINDS AND COMMAND PROTOCOLS"
+	sub_w := f32(rl.MeasureText(sub, 12))
+	rl.DrawText(sub, c.int(box.x + (box.width - sub_w) / 2), c.int(box.y + 50), 12, SCIFI_MUTED)
+
+	rl.DrawLineV({box.x + 24, box.y + 70}, {box.x + box.width - 24, box.y + 70}, SCIFI_DIM)
+
+	col1_x := box.x + 32
+	col2_x := box.x + 376
+
+	// Column 1: Camera & Fleet Management
+	cy1 := box.y + 84
+	rl.DrawText("CAMERA AND NAVIGATION", c.int(col1_x), c.int(cy1), 13, SCIFI_AMBER)
+	cy1 += 20
+	draw_control_row(col1_x, cy1, "WASD / ARROWS", "Pan tactical view")
+	cy1 += 18
+	draw_control_row(col1_x, cy1, "Q / E / SCROLL", "Zoom altitude in and out")
+	cy1 += 18
+	draw_control_row(col1_x, cy1, "SPACE", "Center focus on Earth base")
+
+	cy1 += 26
+	rl.DrawText("FLEET SELECTION AND SQUADS", c.int(col1_x), c.int(cy1), 13, SCIFI_AMBER)
+	cy1 += 20
+	draw_control_row(col1_x, cy1, "LEFT CLICK", "Select planet, citadel, or drone")
+	cy1 += 18
+	draw_control_row(col1_x, cy1, "DRAG BOX", "Box-select unit tiles in panel")
+	cy1 += 18
+	draw_control_row(col1_x, cy1, "CTRL + CLICK", "Toggle individual units")
+	cy1 += 18
+	draw_control_row(col1_x, cy1, "SHIFT + 1-9", "Assign selection to Squad 1-9")
+	cy1 += 18
+	draw_control_row(col1_x, cy1, "1-9", "Recall assigned Squad 1-9")
+
+	cy1 += 26
+	rl.DrawText("TACTICAL DIRECTIVES", c.int(col1_x), c.int(cy1), 13, SCIFI_AMBER)
+	cy1 += 20
+	draw_control_row(col1_x, cy1, "RIGHT CLICK", "Dispatch units to planet / HQ")
+	cy1 += 18
+	draw_control_row(col1_x, cy1, "R-CLICK EARTH", "Set or clear Earth rally flag")
+
+	// Column 2: Requisition, Simulation & Sensors
+	cy2 := box.y + 84
+	rl.DrawText("EARTH BASE REQUISITION", c.int(col2_x), c.int(cy2), 13, SCIFI_AMBER)
+	cy2 += 20
+	draw_control_row(col2_x, cy2, "M / CLICK", "Build Mining Drone (50)")
+	cy2 += 18
+	draw_control_row(col2_x, cy2, "C / CLICK", "Build Combat Fighter (125)")
+	cy2 += 18
+	draw_control_row(col2_x, cy2, "U / SPEED", "Upgrade Build Speed (5,000)")
+	cy2 += 18
+	draw_control_row(col2_x, cy2, "+5 BUTTONS", "Batch-queue 5 units (Lvl 5)")
+	cy2 += 18
+	draw_control_row(col2_x, cy2, "ESC", "Cancel last build (Refund)")
+	cy2 += 18
+	draw_control_row(col2_x, cy2, "CLICK SLOT", "Cancel specific queue slot")
+
+	cy2 += 26
+	rl.DrawText("SYSTEM AND SIMULATION", c.int(col2_x), c.int(cy2), 13, SCIFI_AMBER)
+	cy2 += 20
+	draw_control_row(col2_x, cy2, "P / F10", "Pause game / Mission menu")
+	cy2 += 18
+	draw_control_row(col2_x, cy2, "F5", "Quick-save game state")
+	cy2 += 18
+	draw_control_row(col2_x, cy2, "N", "Force enemy attack wave")
+
+	cy2 += 26
+	rl.DrawText("TACTICAL SENSORS", c.int(col2_x), c.int(cy2), 13, SCIFI_AMBER)
+	cy2 += 20
+	draw_control_row(col2_x, cy2, "FOG OF WAR", "Presence required to scout")
+	cy2 += 18
+	draw_control_row(col2_x, cy2, "GHOST VIEW", "Stale intel retained dark")
+
+	rl.DrawLineV({box.x + 24, box.y + box.height - 64}, {box.x + box.width - 24, box.y + box.height - 64}, SCIFI_DIM)
+
+	draw_button(close_btn, "[C] RESUME GAME", SCIFI_PANEL_SOLID, true)
+}
+
 // ---- Save & Load system -------------------------------------------------
 
 save_game_path :: proc(custom_path: string = "", allocator := context.temp_allocator) -> string {
@@ -3800,6 +3986,7 @@ deserialize_game_state :: proc(content: string) -> bool {
 	camera.projection = .PERSPECTIVE
 	in_start_menu = false
 	game_paused = false
+	controls_overlay_open = false
 	return true
 }
 
