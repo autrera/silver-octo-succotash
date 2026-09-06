@@ -204,13 +204,13 @@ QUEUE_LABEL_GAP :: 23
 DIALOG_PAD :: 28
 DIALOG_BTN_H :: 44
 HUD_PAD :: 16
-PIPS_OFF :: 72
+PIPS_OFF :: 56
 READOUT_X :: 215
 BADGE_PAD :: 8
 BADGE_GAP :: 8
-BADGE_Y :: 68
+BADGE_Y :: 72
 BADGE_H :: 20
-HUD_DOCK_H :: 40
+HUD_DOCK_H :: 50
 HUD_TEXT_X :: HUD_PAD + 20
 HUD_TEXT_Y :: HUD_PAD + 11
 HUD_COL_GAP :: 24
@@ -1654,59 +1654,71 @@ draw_world :: proc() {
 	}
 
 	// Top bar: minerals plus global MPS and drone speed upgrade level
-	min_text := rl.TextFormat("MINERALS: %d", minerals)
-	mps_text := rl.TextFormat("MPS: +%.1f/s", global_mps())
-	speed_lbl := rl.TextFormat("SPEED LVL %d/%d", drone_speed_level, DRONE_SPEED_UPGRADE_MAX)
-	min_w := rl.MeasureText(min_text, 15)
-	mps_w := rl.MeasureText(mps_text, 15)
-	speed_w := rl.MeasureText(speed_lbl, 13)
+	// Two-tier aerospace winged HUD dock (inspired by Star Fox Zero top-left UI)
+	tl_dock_w: f32 = 400.0
+	tl_dock_h: f32 = 50.0
+	tl_rect := rl.Rectangle{f32(HUD_PAD), f32(HUD_PAD), tl_dock_w, tl_dock_h}
+	draw_winged_panel_left(tl_rect, 6, 20, SCIFI_PANEL, SCIFI_CYAN)
 
-	pad_inside: f32 = 18.0
-	gap: f32 = 20.0
-	meter_w: f32 = 46.0
-	bar_w := pad_inside + f32(min_w) + gap + 1.0 + gap + f32(mps_w) + gap + 1.0 + gap + f32(speed_w) + 10.0 + meter_w + pad_inside
+	// Column 1: Minerals (static 104px column to fit up to 999999 minerals without shifting)
+	col1_x: f32 = f32(HUD_PAD + 16)
+	rl.DrawText("MINERALS", i32(col1_x), i32(HUD_PAD + 7), 10, SCIFI_MINT)
+	min_val := rl.TextFormat("%d", minerals)
+	rl.DrawText(min_val, i32(col1_x), i32(HUD_PAD + 20), 22, SCIFI_AMBER)
 
-	top_dock_rect := rl.Rectangle{HUD_PAD, HUD_PAD, bar_w, HUD_DOCK_H}
-	draw_chamfered_panel(top_dock_rect, 8, SCIFI_PANEL, SCIFI_STEEL)
-	draw_corner_brackets(top_dock_rect, 2, 6, SCIFI_CYAN)
+	// Divider 1 (completely static position)
+	div1_x: f32 = col1_x + 104.0
+	rl.DrawLineV({div1_x, HUD_PAD + 10}, {div1_x, HUD_PAD + 40}, SCIFI_DIM)
+	draw_diamond(div1_x, HUD_PAD + 25, 2.5, SCIFI_CYAN)
 
-	cur_x := HUD_PAD + pad_inside
-	// Minerals
-	rl.DrawText(min_text, c.int(cur_x), c.int(HUD_PAD + 12), 15, SCIFI_AMBER)
-	cur_x += f32(min_w) + gap
+	// Column 2: MPS (static 92px column)
+	col2_x: f32 = div1_x + 16.0
+	rl.DrawText("PRODUCTION", i32(col2_x), i32(HUD_PAD + 7), 10, SCIFI_MUTED)
+	mps_val := rl.TextFormat("+%.1f/s", global_mps())
+	rl.DrawText(mps_val, i32(col2_x), i32(HUD_PAD + 22), 17, SCIFI_CYAN)
 
-	// Tech divider
-	rl.DrawLineV({cur_x, HUD_PAD + 10}, {cur_x, HUD_PAD + 30}, SCIFI_DIM)
-	cur_x += gap
+	// Divider 2 (completely static position)
+	div2_x: f32 = col2_x + 92.0
+	rl.DrawLineV({div2_x, HUD_PAD + 10}, {div2_x, HUD_PAD + 40}, SCIFI_DIM)
+	draw_diamond(div2_x, HUD_PAD + 25, 2.5, SCIFI_CYAN)
 
-	// MPS
-	rl.DrawText(mps_text, c.int(cur_x), c.int(HUD_PAD + 12), 15, SCIFI_CYAN)
-	cur_x += f32(mps_w) + gap
+	// Column 3: Drone Speed (completely static position)
+	col3_x: f32 = div2_x + 16.0
+	rl.DrawText("DRONE SPEED", i32(col3_x), i32(HUD_PAD + 7), 10, SCIFI_MUTED)
+	speed_val := rl.TextFormat("LVL %d/%d", drone_speed_level, DRONE_SPEED_UPGRADE_MAX)
+	rl.DrawText(speed_val, i32(col3_x), i32(HUD_PAD + 24), 11, SCIFI_MINT)
+	draw_segmented_meter({col3_x + 58, HUD_PAD + 24, 48, 12}, f32(drone_speed_level) / f32(DRONE_SPEED_UPGRADE_MAX), 5, SCIFI_MINT, SCIFI_DIM)
 
-	// Tech divider
-	rl.DrawLineV({cur_x, HUD_PAD + 10}, {cur_x, HUD_PAD + 30}, SCIFI_DIM)
-	cur_x += gap
+	// Top right of viewport: telemetry dock (FPS, altitude, zoom)
+	// Symmetrical aerospace winged HUD dock (inspired by Star Fox Zero top-right UI)
+	tr_dock_w: f32 = 230.0
+	tr_dock_h: f32 = 50.0
+	tr_x := f32(viewport_w) - f32(HUD_PAD) - tr_dock_w
+	tr_rect := rl.Rectangle{tr_x, HUD_PAD, tr_dock_w, tr_dock_h}
+	draw_winged_panel_right(tr_rect, 6, 20, SCIFI_PANEL, SCIFI_CYAN)
 
-	// Drone Speed level: text + 5 segmented blocks
-	rl.DrawText(speed_lbl, c.int(cur_x), c.int(HUD_PAD + 13), 13, SCIFI_MINT)
-	cur_x += f32(speed_w) + 10.0
-	draw_segmented_meter({cur_x, HUD_PAD + 14, meter_w, 12}, f32(drone_speed_level) / f32(DRONE_SPEED_UPGRADE_MAX), 5, SCIFI_MINT, SCIFI_DIM)
+	// Fighter vector glyph icon (Arwing-style silhouette)
+	draw_fighter_vector_icon({tr_x + 24, HUD_PAD + 25}, 10.0, SCIFI_MINT)
 
-	// Top right of viewport: telemetry dock (FPS, altitude / latitude, zoom)
-	telemetry_text := rl.TextFormat("FPS %d   ALT %.0f   ZOOM %d%%", rl.GetFPS(), camera.position.y, zoom_percent())
-	telemetry_w := f32(rl.MeasureText(telemetry_text, 12)) + 28
-	telemetry_x := f32(viewport_w) - HUD_PAD - telemetry_w
-	telemetry_rect := rl.Rectangle{telemetry_x, HUD_PAD, telemetry_w, HUD_DOCK_H}
-	draw_chamfered_panel(telemetry_rect, 6, SCIFI_PANEL, SCIFI_STEEL)
-	draw_corner_brackets(telemetry_rect, 2, 6, SCIFI_CYAN)
-	rl.DrawText(telemetry_text, c.int(telemetry_x + 14), c.int(HUD_PAD + 13), 12, SCIFI_CYAN)
+	// Telemetry readouts (altitude and zoom)
+	telemetry_cam := rl.TextFormat("ALT %.0f   ZOOM %d%%", camera.position.y, zoom_percent())
+	rl.DrawText(telemetry_cam, i32(tr_x + 44), i32(HUD_PAD + 20), 13, SCIFI_CYAN)
 
+	// Divider before FPS
+	div_tr_x := tr_x + tr_dock_w - 60.0
+	rl.DrawLineV({div_tr_x, HUD_PAD + 10}, {div_tr_x, HUD_PAD + 40}, SCIFI_DIM)
+	draw_diamond(div_tr_x, HUD_PAD + 25, 2.5, SCIFI_CYAN)
+
+	fps_str := rl.TextFormat("%d FPS", rl.GetFPS())
+	rl.DrawText(fps_str, i32(div_tr_x + 10), i32(HUD_PAD + 20), 12, SCIFI_MINT)
+
+	// Save notification chip (if active)
 	if hud_save_notification_timer > 0 {
 		saved_lbl: cstring = "GAME SAVED"
-		saved_w := f32(rl.MeasureText(saved_lbl, 12))
-		saved_x := telemetry_x - saved_w - 16
-		draw_chamfered_panel({saved_x - 8, HUD_PAD + 8, saved_w + 16, 24}, 4, rl.Color{30, 20, 10, 240}, SCIFI_AMBER_DIM)
-		rl.DrawText(saved_lbl, c.int(saved_x), c.int(HUD_PAD + 14), 12, SCIFI_AMBER)
+		saved_w := f32(rl.MeasureText(saved_lbl, 11))
+		saved_x := tr_x - saved_w - 20
+		draw_chamfered_panel({saved_x - 8, HUD_PAD + 12, saved_w + 16, 26}, 4, rl.Color{30, 20, 10, 240}, SCIFI_AMBER_DIM)
+		rl.DrawText(saved_lbl, i32(saved_x), i32(HUD_PAD + 18), 11, SCIFI_AMBER)
 	}
 
 	// Bottom: standalone Controls button
@@ -1716,40 +1728,64 @@ draw_world :: proc() {
 }
 
 draw_inspector :: proc() {
-	x := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
+	panel_orig_x := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
 	h := f32(rl.GetScreenHeight())
 
-	// Depth: soft drop shadow spilling into viewport
-	rl.DrawRectangle(c.int(x - 16), 0, 16, rl.GetScreenHeight(), rl.Color{0, 0, 0, 80})
-	rl.DrawRectangle(c.int(x - 6), 0, 6, rl.GetScreenHeight(), rl.Color{0, 0, 0, 110})
-	rl.DrawRectangle(c.int(x), 0, SCREEN_PANEL_WIDTH, rl.GetScreenHeight(), SCIFI_PANEL)
+	// Floating tactical console container inset by 8px from screen edges (inspired by Star Fox Zero map console)
+	container_x := panel_orig_x + 4.0
+	container_y: f32 = 12.0
+	container_w := f32(SCREEN_PANEL_WIDTH) - 8.0
+	container_h := h - 24.0
 
-	// Sci-Fi left border with dual lines
-	rl.DrawLineV({x, 0}, {x, h}, SCIFI_CYAN)
-	rl.DrawLineV({x + 2, 0}, {x + 2, h}, SCIFI_DIM)
+	draw_tactical_container({container_x, container_y, container_w, container_h})
 
-	// Header banner: clean title card with status chip and MPS readout
-	header_box := rl.Rectangle{x + PANEL_PAD_X, 14, PANEL_CONTENT_W, 36}
-	draw_chamfered_panel(header_box, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
-	draw_corner_brackets(header_box, 2, 6, SCIFI_CYAN)
+	x := panel_orig_x
 
-	if selected_planet == ENEMY_HOME {
-		hq_title: cstring = "ENEMY FORTRESS"
-		if enemy_hq_destroyed() { hq_title = "ENEMY FORTRESS (DEAD)" }
-		rl.DrawText(hq_title, c.int(x + PANEL_PAD_X + 12), 23, 17, SCIFI_RED)
+	// Header banner: styled like the active glowing 'SOLAR' card from Star Fox Zero reference
+	header_box := rl.Rectangle{x + PANEL_PAD_X, 16, PANEL_CONTENT_W, 38}
+	is_enemy := selected_planet == ENEMY_HOME
+	card_glow := is_enemy ? SCIFI_RED : SCIFI_CYAN
+	card_bracket := is_enemy ? SCIFI_RED : SCIFI_MINT
+
+	// Luminous outer neon bloom
+	rl.DrawRectangleLinesEx({header_box.x - 2, header_box.y - 2, header_box.width + 4, header_box.height + 4}, 1, rl.Fade(card_glow, 0.45))
+	draw_chamfered_panel(header_box, 6, SCIFI_PANEL_SOLID, card_glow)
+	draw_corner_brackets(header_box, 2, 7, card_bracket)
+
+	if is_enemy {
+		hq_title: cstring = "ENEMY CITADEL"
+		if enemy_hq_destroyed() { hq_title = "CITADEL SILENCED (DEAD)" }
+		rl.DrawText(hq_title, c.int(x + PANEL_PAD_X + 14), c.int(header_box.y + 11), 17, SCIFI_RED)
 	} else {
-		chip := rl.Rectangle{x + PANEL_PAD_X + 10, 26, 12, 12}
-		draw_chamfered_panel(chip, 2, planets[selected_planet].color, SCIFI_MINT)
-		title_x := x + PANEL_PAD_X + 28
-		rl.DrawText(planets[selected_planet].name, c.int(title_x), 23, 17, SCIFI_CYAN)
+		// Celestial sphere preview disc with concentric reticle arc
+		planet_pos := rl.Vector2{x + PANEL_PAD_X + 18, header_box.y + 19}
+		rl.DrawCircleV(planet_pos, 8, planets[selected_planet].color)
+		rl.DrawCircleLines(c.int(planet_pos.x), c.int(planet_pos.y), 12, rl.Fade(SCIFI_CYAN, 0.7))
+		rl.DrawLineV({planet_pos.x - 14, planet_pos.y}, {planet_pos.x - 10, planet_pos.y}, SCIFI_MINT)
+		rl.DrawLineV({planet_pos.x + 10, planet_pos.y}, {planet_pos.x + 14, planet_pos.y}, SCIFI_MINT)
+
+		title_x := x + PANEL_PAD_X + 38
+		rl.DrawText(planets[selected_planet].name, c.int(title_x), c.int(header_box.y + 11), 17, SCIFI_TEXT)
+
 		if selected_planet == EARTH || has_vision(selected_planet) || intel_recorded[selected_planet] {
-			mps_text := rl.TextFormat("MPS %.1f", planet_mps(selected_planet))
-			mps_w := rl.MeasureText(mps_text, 12)
-			pill := rl.Rectangle{x + PANEL_PAD_X + PANEL_CONTENT_W - f32(mps_w) - 18, 22, f32(mps_w) + 12, 20}
+			mps_text := rl.TextFormat("▲▲▲ %.1f MPS", planet_mps(selected_planet))
+			mps_w := f32(rl.MeasureText(mps_text, 11))
+			pill := rl.Rectangle{x + PANEL_PAD_X + PANEL_CONTENT_W - mps_w - 16, header_box.y + 9, mps_w + 12, 20}
 			draw_chamfered_panel(pill, 3, rl.Color{28, 20, 10, 240}, SCIFI_AMBER_DIM)
-			rl.DrawText(mps_text, c.int(pill.x + 6), 26, 12, SCIFI_AMBER)
+			rl.DrawText(mps_text, c.int(pill.x + 6), c.int(pill.y + 5), 11, SCIFI_AMBER)
+		} else {
+			unscouted: cstring = "▲▲▲ DARK"
+			uw := f32(rl.MeasureText(unscouted, 11))
+			pill := rl.Rectangle{x + PANEL_PAD_X + PANEL_CONTENT_W - uw - 16, header_box.y + 9, uw + 12, 20}
+			draw_chamfered_panel(pill, 3, rl.Color{16, 20, 24, 240}, SCIFI_DIM)
+			rl.DrawText(unscouted, c.int(pill.x + 6), c.int(pill.y + 5), 11, SCIFI_MUTED)
 		}
 	}
+
+	// Connecting circuit bus line down from Header Card to next section
+	circuit_x := x + PANEL_PAD_X + 18
+	rl.DrawLineV({circuit_x, header_box.y + header_box.height}, {circuit_x, header_box.y + header_box.height + 12}, rl.Fade(SCIFI_CYAN, 0.45))
+	rl.DrawCircleV({circuit_x, header_box.y + header_box.height + 12}, 2.0, SCIFI_MINT)
 
 	if selected_planet == EARTH {
 		draw_earth_inspector(x)
@@ -1764,11 +1800,8 @@ draw_inspector :: proc() {
 	if ghost_view() {
 		draw_ghost_rosters(x)
 	} else if selected_planet == EARTH || has_vision(selected_planet) {
-		if selected_planet != ENEMY_HOME {
-			rl.DrawText(rl.TextFormat("MINING DRONES (%d/%d)", roster_count(.MINING), planet_mining_cap(selected_planet)), c.int(x + PANEL_PAD_X), c.int(unit_tile_y(.MINING) - 23), 13, SCIFI_AMBER)
-		} else {
-			rl.DrawText(rl.TextFormat("MINING DRONES (%d)", roster_count(.MINING)), c.int(x + PANEL_PAD_X), c.int(unit_tile_y(.MINING) - 23), 13, SCIFI_AMBER)
-		}
+		mining_hdr := selected_planet != ENEMY_HOME ? rl.TextFormat("MINING DRONES (%d/%d)", roster_count(.MINING), planet_mining_cap(selected_planet)) : rl.TextFormat("MINING DRONES (%d)", roster_count(.MINING))
+		draw_section_header(x + PANEL_PAD_X, f32(unit_tile_y(.MINING) - 23), PANEL_CONTENT_W, mining_hdr, SCIFI_AMBER)
 		m_ord := 0
 		for i := 0; i < unit_count; i += 1 {
 			if unit_in_roster(i, .MINING) {
@@ -1776,7 +1809,7 @@ draw_inspector :: proc() {
 				m_ord += 1
 			}
 		}
-		rl.DrawText(rl.TextFormat("FIGHTING DRONES (%d)", roster_count(.COMBAT)), c.int(x + PANEL_PAD_X), c.int(unit_tile_y(.COMBAT) - 23), 13, SCIFI_BLUE)
+		draw_section_header(x + PANEL_PAD_X, f32(unit_tile_y(.COMBAT) - 23), PANEL_CONTENT_W, rl.TextFormat("FIGHTING DRONES (%d)", roster_count(.COMBAT)), SCIFI_BLUE)
 		c_ord := 0
 		for i := 0; i < unit_count; i += 1 {
 			if unit_in_roster(i, .COMBAT) {
@@ -1786,7 +1819,7 @@ draw_inspector :: proc() {
 		}
 		if has_vision(selected_planet) {
 			if enemy_roster_count(.MINING) > 0 {
-				rl.DrawText(rl.TextFormat("HOSTILE MINING (%d)", enemy_roster_count(.MINING)), c.int(x + PANEL_PAD_X), c.int(enemy_tile_y(.MINING) - 23), 13, SCIFI_RED)
+				draw_section_header(x + PANEL_PAD_X, f32(enemy_tile_y(.MINING) - 23), PANEL_CONTENT_W, rl.TextFormat("HOSTILE MINING (%d)", enemy_roster_count(.MINING)), SCIFI_RED)
 				em_ord := 0
 				for i := 0; i < unit_count; i += 1 {
 					if enemy_in_roster(i, .MINING) {
@@ -1796,7 +1829,7 @@ draw_inspector :: proc() {
 				}
 			}
 			if enemy_roster_count(.COMBAT) > 0 {
-				rl.DrawText(rl.TextFormat("HOSTILE FIGHTERS (%d)", enemy_roster_count(.COMBAT)), c.int(x + PANEL_PAD_X), c.int(enemy_tile_y(.COMBAT) - 23), 13, SCIFI_RED)
+				draw_section_header(x + PANEL_PAD_X, f32(enemy_tile_y(.COMBAT) - 23), PANEL_CONTENT_W, rl.TextFormat("HOSTILE FIGHTERS (%d)", enemy_roster_count(.COMBAT)), SCIFI_RED)
 				ec_ord := 0
 				for i := 0; i < unit_count; i += 1 {
 					if enemy_in_roster(i, .COMBAT) {
@@ -1807,7 +1840,19 @@ draw_inspector :: proc() {
 			}
 		}
 	}
-	if h > 700 { rl.DrawText(rl.TextFormat("SELECTED UNITS: %d", selection_count()), c.int(x + PANEL_PAD_X), rl.GetScreenHeight() - 34, 13, SCIFI_CYAN) }
+	if h > 700 {
+		sel_y := f32(rl.GetScreenHeight() - 36)
+		sel_rect := rl.Rectangle{x + PANEL_PAD_X, sel_y, PANEL_CONTENT_W, 22}
+		sel_count := selection_count()
+		if sel_count > 0 {
+			draw_chamfered_panel(sel_rect, 4, rl.Color{10, 30, 40, 240}, SCIFI_CYAN)
+			draw_corner_brackets(sel_rect, 1, 4, SCIFI_MINT)
+			rl.DrawText(rl.TextFormat("ACTIVE SQUAD: %d UNITS SELECTED", sel_count), i32(sel_rect.x + 10), i32(sel_rect.y + 5), 11, SCIFI_MINT)
+		} else {
+			draw_chamfered_panel(sel_rect, 4, SCIFI_PANEL_SOLID, SCIFI_DIM)
+			rl.DrawText("NO UNITS SELECTED", i32(sel_rect.x + 10), i32(sel_rect.y + 5), 11, SCIFI_MUTED)
+		}
+	}
 	// Live drag rectangle for the inspector box-select.
 	if inspector_drag_active {
 		rect := rect_between(inspector_drag_start, rl.GetMousePosition())
@@ -1820,16 +1865,16 @@ draw_inspector :: proc() {
 // Earth owns the command bases: base pips, base construction, production
 // lines and the build queue all live here and nowhere else.
 draw_earth_inspector :: proc(x: f32) {
-	rl.DrawText("BASES", c.int(x + PANEL_PAD_X), BASES_Y + 1, 12, SCIFI_CYAN)
+	rl.DrawText("BASES", i32(x + PANEL_PAD_X), BASES_Y + 3, 11, SCIFI_CYAN)
 	for pip := 0; pip < MAX_BASES; pip += 1 {
 		pip_color := SCIFI_PANEL_SOLID
 		pip_border := SCIFI_DIM
 		if pip < base_counts[EARTH] { pip_color = rl.Color{0, 65, 85, 255}; pip_border = SCIFI_CYAN }
-		pip_rect := rl.Rectangle{x + PANEL_PAD_X + PIPS_OFF + f32(pip * GRID_PITCH), BASES_Y - 2, SLOT_SIZE, SLOT_SIZE}
+		pip_rect := rl.Rectangle{x + PANEL_PAD_X + PIPS_OFF + f32(pip * GRID_PITCH), BASES_Y - 1, SLOT_SIZE, SLOT_SIZE}
 		draw_chamfered_panel(pip_rect, 3, pip_color, pip_border)
 		if pip < base_counts[EARTH] {
 			draw_corner_brackets(pip_rect, 1, 3, SCIFI_CYAN)
-			rl.DrawRectangle(c.int(pip_rect.x + 5), c.int(pip_rect.y + 5), 8, 8, SCIFI_CYAN)
+			rl.DrawRectangle(i32(pip_rect.x + 5), i32(pip_rect.y + 5), 8, 8, SCIFI_CYAN)
 		}
 	}
 
@@ -1839,9 +1884,9 @@ draw_earth_inspector :: proc(x: f32) {
 			draw_chamfered_panel(base_button, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
 			draw_corner_brackets(base_button, 2, 6, SCIFI_CYAN)
 			if constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS {
-				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", constructing_miners(EARTH), BASE_CONSTRUCT_MINERS), c.int(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 12, 11, SCIFI_CYAN)
+				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", constructing_miners(EARTH), BASE_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 12, 11, SCIFI_CYAN)
 			} else {
-				rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), c.int(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 11, 13, SCIFI_CYAN)
+				rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), i32(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 11, 13, SCIFI_CYAN)
 			}
 			// Construction progress runs in a segmented bar just below the button.
 			draw_progress({x + PANEL_PAD_X, BASE_PROGRESS_Y, PANEL_CONTENT_W, BAR_H}, base_build_progress / BASE_CONSTRUCT_TIME, SCIFI_CYAN)
@@ -1853,7 +1898,7 @@ draw_earth_inspector :: proc(x: f32) {
 
 	prod_title_y := production_title_y()
 	prod_first_y := production_first_y()
-	rl.DrawText("PRODUCTION MATRIX", c.int(x + PANEL_PAD_X), c.int(prod_title_y), 13, SCIFI_CYAN)
+	draw_section_header(x + PANEL_PAD_X, f32(prod_title_y), PANEL_CONTENT_W, "PRODUCTION MATRIX", SCIFI_CYAN)
 	for b := 0; b < base_counts[EARTH]; b += 1 {
 		line := production[EARTH][b]
 		y := f32(prod_first_y + b * PROD_PITCH)
@@ -1861,15 +1906,15 @@ draw_earth_inspector :: proc(x: f32) {
 			name := "MINING DRONE"
 			total := drone_build_time(line.kind)
 			if line.kind == .COMBAT { name = "COMBAT DRONE" }
-			rl.DrawText(rl.TextFormat("BASE %d  %s", b + 1, name), c.int(x + PANEL_PAD_X), c.int(y), 12, SCIFI_TEXT)
+			rl.DrawText(rl.TextFormat("BASE %d  %s", b + 1, name), i32(x + PANEL_PAD_X), i32(y), 12, SCIFI_TEXT)
 			draw_progress({x + PANEL_PAD_X, y + PROD_BAR_DY, PROD_BAR_W, BAR_H}, line.progress / total, SCIFI_CYAN)
 		} else {
-			rl.DrawText(rl.TextFormat("BASE %d  STANDBY", b + 1), c.int(x + PANEL_PAD_X), c.int(y), 12, SCIFI_MUTED)
+			rl.DrawText(rl.TextFormat("BASE %d  STANDBY", b + 1), i32(x + PANEL_PAD_X), i32(y), 12, SCIFI_MUTED)
 		}
 	}
 
 	orders_y := production_orders_y()
-	rl.DrawText("REQUISITION", c.int(x + PANEL_PAD_X), c.int(orders_y - 23), 13, SCIFI_AMBER)
+	draw_section_header(x + PANEL_PAD_X, f32(orders_y - 23), PANEL_CONTENT_W, "FLEET REQUISITION", SCIFI_AMBER)
 	queue_not_full := queued_count(EARTH) < base_counts[EARTH] * 5
 	can_build_miner := minerals >= unit_cost(.MINING) && queue_not_full
 	can_build_combat := minerals >= unit_cost(.COMBAT) && queue_not_full
@@ -1887,7 +1932,7 @@ draw_earth_inspector :: proc(x: f32) {
 	queue_y := production_orders_y() + QUEUE_DY
 	queue_capacity := base_counts[EARTH] * MAX_BASES
 	queue_total := queued_count(EARTH)
-	rl.DrawText(rl.TextFormat("QUEUE BUFFER (%d/%d)", queue_total, queue_capacity), c.int(x + PANEL_PAD_X), c.int(queue_y), 13, SCIFI_CYAN)
+	draw_section_header(x + PANEL_PAD_X, f32(queue_y), PANEL_CONTENT_W, rl.TextFormat("QUEUE BUFFER (%d/%d)", queue_total, queue_capacity), SCIFI_CYAN)
 	for slot := 0; slot < queue_capacity; slot += 1 {
 		queued := slot < queue_total
 		kind := Unit_Type.MINING
@@ -1902,18 +1947,18 @@ draw_hq_inspector :: proc(x: f32) {
 	card := rl.Rectangle{x + PANEL_PAD_X, OUTPOST_CARD_Y, PANEL_CONTENT_W, CARD_H}
 	if enemy_hq_destroyed() {
 		draw_status_card(card, SCIFI_DIM)
-		rl.DrawText("CITADEL SILENCED - HUSK", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_MUTED)
-		rl.DrawText("NO WAVES LAUNCH FROM A DEAD HQ", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_TEXT)
+		rl.DrawText("CITADEL SILENCED - HUSK", i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_MUTED)
+		rl.DrawText("NO WAVES LAUNCH FROM A DEAD HQ", i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_TEXT)
 	} else if has_vision(ENEMY_HOME) {
 		_, garrison := planet_combatants(ENEMY_HOME)
 		draw_status_card(card, SCIFI_RED)
-		rl.DrawText("HOSTILE CITADEL", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_RED)
-		rl.DrawText(rl.TextFormat("FIGHTERS %d   INTEGRITY %d/%d", garrison, enemy_base_hp[ENEMY_HOME], ENEMY_HQ_BASE_HP), c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2 - 2, 11, SCIFI_TEXT)
+		rl.DrawText("HOSTILE CITADEL", i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_RED)
+		rl.DrawText(rl.TextFormat("FIGHTERS %d   INTEGRITY %d/%d", garrison, enemy_base_hp[ENEMY_HOME], ENEMY_HQ_BASE_HP), i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2 - 2, 11, SCIFI_TEXT)
 		draw_progress({x + PANEL_PAD_X + CARD_INSET, CARD_LINE_2 + 13, PANEL_CONTENT_W - 2 * CARD_INSET, 6}, f32(enemy_base_hp[ENEMY_HOME]) / f32(ENEMY_HQ_BASE_HP), SCIFI_RED)
 	} else {
 		draw_status_card(card, SCIFI_STEEL)
-		rl.DrawText("UNSCOUTED REACHES", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_MUTED)
-		rl.DrawText("DISPATCH COMBAT DRONES TO REVEAL", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_TEXT)
+		rl.DrawText("UNSCOUTED REACHES", i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_MUTED)
+		rl.DrawText("DISPATCH COMBAT DRONES TO REVEAL", i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_TEXT)
 	}
 }
 
@@ -1936,8 +1981,8 @@ draw_outpost_inspector :: proc(x: f32) {
 			status = rl.TextFormat("%02d FIGHTERS  BASE %02d: HOSTILE OCCUPATION", garrison, enemy_base_hp[selected_planet])
 		}
 		draw_status_card(card, stronghold_color)
-		rl.DrawText(title, c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, stronghold_color)
-		rl.DrawText(status, c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_TEXT)
+		rl.DrawText(title, i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, stronghold_color)
+		rl.DrawText(status, i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_TEXT)
 	} else if intel_recorded[selected_planet] {
 		card.height = CARD_H
 		intel := last_known_intel[selected_planet]
@@ -1945,12 +1990,12 @@ draw_outpost_inspector :: proc(x: f32) {
 		status := rl.TextFormat("%02d FIGHTERS  BASE %02d/%02d: PREVIOUS RECON", intel.fighters, intel.base_hp, GARRISON_BASE_HP[selected_planet])
 		if intel.base_hp <= 0 { title = "LIBERATED (STALE INTEL)" }
 		draw_status_card(card, SCIFI_AMBER)
-		rl.DrawText(title, c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_AMBER)
-		rl.DrawText(status, c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_MUTED)
+		rl.DrawText(title, i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_AMBER)
+		rl.DrawText(status, i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_MUTED)
 	} else {
 		draw_status_card(card, SCIFI_STEEL)
-		rl.DrawText("UNSCOUTED SECTOR", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_MUTED)
-		rl.DrawText("STATUS UNKNOWN: DISPATCH SCOUT", c.int(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_TEXT)
+		rl.DrawText("UNSCOUTED SECTOR", i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_MUTED)
+		rl.DrawText("STATUS UNKNOWN: DISPATCH SCOUT", i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_TEXT)
 	}
 }
 
@@ -1974,11 +2019,8 @@ draw_ghost_rosters :: proc(x: f32) {
 		count := ghost_count(kind, false)
 		if count == 0 { continue }
 		y := unit_tile_y(kind)
-		if section == 0 {
-			rl.DrawText(rl.TextFormat("%s (%d/%d)", label, count, planet_mining_cap(selected_planet)), c.int(x + PANEL_PAD_X), c.int(y - 23), 13, color)
-		} else {
-			rl.DrawText(rl.TextFormat("%s (%d)", label, count), c.int(x + PANEL_PAD_X), c.int(y - 23), 13, color)
-		}
+		hdr := section == 0 ? rl.TextFormat("%s (%d/%d) [STALE]", label, count, planet_mining_cap(selected_planet)) : rl.TextFormat("%s (%d) [STALE]", label, count)
+		draw_section_header(x + PANEL_PAD_X, f32(y - 23), PANEL_CONTENT_W, hdr, color)
 		ordinal := 0
 		for i := 0; i < intel.unit_count; i += 1 {
 			u := &intel.units[i]
@@ -1996,7 +2038,7 @@ draw_ghost_rosters :: proc(x: f32) {
 		count := ghost_count(kind, true)
 		if count == 0 { continue }
 		y := enemy_tile_y(kind)
-		rl.DrawText(rl.TextFormat("%s (%d)", label, count), c.int(x + PANEL_PAD_X), c.int(y - 23), 13, SCIFI_RED)
+		draw_section_header(x + PANEL_PAD_X, f32(y - 23), PANEL_CONTENT_W, rl.TextFormat("%s (%d) [STALE]", label, count), SCIFI_RED)
 		ordinal := 0
 		for i := 0; i < intel.unit_count; i += 1 {
 			u := &intel.units[i]
@@ -2829,6 +2871,242 @@ draw_scifi_callout_tab :: proc(x, y, w, h: f32, label: cstring, text_size: c.int
 	rl.DrawText(label, c.int(tx), c.int(ty), text_size, color)
 }
 
+// Draws an aerospace HUD dock for the top-left with an angled 45° wing cut on its bottom-right corner,
+// multi-layer glowing neon borders, and detached corner bracket accents (inspired by Star Fox Zero cockpit HUD).
+draw_winged_panel_left :: proc(rect: rl.Rectangle, chamfer: f32, wing_cut: f32, fill: rl.Color, border: rl.Color) {
+	x, y, w, h := rect.x, rect.y, rect.width, rect.height
+	ch := clamp_f32(chamfer, 2, 8)
+	wing := clamp_f32(wing_cut, 8, min(w * 0.4, h * 0.8))
+
+	v0 := rl.Vector2{x + ch, y}
+	v1 := rl.Vector2{x + w - ch, y}
+	v2 := rl.Vector2{x + w, y + ch}
+	v3 := rl.Vector2{x + w, y + h - wing}
+	v4 := rl.Vector2{x + w - wing, y + h}
+	v5 := rl.Vector2{x + ch, y + h}
+	v6 := rl.Vector2{x, y + h - ch}
+	v7 := rl.Vector2{x, y + ch}
+
+	// Ambient soft cyan glow backing
+	glow_col := rl.Fade(border, 0.12)
+	rl.DrawRectangleGradientV(i32(x), i32(y), i32(w), i32(h), glow_col, rl.Color{0, 0, 0, 0})
+
+	// Fill convex polygon using triangle fan from v0
+	rl.DrawTriangle(v0, v1, v2, fill)
+	rl.DrawTriangle(v0, v2, v3, fill)
+	rl.DrawTriangle(v0, v3, v4, fill)
+	rl.DrawTriangle(v0, v4, v5, fill)
+	rl.DrawTriangle(v0, v5, v6, fill)
+	rl.DrawTriangle(v0, v6, v7, fill)
+
+	// Primary outer neon stroke
+	rl.DrawLineV(v0, v1, border)
+	rl.DrawLineV(v1, v2, border)
+	rl.DrawLineV(v2, v3, border)
+	rl.DrawLineV(v3, v4, border)
+	rl.DrawLineV(v4, v5, border)
+	rl.DrawLineV(v5, v6, border)
+	rl.DrawLineV(v6, v7, border)
+	rl.DrawLineV(v7, v0, border)
+
+	// Inner subtle secondary rail (inset by 3px)
+	inner_border := SCIFI_STEEL
+	iv0 := rl.Vector2{x + ch + 2, y + 3}
+	iv1 := rl.Vector2{x + w - ch - 2, y + 3}
+	iv2 := rl.Vector2{x + w - 3, y + ch + 2}
+	iv3 := rl.Vector2{x + w - 3, y + h - wing}
+	iv4 := rl.Vector2{x + w - wing, y + h - 3}
+	iv5 := rl.Vector2{x + ch + 2, y + h - 3}
+	iv6 := rl.Vector2{x + 3, y + h - ch - 2}
+	iv7 := rl.Vector2{x + 3, y + ch + 2}
+	rl.DrawLineV(iv0, iv1, inner_border)
+	rl.DrawLineV(iv2, iv3, inner_border)
+	rl.DrawLineV(iv3, iv4, inner_border)
+	rl.DrawLineV(iv4, iv5, inner_border)
+	rl.DrawLineV(iv6, iv7, inner_border)
+
+	// Outer detached tactical brackets
+	bracket_col := SCIFI_MINT
+	// Top-left bracket
+	rl.DrawLineV({x - 3, y - 3}, {x + 12, y - 3}, bracket_col)
+	rl.DrawLineV({x - 3, y - 3}, {x - 3, y + 12}, bracket_col)
+	// Top-right bracket
+	rl.DrawLineV({x + w + 3, y - 3}, {x + w - 10, y - 3}, bracket_col)
+	rl.DrawLineV({x + w + 3, y - 3}, {x + w + 3, y + 10}, bracket_col)
+	// Wing cut accent tick
+	rl.DrawLineV({x + w - wing + 4, y + h + 3}, {x + w + 3, y + h - wing - 4}, rl.Fade(bracket_col, 0.7))
+}
+
+// Draws a symmetrical aerospace HUD dock for the top-right with an angled 45° wing cut on its bottom-left corner,
+// multi-layer glowing neon borders, and detached corner bracket accents.
+draw_winged_panel_right :: proc(rect: rl.Rectangle, chamfer: f32, wing_cut: f32, fill: rl.Color, border: rl.Color) {
+	x, y, w, h := rect.x, rect.y, rect.width, rect.height
+	ch := clamp_f32(chamfer, 2, 8)
+	wing := clamp_f32(wing_cut, 8, min(w * 0.4, h * 0.8))
+
+	v0 := rl.Vector2{x + ch, y}
+	v1 := rl.Vector2{x + w - ch, y}
+	v2 := rl.Vector2{x + w, y + ch}
+	v3 := rl.Vector2{x + w, y + h - ch}
+	v4 := rl.Vector2{x + w - ch, y + h}
+	v5 := rl.Vector2{x + wing, y + h}
+	v6 := rl.Vector2{x, y + h - wing}
+	v7 := rl.Vector2{x, y + ch}
+
+	// Ambient soft cyan glow backing
+	glow_col := rl.Fade(border, 0.12)
+	rl.DrawRectangleGradientV(i32(x), i32(y), i32(w), i32(h), glow_col, rl.Color{0, 0, 0, 0})
+
+	// Fill convex polygon using triangle fan from v1
+	rl.DrawTriangle(v1, v2, v3, fill)
+	rl.DrawTriangle(v1, v3, v4, fill)
+	rl.DrawTriangle(v1, v4, v5, fill)
+	rl.DrawTriangle(v1, v5, v6, fill)
+	rl.DrawTriangle(v1, v6, v7, fill)
+	rl.DrawTriangle(v1, v7, v0, fill)
+
+	// Primary outer neon stroke
+	rl.DrawLineV(v0, v1, border)
+	rl.DrawLineV(v1, v2, border)
+	rl.DrawLineV(v2, v3, border)
+	rl.DrawLineV(v3, v4, border)
+	rl.DrawLineV(v4, v5, border)
+	rl.DrawLineV(v5, v6, border)
+	rl.DrawLineV(v6, v7, border)
+	rl.DrawLineV(v7, v0, border)
+
+	// Inner subtle secondary rail (inset by 3px)
+	inner_border := SCIFI_STEEL
+	iv0 := rl.Vector2{x + ch + 2, y + 3}
+	iv1 := rl.Vector2{x + w - ch - 2, y + 3}
+	iv2 := rl.Vector2{x + w - 3, y + ch + 2}
+	iv3 := rl.Vector2{x + w - 3, y + h - ch - 2}
+	iv4 := rl.Vector2{x + w - ch - 2, y + h - 3}
+	iv5 := rl.Vector2{x + wing, y + h - 3}
+	iv6 := rl.Vector2{x + 3, y + h - wing}
+	iv7 := rl.Vector2{x + 3, y + ch + 2}
+	rl.DrawLineV(iv0, iv1, inner_border)
+	rl.DrawLineV(iv2, iv3, inner_border)
+	rl.DrawLineV(iv4, iv5, inner_border)
+	rl.DrawLineV(iv5, iv6, inner_border)
+	rl.DrawLineV(iv7, iv0, inner_border)
+
+	// Outer detached tactical brackets
+	bracket_col := SCIFI_MINT
+	// Top-right bracket
+	rl.DrawLineV({x + w + 3, y - 3}, {x + w - 12, y - 3}, bracket_col)
+	rl.DrawLineV({x + w + 3, y - 3}, {x + w + 3, y + 12}, bracket_col)
+	// Bottom-right bracket
+	rl.DrawLineV({x + w + 3, y + h + 3}, {x + w - 12, y + h + 3}, bracket_col)
+	rl.DrawLineV({x + w + 3, y + h + 3}, {x + w + 3, y + h - 12}, bracket_col)
+	// Wing cut accent tick
+	rl.DrawLineV({x + wing - 4, y + h + 3}, {x - 3, y + h - wing - 4}, rl.Fade(bracket_col, 0.7))
+}
+
+// Draws a sleek Arwing / fighter tactical vector silhouette icon (matching the ship icon next to '5' in reference image).
+draw_fighter_vector_icon :: proc(center: rl.Vector2, size: f32, color: rl.Color) {
+	nose := rl.Vector2{center.x, center.y - size * 1.1}
+	wing_l := rl.Vector2{center.x - size * 1.0, center.y + size * 0.7}
+	wing_r := rl.Vector2{center.x + size * 1.0, center.y + size * 0.7}
+	tail := rl.Vector2{center.x, center.y + size * 0.2}
+
+	rl.DrawTriangle(nose, wing_l, tail, rl.Fade(color, 0.35))
+	rl.DrawTriangle(nose, tail, wing_r, rl.Fade(color, 0.35))
+
+	rl.DrawLineV(nose, wing_l, color)
+	rl.DrawLineV(wing_l, tail, color)
+	rl.DrawLineV(tail, wing_r, color)
+	rl.DrawLineV(wing_r, nose, color)
+	rl.DrawLineV(nose, tail, SCIFI_MINT)
+}
+
+// Draws an aerospace tactical console container for the planet inspector
+// (matching the bottom-center container in the reference image).
+// Features 45° chamfers, dual glowing neon rails, precision ruler tick notches,
+// and ambient cyan edge glow.
+draw_tactical_container :: proc(rect: rl.Rectangle) {
+	x, y, w, h := rect.x, rect.y, rect.width, rect.height
+	ch: f32 = 18.0
+
+	// Soft drop shadow and ambient neon cyan bloom spilling into the viewport to the left
+	rl.DrawRectangleGradientH(i32(x - 28), i32(y), 28, i32(h), rl.Color{0, 0, 0, 0}, rl.Color{0, 0, 0, 160})
+	rl.DrawRectangleGradientH(i32(x - 10), i32(y), 10, i32(h), rl.Color{0, 0, 0, 0}, rl.Fade(SCIFI_CYAN, 0.14))
+
+	// 8-vertex chamfered polygon for container housing
+	v0 := rl.Vector2{x + ch, y}
+	v1 := rl.Vector2{x + w - ch, y}
+	v2 := rl.Vector2{x + w, y + ch}
+	v3 := rl.Vector2{x + w, y + h - ch}
+	v4 := rl.Vector2{x + w - ch, y + h}
+	v5 := rl.Vector2{x + ch, y + h}
+	v6 := rl.Vector2{x, y + h - ch}
+	v7 := rl.Vector2{x, y + ch}
+
+	fill := SCIFI_PANEL
+	rl.DrawTriangle(v0, v1, v2, fill)
+	rl.DrawTriangle(v0, v2, v3, fill)
+	rl.DrawTriangle(v0, v3, v4, fill)
+	rl.DrawTriangle(v0, v4, v5, fill)
+	rl.DrawTriangle(v0, v5, v6, fill)
+	rl.DrawTriangle(v0, v6, v7, fill)
+
+	// Primary outer neon cyan stroke
+	border := SCIFI_CYAN
+	rl.DrawLineV(v0, v1, border)
+	rl.DrawLineV(v1, v2, border)
+	rl.DrawLineV(v2, v3, border)
+	rl.DrawLineV(v3, v4, border)
+	rl.DrawLineV(v4, v5, border)
+	rl.DrawLineV(v5, v6, border)
+	rl.DrawLineV(v6, v7, border)
+	rl.DrawLineV(v7, v0, border)
+
+	// Secondary inner rail (inset by 3px)
+	inner := SCIFI_STEEL
+	rl.DrawLineV({x + ch + 2, y + 3}, {x + w - ch - 2, y + 3}, inner)
+	rl.DrawLineV({x + w - 3, y + ch + 2}, {x + w - 3, y + h - ch - 2}, inner)
+	rl.DrawLineV({x + w - ch - 2, y + h - 3}, {x + ch + 2, y + h - 3}, inner)
+	rl.DrawLineV({x + 3, y + h - ch - 2}, {x + 3, y + ch + 2}, inner)
+
+	// Outer corner bracket accents
+	draw_corner_brackets(rect, 3, 12, SCIFI_MINT)
+
+	// Precision tactical ruler tick marks along the vertical left border
+	tick_step: f32 = 32.0
+	for ty := y + ch + 16; ty < y + h - ch - 16; ty += tick_step {
+		major := math.mod(ty - y, 64.0) < tick_step * 0.5
+		tick_len: f32 = major ? 7.0 : 4.0
+		tick_col := major ? SCIFI_CYAN : SCIFI_STEEL
+		rl.DrawLineV({x - tick_len, ty}, {x, ty}, tick_col)
+	}
+
+	// Precision tick notches along the top border line (matching modular top brackets in reference image)
+	for tx := x + ch + 24; tx < x + w - ch - 24; tx += 40.0 {
+		rl.DrawLineV({tx - 5, y}, {tx - 5, y - 3}, SCIFI_CYAN)
+		rl.DrawLineV({tx - 5, y - 3}, {tx + 5, y - 3}, SCIFI_MINT)
+		rl.DrawLineV({tx + 5, y - 3}, {tx + 5, y}, SCIFI_CYAN)
+	}
+}
+
+// High-tech tactical section header with title text and glowing dividing rail.
+draw_section_header :: proc(x, y, w: f32, title: cstring, color: rl.Color) {
+	rl.DrawText(title, i32(x), i32(y), 12, color)
+	tw := f32(rl.MeasureText(title, 12))
+	line_x := x + tw + 8
+	if line_x < x + w - 4 {
+		rl.DrawLineV({line_x, y + 6}, {x + w - 4, y + 6}, rl.Fade(color, 0.35))
+		rl.DrawLineV({x + w - 4, y + 3}, {x + w - 4, y + 9}, color)
+	}
+}
+
+// Status card body with depth: chamfered corners, dark glass fill,
+// top highlight, and corner brackets.
+draw_status_card :: proc(card: rl.Rectangle, border: rl.Color) {
+	draw_chamfered_panel(card, 6, SCIFI_PANEL_SOLID, border)
+	draw_corner_brackets(card, 2, 8, border)
+	rl.DrawLineV({card.x + 8, card.y + 1}, {card.x + card.width - 8, card.y + 1}, rl.Color{255, 255, 255, 30})
+}
+
 // Digital segmented progress/meter bar (blocks ■ ■ ■ □ □).
 draw_segmented_meter :: proc(rect: rl.Rectangle, value: f32, segments: int, filled_color: rl.Color, empty_color: rl.Color = SCIFI_DIM) {
 	v := clamp_f32(value, 0, 1)
@@ -2944,13 +3222,6 @@ draw_button :: proc(rect: rl.Rectangle, label: cstring, color: rl.Color = SCIFI_
 	rl.DrawText(label, c.int(text_x), c.int(text_y), 12, text_col)
 }
 
-// Status card body with depth: chamfered corners, dark glass fill,
-// top highlight, and corner brackets.
-draw_status_card :: proc(card: rl.Rectangle, border: rl.Color) {
-	draw_chamfered_panel(card, 6, SCIFI_PANEL_SOLID, border)
-	draw_corner_brackets(card, 2, 8, border)
-	rl.DrawLineV({card.x + 8, card.y + 1}, {card.x + card.width - 8, card.y + 1}, rl.Color{255, 255, 255, 30})
-}
 
 // High-tech build queue slot with chamfered edges and glowing symbols.
 draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type) {
