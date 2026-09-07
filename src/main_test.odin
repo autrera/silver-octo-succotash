@@ -2477,5 +2477,118 @@ controls_button_rect_is_docked :: proc(t: ^testing.T) {
 	testing.expect(t, rect.height == BOTTOM_DOCK_H, "controls button height matches BOTTOM_DOCK_H")
 }
 
+@(test)
+sector_in_combat_detects_all_battle_types :: proc(t: ^testing.T) {
+	reset_world()
+
+	// 1. Peacetime: starting Earth state with 1 player miner and 1 player fighter has no combat.
+	units[0] = Unit{kind = .MINING, state = .MINING, affiliation = EARTH, target_planet = EARTH}
+	units[1] = Unit{kind = .COMBAT, state = .GUARDING, affiliation = EARTH, target_planet = EARTH}
+	unit_count = 2
+	testing.expect(t, !sector_in_combat(EARTH), "no combat at Earth during peacetime")
+
+	// 2. Unattacked garrison: Venus has 10 enemy fighters, but 0 player units -> no combat yet.
+	spawn_garrison(VENUS, 10, 4)
+	testing.expect(t, !sector_in_combat(VENUS), "standing garrison with no attackers is not in combat")
+
+	// 3. Dogfight: player combat drone arrives at Venus -> active combat.
+	units[unit_count] = Unit{kind = .COMBAT, state = .GUARDING, affiliation = VENUS, enemy = false}
+	unit_count += 1
+	testing.expect(t, sector_in_combat(VENUS), "dogfight at Venus triggers combat")
+
+	// 4. Enemy siege at Earth: 5 enemy fighters attack Earth with only player base remaining.
+	reset_world()
+	units[0] = Unit{kind = .COMBAT, state = .GUARDING, affiliation = EARTH, enemy = true}
+	unit_count = 1
+	testing.expect(t, sector_in_combat(EARTH), "enemy fighters sieging Earth base triggers combat")
+
+	// 5. Enemy fighters strafing player miners:
+	reset_world()
+	base_counts[EARTH] = 0 // no base
+	units[0] = Unit{kind = .COMBAT, state = .GUARDING, affiliation = MARS, enemy = true}
+	units[1] = Unit{kind = .MINING, state = .IDLE, target_planet = MARS, enemy = false}
+	unit_count = 2
+	testing.expect(t, sector_in_combat(MARS), "enemy fighters strafing player miner triggers combat")
+
+	// 6. Player sweeping enemy miners:
+	reset_world()
+	enemy_base_hp[MARS] = 0
+	units[0] = Unit{kind = .COMBAT, state = .GUARDING, affiliation = MARS, enemy = false}
+	units[1] = Unit{kind = .MINING, state = .GUARDING, affiliation = MARS, enemy = true}
+	unit_count = 2
+	testing.expect(t, sector_in_combat(MARS), "player fighters sweeping enemy miners triggers combat")
+
+	// 7. Player sieging enemy base (no fighters or miners left, only base):
+	reset_world()
+	enemy_base_hp[MARS] = 50
+	units[0] = Unit{kind = .COMBAT, state = .GUARDING, affiliation = MARS, enemy = false}
+	unit_count = 1
+	testing.expect(t, sector_in_combat(MARS), "player fighters sieging enemy base triggers combat")
+
+	// 8. Enemy HQ combat:
+	reset_world()
+	units[0] = Unit{kind = .COMBAT, state = .GUARDING, affiliation = ENEMY_HOME, enemy = true}
+	units[1] = Unit{kind = .COMBAT, state = .GUARDING, affiliation = ENEMY_HOME, enemy = false}
+	unit_count = 2
+	testing.expect(t, sector_in_combat(ENEMY_HOME), "assault on enemy HQ triggers combat")
+}
+
+@(test)
+combat_nebula_intensity_transitions_and_hq_behavior :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+
+	// 1. Initial state: Enemy HQ has baseline brooding intensity (0.65), planets have 0.
+	testing.expect(t, abs(combat_nebula_intensity[ENEMY_HOME] - 0.65) < 0.01, "Enemy HQ initializes with 0.65 nebula intensity")
+	testing.expect(t, combat_nebula_intensity[MARS] == 0.0, "Mars has 0 nebula intensity initially")
+
+	// 2. Trigger combat at Mars (spawn 10 player fighters and 10 enemy fighters):
+	for _ in 0..<10 {
+		units[unit_count] = Unit{kind = .COMBAT, state = .GUARDING, affiliation = MARS, enemy = false}
+		unit_count += 1
+		units[unit_count] = Unit{kind = .COMBAT, state = .GUARDING, affiliation = MARS, enemy = true}
+		unit_count += 1
+	}
+
+	// Step simulation for 0.5s:
+	step_simulation(0.5)
+	testing.expect(t, combat_nebula_intensity[MARS] > 0.5, "Mars nebula flares up during combat")
+
+	// 3. Clear combat at Mars:
+	for i := unit_count - 1; i >= 0; i -= 1 {
+		if units[i].affiliation == MARS { remove_unit_at(i) }
+	}
+	enemy_base_hp[MARS] = 0 // liberated
+	testing.expect(t, !sector_in_combat(MARS), "Mars no longer in combat")
+
+	// Step simulation for 2.0s:
+	step_simulation(1.0)
+	step_simulation(1.0)
+	testing.expect(t, combat_nebula_intensity[MARS] < 0.1, "Mars nebula fades out after combat ends")
+
+	// 4. Enemy HQ assault: player attacks HQ, intensity ramps to 1.0:
+	for _ in 0..<10 {
+		units[unit_count] = Unit{kind = .COMBAT, state = .GUARDING, affiliation = ENEMY_HOME, enemy = false}
+		unit_count += 1
+	}
+	step_simulation(0.5)
+	testing.expect(t, combat_nebula_intensity[ENEMY_HOME] > 0.85, "Enemy HQ nebula ramps toward 1.0 during active assault")
+
+	// 5. Enemy HQ destroyed: intensity ramps down to 0:
+	for i := unit_count - 1; i >= 0; i -= 1 {
+		if units[i].affiliation == ENEMY_HOME { remove_unit_at(i) }
+	}
+	enemy_base_hp[ENEMY_HOME] = 0
+	step_simulation(1.0)
+	step_simulation(1.0)
+	testing.expect(t, combat_nebula_intensity[ENEMY_HOME] < 0.1, "Destroyed Enemy HQ nebula dissipates to 0")
+
+	// 6. reset_world zeroes everything:
+	reset_world()
+	for s in 0..<SECTOR_COUNT {
+		testing.expect(t, combat_nebula_intensity[s] == 0.0, "reset_world zeroes combat_nebula_intensity")
+	}
+}
+
 
 

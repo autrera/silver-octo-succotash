@@ -326,6 +326,10 @@ last_known_intel: [PLANET_COUNT]Intel
 intel_recorded: [PLANET_COUNT]bool
 // Game-clock accumulator driving laser bolt flight; frozen while paused.
 laser_anim_time: f32
+// Visual intensity of the red palpitating combat nebula per sector [0..SECTOR_COUNT-1].
+// Planets flare up when drones are actively fighting there; enemy HQ maintains an
+// ominous background presence that surges to maximum intensity during an assault.
+combat_nebula_intensity: [SECTOR_COUNT]f32
 
 // Start game menu & save notification state
 in_start_menu := true
@@ -419,6 +423,7 @@ initialize_game :: proc() {
 		if p == EARTH { continue }
 		spawn_garrison(p, GARRISON_FIGHTERS[p], GARRISON_MINERS[p])
 	}
+	combat_nebula_intensity[ENEMY_HOME] = 0.65
 }
 
 // Clean-slate reset shared by the victory-restart path and the test suite
@@ -449,6 +454,7 @@ reset_world :: proc() {
 	last_known_intel = {}
 	intel_recorded = {}
 	laser_anim_time = 0
+	combat_nebula_intensity = {}
 	drone_speed_level = 0
 	earth_rally = NO_RALLY
 	victory = false
@@ -1267,6 +1273,15 @@ kill_enemy_miner :: proc(p: int) -> bool {
 	return false
 }
 
+// Drones actively fighting at sector s (dogfight, miner sweep, or base siege).
+sector_in_combat :: proc(s: int) -> bool {
+	players, enemies := planet_combatants(s)
+	if players > 0 && enemies > 0 { return true }
+	if enemies > 0 && (player_miners_at(s) || (s == EARTH && base_counts[s] > 0)) { return true }
+	if players > 0 && (enemy_miner_count(s) > 0 || enemy_base_hp[s] > 0) { return true }
+	return false
+}
+
 // Shift-left removal keeps unit indices stable, so is_effective_miner ranks and
 // selection flags stay consistent for the survivors.
 remove_unit_at :: proc(index: int) {
@@ -1479,9 +1494,10 @@ travel :: proc(u: ^Unit, target: rl.Vector3, amount: f32) {
 
 draw_world :: proc() {
 	viewport_w := rl.GetScreenWidth() - SCREEN_PANEL_WIDTH
-	// Stars project to screen space before the 3D pass, so they sit behind
-	// every planet and unit.
+	// Stars and combat nebulae project to screen space before the 3D pass,
+	// so they sit in the background behind every planet and fortress.
 	draw_starfield()
+	draw_combat_nebulae()
 	rl.BeginMode3D(camera)
 	for p in 0..<PLANET_COUNT {
 		planet := planets[p]
@@ -3529,6 +3545,133 @@ draw_starfield :: proc() {
 	}
 }
 
+// Red palpitating combat nebula in screen space behind planets with active combat
+// and behind the enemy HQ. Rendered before BeginMode3D so 3D textured planet
+// spheres and fortress models occlude the nebula core, creating an organic backlit
+// cosmic warzone atmosphere. Uses additive blending for luminous gas clouds.
+draw_combat_nebulae :: proc() {
+	has_any := false
+	for s in 0..<SECTOR_COUNT {
+		if combat_nebula_intensity[s] > 0.005 {
+			has_any = true
+			break
+		}
+	}
+	if !has_any { return }
+
+	viewport_w := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
+	screen_h := f32(rl.GetScreenHeight())
+	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
+	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
+
+	rl.BeginBlendMode(.ADDITIVE)
+	defer rl.EndBlendMode()
+
+	for s in 0..<SECTOR_COUNT {
+		intensity := combat_nebula_intensity[s]
+		if intensity <= 0.005 { continue }
+
+		pos_3d := sector_pos(s)
+		cam_to_pos := pos_3d - camera.position
+		if rl.Vector3DotProduct(cam_to_pos, cam_forward) <= 0.1 { continue }
+
+		screen_pos := rl.GetWorldToScreen(pos_3d, camera)
+		if screen_pos.x < -450 || screen_pos.x > viewport_w + 450 || screen_pos.y < -450 || screen_pos.y > screen_h + 450 {
+			continue
+		}
+
+		rad := sector_radius(s)
+		limb_3d := pos_3d + cam_right * rad
+		limb_screen := rl.GetWorldToScreen(limb_3d, camera)
+		base_r := max(rl.Vector2Distance(screen_pos, limb_screen), 14.0)
+
+		// Palpitating rhythm: organic multi-frequency heartbeat pulse
+		// Combines fundamental throb with secondary harmonic for an authentic heart-palpitation cadence
+		t := laser_anim_time
+		pulse_speed: f32 = sector_in_combat(s) ? 3.8 : 2.4
+		pulse1 := math.sin(t * pulse_speed + f32(s) * 1.8)
+		pulse2 := math.sin(t * (pulse_speed * 2.0) + f32(s) * 2.5 + 0.45)
+		palpitation := 0.85 + 0.28 * pulse1 + 0.16 * pulse2
+		radius_pulse := 1.0 + 0.14 * math.sin(t * (pulse_speed * 0.7) + f32(s))
+
+		effective_intensity := clamp_f32(intensity * palpitation, 0.0, 1.6)
+
+		// 1. Grand Outer Ambient Nebula Shroud (deep cosmic space haze)
+		// Spans a vast area behind the celestial body, illuminating background space in deep crimson & wine
+		grand_r := max(base_r * 11.0, 240.0) * radius_pulse
+		grand_alpha := u8(clamp_f32(75.0 * effective_intensity, 0, 255))
+		rl.DrawCircleGradient(screen_pos, grand_r, rl.Color{160, 12, 35, grand_alpha}, rl.Color{0, 0, 0, 0})
+
+		secondary_grand_pos := rl.Vector2{
+			screen_pos.x + math.cos(t * 0.3 + f32(s)) * (base_r * 2.8),
+			screen_pos.y + math.sin(t * 0.25 + f32(s)) * (base_r * 2.0),
+		}
+		secondary_r := max(base_r * 9.5, 200.0) * radius_pulse
+		rl.DrawCircleGradient(secondary_grand_pos, secondary_r, rl.Color{190, 20, 50, u8(clamp_f32(60.0 * effective_intensity, 0, 255))}, rl.Color{0, 0, 0, 0})
+
+		// 2. Multi-tiered Asymmetric Billowing Gas Clouds (12 organic lobes across 3 tiers)
+		// Tier 1: Outer billowing wisps (4 lobes)
+		for i in 0..<4 {
+			fi := f32(i)
+			ang := fi * (math.PI * 0.5) + math.sin(t * 0.35 + fi * 1.7 + f32(s)) * 0.45 + f32(s) * 0.8
+			dist := max(base_r * (3.8 + 0.6 * math.sin(t * 0.6 + fi * 2.2 + f32(s))), 70.0)
+			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.82}
+			r := max(base_r * (3.8 + 0.5 * math.cos(t * 1.0 + fi * 1.5)) * radius_pulse, 65.0)
+			alpha := u8(clamp_f32(65.0 * effective_intensity, 0, 255))
+			rl.DrawCircleGradient(center, r, rl.Color{195, 18, 42, alpha}, rl.Color{0, 0, 0, 0})
+		}
+
+		// Tier 2: Mid-range turbulent cloud banks (5 lobes)
+		for i in 0..<5 {
+			fi := f32(i)
+			ang := fi * (2.0 * math.PI / 5.0) + math.sin(t * 0.45 + fi * 1.5 + f32(s)) * 0.38 + f32(s) * 1.3
+			dist := max(base_r * (2.3 + 0.45 * math.sin(t * 0.75 + fi * 1.9 + f32(s))), 45.0)
+			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.84}
+			r := max(base_r * (3.0 + 0.45 * math.cos(t * 1.2 + fi * 1.8)) * radius_pulse, 50.0)
+			alpha := u8(clamp_f32(90.0 * effective_intensity, 0, 255))
+			r_val := u8(clamp_f32(235.0 + 20.0 * math.sin(fi * 2.0), 0, 255))
+			g_val := u8(clamp_f32(35.0 + 25.0 * math.cos(fi * 1.6), 0, 255))
+			b_val := u8(clamp_f32(30.0 + 20.0 * math.sin(fi * 3.0), 0, 255))
+			rl.DrawCircleGradient(center, r, rl.Color{r_val, g_val, b_val, alpha}, rl.Color{0, 0, 0, 0})
+		}
+
+		// Tier 3: Dense inner plasma clouds (3 lobes)
+		for i in 0..<3 {
+			fi := f32(i)
+			ang := fi * (2.0 * math.PI / 3.0) + math.sin(t * 0.5 + fi * 2.1 + f32(s)) * 0.3 + f32(s) * 0.4
+			dist := max(base_r * (1.3 + 0.3 * math.sin(t * 0.9 + fi * 2.5)), 25.0)
+			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.86}
+			r := max(base_r * (2.4 + 0.35 * math.cos(t * 1.3 + fi * 2.0)) * radius_pulse, 40.0)
+			alpha := u8(clamp_f32(110.0 * effective_intensity, 0, 255))
+			rl.DrawCircleGradient(center, r, rl.Color{255, 60, 32, alpha}, rl.Color{0, 0, 0, 0})
+		}
+
+		// 3. Hot Inner Combat Corona & Shockwave Disc (backlighting the body silhouette)
+		corona_r := max(base_r * 2.8, 45.0) * radius_pulse
+		corona_alpha := u8(clamp_f32(135.0 * effective_intensity, 0, 255))
+		rl.DrawCircleGradient(screen_pos, corona_r, rl.Color{255, 55, 28, corona_alpha}, rl.Color{0, 0, 0, 0})
+
+		// Scorching inner core ring right behind planet edge
+		inner_core_r := max(base_r * 1.7, 28.0) * (0.95 + 0.1 * palpitation)
+		inner_alpha := u8(clamp_f32(115.0 * effective_intensity, 0, 255))
+		rl.DrawCircleGradient(screen_pos, inner_core_r, rl.Color{255, 125, 45, inner_alpha}, rl.Color{0, 0, 0, 0})
+
+		// 4. Ionization Tendrils / Plasma Streamers (fine drifting filaments)
+		for k in 0..<8 {
+			fk := f32(k)
+			spark_angle := fk * 0.785 + t * 0.55 + f32(s) * 1.4
+			spark_dist := max(base_r * (2.8 + 0.5 * math.sin(t * 1.4 + fk * 2.2)), 45.0)
+			spark_pos := rl.Vector2{
+				screen_pos.x + math.cos(spark_angle) * spark_dist,
+				screen_pos.y + math.sin(spark_angle) * spark_dist * 0.88,
+			}
+			spark_r := max(base_r * (1.4 + 0.35 * math.cos(t * 2.1 + fk)), 25.0)
+			spark_alpha := u8(clamp_f32(50.0 * effective_intensity, 0, 255))
+			rl.DrawCircleGradient(spark_pos, spark_r, rl.Color{255, 135, 50, spark_alpha}, rl.Color{0, 0, 0, 0})
+		}
+	}
+}
+
 // ---- Control-group squads ------------------------------------------------
 
 SQUAD_COUNT :: 9
@@ -3651,6 +3794,20 @@ step_simulation :: proc(dt: f32) {
 	update_intel()
 	// Wrapping the laser clock keeps f32 precision stable across long sessions.
 	laser_anim_time = math.mod(laser_anim_time + dt, 3600.0)
+	// Smooth transition of combat nebula intensity: rapid flare-up in battle, graceful fade-out on victory.
+	for s in 0..<SECTOR_COUNT {
+		in_combat := sector_in_combat(s)
+		target: f32 = 0.0
+		if s == ENEMY_HOME {
+			if !enemy_hq_destroyed() {
+				target = in_combat ? 1.0 : 0.65
+			}
+		} else if in_combat {
+			target = 1.0
+		}
+		rate: f32 = in_combat ? 3.5 : 1.2
+		combat_nebula_intensity[s] += (target - combat_nebula_intensity[s]) * clamp_f32(dt * rate, 0.0, 1.0)
+	}
 	// Victory latch: every planet liberated AND the enemy HQ destroyed.
 	if !victory && victory_achieved() { victory = true }
 	// Defeat latch (edge-triggered; reset_world clears it): no bases AND no units.
@@ -4375,6 +4532,7 @@ start_menu_rects :: proc(has_save: bool) -> (box, continue_rect, new_game_rect, 
 
 update_start_menu :: proc(dt: f32) {
 	update_planet_spin(dt)
+	laser_anim_time = math.mod(laser_anim_time + dt, 3600.0)
 	has_save := save_game_exists()
 	count := start_menu_options_count(has_save)
 	if start_menu_selection >= count {
