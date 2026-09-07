@@ -2590,5 +2590,45 @@ combat_nebula_intensity_transitions_and_hq_behavior :: proc(t: ^testing.T) {
 	}
 }
 
+@(test)
+earth_industry_lights_intensity_transitions :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+
+	// 1. Initially Earth has no units queued, intensity is 0
+	testing.expect(t, earth_industry_intensity == 0.0, "Earth industry intensity starts at 0")
+
+	// 2. Queue a unit on Earth (e.g. MINING drone)
+	minerals = 500
+	queue_unit(.MINING)
+	testing.expect(t, production[EARTH][0].active, "Production line 0 active on Earth")
+
+	// 3. Step simulation for 0.4s: intensity should ramp up toward 1.0
+	step_simulation(0.4)
+	testing.expect(t, earth_industry_intensity > 0.8, "Earth industry intensity ramps up while unit is in production")
+
+	// 4. Cancel production: queue becomes inactive
+	cancel_last_queued()
+	testing.expect(t, !production[EARTH][0].active, "Production line cancelled on Earth")
+
+	// 5. Step simulation for 1.0s: intensity fades back toward 0.0
+	step_simulation(0.5)
+	step_simulation(0.5)
+	testing.expect(t, earth_industry_intensity < 0.05, "Earth industry intensity fades out when production stops")
+
+	// 6. Base construction on Earth also activates industry lights
+	minerals = 1000
+	start_base_construction()
+	testing.expect(t, base_build_planet == EARTH, "Base construction started on Earth")
+	step_simulation(0.4)
+	testing.expect(t, earth_industry_intensity > 0.8, "Earth industry intensity ramps up during base construction")
+
+	// 7. reset_world resets earth_industry_intensity to 0
+	reset_world()
+	testing.expect(t, earth_industry_intensity == 0.0, "reset_world zeroes earth_industry_intensity")
+}
+
+
+
 
 

@@ -330,6 +330,9 @@ laser_anim_time: f32
 // Planets flare up when drones are actively fighting there; enemy HQ maintains an
 // ominous background presence that surges to maximum intensity during an assault.
 combat_nebula_intensity: [SECTOR_COUNT]f32
+// Visual intensity of Earth's manufacturing industry lights [0..1]: flares up
+// when units or bases are being constructed on Earth, turning surface lights on and off.
+earth_industry_intensity: f32
 
 // Start game menu & save notification state
 in_start_menu := true
@@ -366,6 +369,7 @@ main :: proc() {
 	}
 	in_start_menu = true
 	start_menu_selection = 0
+
 
 	for !rl.WindowShouldClose() && !quit_requested {
 		dt := rl.GetFrameTime()
@@ -455,6 +459,7 @@ reset_world :: proc() {
 	intel_recorded = {}
 	laser_anim_time = 0
 	combat_nebula_intensity = {}
+	earth_industry_intensity = 0
 	drone_speed_level = 0
 	earth_rally = NO_RALLY
 	victory = false
@@ -1639,6 +1644,8 @@ draw_world :: proc() {
 		if u.state == .TRANSIT && !is_concealed(u) { rl.DrawLine3D(u.position, sector_pos(u.target_planet), rl.Color{0, 225, 255, 90}) }
 	}
 	rl.EndMode3D()
+	// Luminous industrial manufacturing lights on Earth when units are being created
+	draw_earth_industry_lights()
 	if in_start_menu {
 		return
 	}
@@ -3549,6 +3556,7 @@ draw_starfield :: proc() {
 // and behind the enemy HQ. Rendered before BeginMode3D so 3D textured planet
 // spheres and fortress models occlude the nebula core, creating an organic backlit
 // cosmic warzone atmosphere. Uses additive blending for luminous gas clouds.
+// Size scaled down by half for a tighter, more focused warzone halo.
 draw_combat_nebulae :: proc() {
 	has_any := false
 	for s in 0..<SECTOR_COUNT {
@@ -3576,7 +3584,7 @@ draw_combat_nebulae :: proc() {
 		if rl.Vector3DotProduct(cam_to_pos, cam_forward) <= 0.1 { continue }
 
 		screen_pos := rl.GetWorldToScreen(pos_3d, camera)
-		if screen_pos.x < -450 || screen_pos.x > viewport_w + 450 || screen_pos.y < -450 || screen_pos.y > screen_h + 450 {
+		if screen_pos.x < -250 || screen_pos.x > viewport_w + 250 || screen_pos.y < -250 || screen_pos.y > screen_h + 250 {
 			continue
 		}
 
@@ -3597,16 +3605,16 @@ draw_combat_nebulae :: proc() {
 		effective_intensity := clamp_f32(intensity * palpitation, 0.0, 1.6)
 
 		// 1. Grand Outer Ambient Nebula Shroud (deep cosmic space haze)
-		// Spans a vast area behind the celestial body, illuminating background space in deep crimson & wine
-		grand_r := max(base_r * 11.0, 240.0) * radius_pulse
+		// Scaled down by half for a cleaner, tighter atmospheric halo
+		grand_r := max(base_r * 5.5, 120.0) * radius_pulse
 		grand_alpha := u8(clamp_f32(75.0 * effective_intensity, 0, 255))
 		rl.DrawCircleGradient(screen_pos, grand_r, rl.Color{160, 12, 35, grand_alpha}, rl.Color{0, 0, 0, 0})
 
 		secondary_grand_pos := rl.Vector2{
-			screen_pos.x + math.cos(t * 0.3 + f32(s)) * (base_r * 2.8),
-			screen_pos.y + math.sin(t * 0.25 + f32(s)) * (base_r * 2.0),
+			screen_pos.x + math.cos(t * 0.3 + f32(s)) * (base_r * 1.4),
+			screen_pos.y + math.sin(t * 0.25 + f32(s)) * (base_r * 1.0),
 		}
-		secondary_r := max(base_r * 9.5, 200.0) * radius_pulse
+		secondary_r := max(base_r * 4.75, 100.0) * radius_pulse
 		rl.DrawCircleGradient(secondary_grand_pos, secondary_r, rl.Color{190, 20, 50, u8(clamp_f32(60.0 * effective_intensity, 0, 255))}, rl.Color{0, 0, 0, 0})
 
 		// 2. Multi-tiered Asymmetric Billowing Gas Clouds (12 organic lobes across 3 tiers)
@@ -3614,9 +3622,9 @@ draw_combat_nebulae :: proc() {
 		for i in 0..<4 {
 			fi := f32(i)
 			ang := fi * (math.PI * 0.5) + math.sin(t * 0.35 + fi * 1.7 + f32(s)) * 0.45 + f32(s) * 0.8
-			dist := max(base_r * (3.8 + 0.6 * math.sin(t * 0.6 + fi * 2.2 + f32(s))), 70.0)
+			dist := max(base_r * (1.9 + 0.3 * math.sin(t * 0.6 + fi * 2.2 + f32(s))), 35.0)
 			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.82}
-			r := max(base_r * (3.8 + 0.5 * math.cos(t * 1.0 + fi * 1.5)) * radius_pulse, 65.0)
+			r := max(base_r * (1.9 + 0.25 * math.cos(t * 1.0 + fi * 1.5)) * radius_pulse, 32.5)
 			alpha := u8(clamp_f32(65.0 * effective_intensity, 0, 255))
 			rl.DrawCircleGradient(center, r, rl.Color{195, 18, 42, alpha}, rl.Color{0, 0, 0, 0})
 		}
@@ -3625,9 +3633,9 @@ draw_combat_nebulae :: proc() {
 		for i in 0..<5 {
 			fi := f32(i)
 			ang := fi * (2.0 * math.PI / 5.0) + math.sin(t * 0.45 + fi * 1.5 + f32(s)) * 0.38 + f32(s) * 1.3
-			dist := max(base_r * (2.3 + 0.45 * math.sin(t * 0.75 + fi * 1.9 + f32(s))), 45.0)
+			dist := max(base_r * (1.15 + 0.225 * math.sin(t * 0.75 + fi * 1.9 + f32(s))), 22.5)
 			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.84}
-			r := max(base_r * (3.0 + 0.45 * math.cos(t * 1.2 + fi * 1.8)) * radius_pulse, 50.0)
+			r := max(base_r * (1.5 + 0.225 * math.cos(t * 1.2 + fi * 1.8)) * radius_pulse, 25.0)
 			alpha := u8(clamp_f32(90.0 * effective_intensity, 0, 255))
 			r_val := u8(clamp_f32(235.0 + 20.0 * math.sin(fi * 2.0), 0, 255))
 			g_val := u8(clamp_f32(35.0 + 25.0 * math.cos(fi * 1.6), 0, 255))
@@ -3639,20 +3647,20 @@ draw_combat_nebulae :: proc() {
 		for i in 0..<3 {
 			fi := f32(i)
 			ang := fi * (2.0 * math.PI / 3.0) + math.sin(t * 0.5 + fi * 2.1 + f32(s)) * 0.3 + f32(s) * 0.4
-			dist := max(base_r * (1.3 + 0.3 * math.sin(t * 0.9 + fi * 2.5)), 25.0)
+			dist := max(base_r * (0.65 + 0.15 * math.sin(t * 0.9 + fi * 2.5)), 12.5)
 			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.86}
-			r := max(base_r * (2.4 + 0.35 * math.cos(t * 1.3 + fi * 2.0)) * radius_pulse, 40.0)
+			r := max(base_r * (1.2 + 0.175 * math.cos(t * 1.3 + fi * 2.0)) * radius_pulse, 20.0)
 			alpha := u8(clamp_f32(110.0 * effective_intensity, 0, 255))
 			rl.DrawCircleGradient(center, r, rl.Color{255, 60, 32, alpha}, rl.Color{0, 0, 0, 0})
 		}
 
 		// 3. Hot Inner Combat Corona & Shockwave Disc (backlighting the body silhouette)
-		corona_r := max(base_r * 2.8, 45.0) * radius_pulse
+		corona_r := max(base_r * 1.4, 22.5) * radius_pulse
 		corona_alpha := u8(clamp_f32(135.0 * effective_intensity, 0, 255))
 		rl.DrawCircleGradient(screen_pos, corona_r, rl.Color{255, 55, 28, corona_alpha}, rl.Color{0, 0, 0, 0})
 
 		// Scorching inner core ring right behind planet edge
-		inner_core_r := max(base_r * 1.7, 28.0) * (0.95 + 0.1 * palpitation)
+		inner_core_r := max(base_r * 1.2, 16.0) * (0.95 + 0.1 * palpitation)
 		inner_alpha := u8(clamp_f32(115.0 * effective_intensity, 0, 255))
 		rl.DrawCircleGradient(screen_pos, inner_core_r, rl.Color{255, 125, 45, inner_alpha}, rl.Color{0, 0, 0, 0})
 
@@ -3660,15 +3668,202 @@ draw_combat_nebulae :: proc() {
 		for k in 0..<8 {
 			fk := f32(k)
 			spark_angle := fk * 0.785 + t * 0.55 + f32(s) * 1.4
-			spark_dist := max(base_r * (2.8 + 0.5 * math.sin(t * 1.4 + fk * 2.2)), 45.0)
+			spark_dist := max(base_r * (1.4 + 0.25 * math.sin(t * 1.4 + fk * 2.2)), 22.5)
 			spark_pos := rl.Vector2{
 				screen_pos.x + math.cos(spark_angle) * spark_dist,
 				screen_pos.y + math.sin(spark_angle) * spark_dist * 0.88,
 			}
-			spark_r := max(base_r * (1.4 + 0.35 * math.cos(t * 2.1 + fk)), 25.0)
+			spark_r := max(base_r * (0.7 + 0.175 * math.cos(t * 2.1 + fk)), 12.5)
 			spark_alpha := u8(clamp_f32(50.0 * effective_intensity, 0, 255))
 			rl.DrawCircleGradient(spark_pos, spark_r, rl.Color{255, 135, 50, spark_alpha}, rl.Color{0, 0, 0, 0})
 		}
+	}
+}
+
+// ---- Earth industrial manufacturing indicator ----------------------------
+
+// Surface coordinates for major industrial complexes across Earth's continents.
+Earth_Industry_Hub :: struct {
+	lat: f32,
+	lon: f32,
+	theme: int, // 0 = foundry/forge, 1 = assembly/shipyard, 2 = laser/welding
+}
+
+EARTH_INDUSTRY_HUBS := [10]Earth_Industry_Hub{
+	{lat = 38.0,  lon = 30.0,  theme = 0},
+	{lat = 42.0,  lon = 85.0,  theme = 1},
+	{lat = 52.0,  lon = 135.0, theme = 2},
+	{lat = 35.0,  lon = 185.0, theme = 1},
+	{lat = 15.0,  lon = 225.0, theme = 0},
+	{lat = -25.0, lon = 275.0, theme = 2},
+	{lat = -18.0, lon = 320.0, theme = 1},
+	{lat = 8.0,   lon = 0.0,   theme = 0},
+	{lat = 30.0,  lon = 350.0, theme = 2},
+	{lat = -32.0, lon = 60.0,  theme = 1},
+}
+
+// Indicator on Earth when units are being created: industrial manufacturing
+// complexes light up across Earth's surface with lights turning on and off,
+// rhythmic assembly bay shifts, high-frequency robotic welding sparks, hazard
+// strobes, and vertical shipyard gantry beacons, rotating naturally with the planet.
+// Rendered in screen space with additive blending for pure radiant luminous glow.
+draw_earth_industry_lights :: proc() {
+	if earth_industry_intensity <= 0.005 { return }
+
+	earth := planets[EARTH]
+	spin := planet_spin[EARTH]
+	cos_s := math.cos(spin)
+	sin_s := math.sin(spin)
+	t := laser_anim_time
+
+	viewport_w := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
+	screen_h := f32(rl.GetScreenHeight())
+
+	// Earth projected silhouette radius in screen space
+	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
+	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
+	earth_screen := rl.GetWorldToScreen(earth.position, camera)
+	limb_screen := rl.GetWorldToScreen(earth.position + cam_right * earth.radius, camera)
+	screen_r := max(rl.Vector2Distance(earth_screen, limb_screen), 12.0)
+
+	// Active lines scale the number of active manufacturing hubs
+	active_lines := 0
+	for b in 0..<base_counts[EARTH] {
+		if production[EARTH][b].active { active_lines += 1 }
+	}
+	if base_build_planet == EARTH { active_lines += 1 }
+	hubs_count := min(5 + active_lines * 2, 10)
+
+	rl.BeginBlendMode(.ADDITIVE)
+	defer rl.EndBlendMode()
+
+	for h in 0..<hubs_count {
+		hub := EARTH_INDUSTRY_HUBS[h]
+		lat_rad := hub.lat * (math.PI / 180.0)
+		lon_rad := hub.lon * (math.PI / 180.0)
+
+		hub_u := rl.Vector3{
+			math.cos(lat_rad) * math.cos(lon_rad),
+			math.sin(lat_rad),
+			math.cos(lat_rad) * math.sin(lon_rad),
+		}
+
+		// Rotate with Earth's planetary spin
+		hub_rot := rl.Vector3{
+			hub_u.x * cos_s - hub_u.z * sin_s,
+			hub_u.y,
+			hub_u.x * sin_s + hub_u.z * cos_s,
+		}
+
+		hub_3d := earth.position + hub_rot * (earth.radius * 1.002)
+
+		// Occlusion check against Earth globe: hide lights on the far hemisphere
+		cam_to_hub := camera.position - hub_3d
+		cam_dist := rl.Vector3Length(cam_to_hub)
+		if cam_dist <= 0.01 { continue }
+		to_cam := cam_to_hub / cam_dist
+		facing := rl.Vector3DotProduct(hub_rot, to_cam)
+		if facing <= 0.02 { continue }
+		limb_fade := clamp_f32((facing - 0.02) / 0.18, 0.0, 1.0)
+		net_intensity := earth_industry_intensity * limb_fade
+
+		hub_screen := rl.GetWorldToScreen(hub_3d, camera)
+		if hub_screen.x < -60 || hub_screen.x > viewport_w + 60 || hub_screen.y < -60 || hub_screen.y > screen_h + 60 {
+			continue
+		}
+
+		// Local tangent vectors for spreading out facilities across each industrial zone
+		up := rl.Vector3{0, 1, 0}
+		if abs(hub_rot.y) > 0.90 { up = rl.Vector3{1, 0, 0} }
+		tangent_u := rl.Vector3Normalize(rl.Vector3CrossProduct(up, hub_rot))
+		tangent_v := rl.Vector3Normalize(rl.Vector3CrossProduct(hub_rot, tangent_u))
+
+		fh := f32(h)
+
+		// Radii scaled to projected planet radius with minimum visibility clamps
+		core_r := max(screen_r * 0.045, 2.2)
+		glow_r := max(screen_r * 0.12, 5.5)
+
+		// 1. Soft industrial city / factory light bloom spill
+		halo_r := max(screen_r * 0.22, 10.0)
+		halo_alpha := u8(clamp_f32(95.0 * net_intensity, 0, 255))
+		halo_col := hub.theme == 1 ? rl.Color{0, 230, 215, halo_alpha} : rl.Color{255, 140, 25, halo_alpha}
+		rl.DrawCircleGradient(hub_screen, halo_r, halo_col, rl.Color{0, 0, 0, 0})
+
+		// 2. Main Foundry Core / Forge Furnace (warm golden-amber pulsing heart)
+		foundry_pulse := 0.65 + 0.35 * math.sin(t * 3.0 + fh * 1.5)
+		foundry_alpha := u8(clamp_f32(foundry_pulse * 255.0 * net_intensity, 0, 255))
+		rl.DrawCircleGradient(hub_screen, glow_r, rl.Color{255, 145, 20, foundry_alpha}, rl.Color{0, 0, 0, 0})
+		rl.DrawCircleV(hub_screen, core_r, rl.Color{255, 225, 120, foundry_alpha})
+
+		// Tangent screen offsets for satellite industrial nodes
+		pos1_3d := hub_3d + tangent_u * 0.28 + tangent_v * 0.14
+		pos1_screen := rl.GetWorldToScreen(pos1_3d, camera)
+
+		pos2_3d := hub_3d + tangent_u * -0.25 + tangent_v * -0.16
+		pos2_screen := rl.GetWorldToScreen(pos2_3d, camera)
+
+		pos3_3d := hub_3d + tangent_u * -0.22 + tangent_v * 0.22
+		pos3_screen := rl.GetWorldToScreen(pos3_3d, camera)
+
+		pos4_3d := hub_3d + tangent_u * 0.18 + tangent_v * -0.24
+		pos4_screen := rl.GetWorldToScreen(pos4_3d, camera)
+
+		// 3. Automated Assembly Bay (electric cyan - turning on and off in distinct shift cycles)
+		bay_cycle := math.mod(t * 1.4 + fh * 0.85, 2.0)
+		bay_on := bay_cycle < 1.25
+		bay_bright: f32 = bay_on ? (0.85 + 0.15 * math.sin(t * 9.0 + fh)) : 0.0
+		bay_alpha := u8(clamp_f32(bay_bright * 255.0 * net_intensity, 0, 255))
+		if bay_alpha > 5 {
+			rl.DrawCircleGradient(pos1_screen, glow_r * 0.9, rl.Color{0, 240, 220, bay_alpha}, rl.Color{0, 0, 0, 0})
+			rl.DrawCircleV(pos1_screen, core_r * 0.9, rl.Color{200, 255, 245, bay_alpha})
+		}
+
+		// Secondary assembly bay node (alternating shift)
+		bay2_cycle := math.mod(t * 1.2 + fh * 1.4 + 0.8, 1.8)
+		bay2_on := bay2_cycle < 1.05
+		bay2_bright: f32 = bay2_on ? (0.80 + 0.20 * math.sin(t * 8.0 + fh * 2.0)) : 0.0
+		bay2_alpha := u8(clamp_f32(bay2_bright * 255.0 * net_intensity, 0, 255))
+		if bay2_alpha > 5 {
+			rl.DrawCircleGradient(pos2_screen, glow_r * 0.85, rl.Color{40, 255, 210, bay2_alpha}, rl.Color{0, 0, 0, 0})
+			rl.DrawCircleV(pos2_screen, core_r * 0.85, rl.Color{220, 255, 240, bay2_alpha})
+		}
+
+		// 4. Robotic Arc Welding / Laser Fabrication (high-frequency brilliant white-blue sparks)
+		weld_cycle := math.mod(t * 1.6 + fh * 1.9, 2.3)
+		weld_bright: f32 = 0.0
+		if weld_cycle < 1.15 {
+			spark := math.sin(t * 36.0 + fh * 7.3)
+			if spark > 0.0 {
+				weld_bright = 0.95 + 0.05 * math.sin(t * 60.0)
+			}
+		}
+		weld_alpha := u8(clamp_f32(weld_bright * 255.0 * net_intensity, 0, 255))
+		if weld_alpha > 10 {
+			rl.DrawCircleGradient(pos3_screen, glow_r * 0.95, rl.Color{200, 240, 255, weld_alpha}, rl.Color{0, 0, 0, 0})
+			rl.DrawCircleV(pos3_screen, core_r * 0.95, rl.Color{255, 255, 255, weld_alpha})
+		}
+
+		// 5. Strobe Hazard Beacon (sharp periodic warning flash)
+		strobe_cycle := math.mod(t * 1.5 + fh * 0.4, 1.0)
+		strobe_bright: f32 = strobe_cycle < 0.18 ? (1.0 - (strobe_cycle / 0.18) * 0.85) : 0.0
+		strobe_alpha := u8(clamp_f32(strobe_bright * 255.0 * net_intensity, 0, 255))
+		if strobe_alpha > 10 {
+			rl.DrawCircleGradient(pos4_screen, glow_r * 0.75, rl.Color{255, 195, 20, strobe_alpha}, rl.Color{0, 0, 0, 0})
+			rl.DrawCircleV(pos4_screen, core_r * 0.75, rl.Color{255, 240, 140, strobe_alpha})
+		}
+
+		// 6. Shipyard Gantry Spire / Launch Laser Beam (rising above surface)
+		spire_3d := hub_3d + hub_rot * (earth.radius * 0.25)
+		spire_screen := rl.GetWorldToScreen(spire_3d, camera)
+		beam_alpha := u8(clamp_f32(190.0 * net_intensity, 0, 255))
+		beam_col := hub.theme == 1 ? rl.Color{0, 245, 220, beam_alpha} : rl.Color{255, 160, 40, beam_alpha}
+		rl.DrawLineEx(hub_screen, spire_screen, max(screen_r * 0.03, 1.8), beam_col)
+
+		// Pulsing tip beacon at the top of the gantry tower
+		beacon_on := math.mod(t * 2.2 + fh * 0.5, 1.0) < 0.25
+		beacon_alpha := u8(clamp_f32((beacon_on ? 255.0 : 40.0) * net_intensity, 0, 255))
+		rl.DrawCircleV(spire_screen, max(screen_r * 0.04, 2.2), rl.Color{255, 60, 50, beacon_alpha})
 	}
 }
 
@@ -3794,6 +3989,19 @@ step_simulation :: proc(dt: f32) {
 	update_intel()
 	// Wrapping the laser clock keeps f32 precision stable across long sessions.
 	laser_anim_time = math.mod(laser_anim_time + dt, 3600.0)
+	// Earth manufacturing activity indicator: smooth ramp-up when units are in production, graceful fade-out when idle.
+	is_earth_producing := false
+	for b in 0..<base_counts[EARTH] {
+		if production[EARTH][b].active {
+			is_earth_producing = true
+			break
+		}
+	}
+	if is_earth_producing || base_build_planet == EARTH {
+		earth_industry_intensity = min(earth_industry_intensity + dt * 2.8, 1.0)
+	} else {
+		earth_industry_intensity = max(earth_industry_intensity - dt * 1.8, 0.0)
+	}
 	// Smooth transition of combat nebula intensity: rapid flare-up in battle, graceful fade-out on victory.
 	for s in 0..<SECTOR_COUNT {
 		in_combat := sector_in_combat(s)
