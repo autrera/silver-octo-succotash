@@ -1,161 +1,123 @@
-# Raylib-Quickstart
-A simple cross platform template for setting up a project with the bleeding edge raylib code.
-Works with C or C++.
+# Raylib Quickstart (Odin)
 
-# Basic Setup
-Download this repository to get started.
+A 3D planetary drone mining RTS prototype built with [Odin](https://odin-lang.org) and [raylib](https://www.raylib.com).
 
-You can download the zip file of the repository from the Green Code button on github. This is the simplest way to get the template to start from.
-Once you have downloaded the template, rename it to your project name.
+This project uses Odin, importing raylib via the bindings bundled with the Odin toolchain (`import "vendor:raylib"`).
 
-or
+## Requirements
 
-Clone the repository with git, from the url
-```
-https://github.com/raylib-extras/raylib-quickstart.git
-```
+- **Odin Compiler**: `odin` must be installed and available on your `PATH`. Visit [odin-lang.org](https://odin-lang.org) for installation instructions.
+- **Make**: `make` (or `mingw32-make` on Windows).
+- **Raylib**: Raylib bindings ship directly with Odin (`vendor:raylib`).
+  - On macOS, ensure Raylib is installed (e.g. via `brew install raylib`).
+  - On Windows, Odin automatically links the prebuilt static `vendor/raylib/windows/raylib.lib`.
+  - On Linux, ensure standard Raylib dependencies (X11, GL, etc.) are present.
 
-If you are using a command line git client you can use the command below to download and rename the template in one step
-```
-git clone https://github.com/raylib-extras/raylib-quickstart.git [name-for-your-project-here]
-```
+## Building and Running
 
-# Naming projects
-* Replace the placeholder with your desired project name when running the git clone command above.
-* __Do not name your game project 'raylib', it will conflict with the raylib library.__
-* If you have used custom game name with __git clone__, there is no need to rename it again.
+### Using Make
 
+Run commands from the repository root:
 
-## Supported Platforms
-Quickstart supports the main 3 desktop platforms:
-* Windows
-* Linux
-* MacOS
+- **Build (Debug)**:
+  ```sh
+  make
+  ```
+  Builds the binary to `bin/debug/odin-raylib-test` (or `bin/debug/odin-raylib-test.exe` on Windows).
 
-# VSCode Users (all platforms)
-*Note* You must have a compiler toolchain installed in addition to vscode.
+- **Run**:
+  ```sh
+  make run
+  ```
+  Builds and runs the game.
 
-1. Download the quickstart
-2. Rename the folder to your game name
-3. Open the folder in VSCode
-4. Run the build task ( CTRL+SHIFT+B or F5 )
-5. You are good to go
+- **Build (Release)**:
+  ```sh
+  make release
+  ```
+  Builds an optimized binary (`-o:speed`) to `bin/release/odin-raylib-test`.
 
-# Windows Users
-There are two compiler toolchains available for windows, MinGW-W64 (a free compiler using GCC), and Microsoft Visual Studio
-## Using MinGW-W64
-* Rename the folder to your game name
-* Double click the `build-MinGW-W64.bat` file
-* CD into the folder in your terminal
-  * if you are using the W64devkit and have not added it to your system path environment variable, you must use the W64devkit.exe terminal, not CMD.exe
-  * If you want to use cmd.exe or any other terminal, please make sure that gcc/mingw-W64 is in your path environment variable.
-* run `make`
-* You are good to go
+- **Clean**:
+  ```sh
+  make clean
+  ```
+  Removes the `bin/` build directory.
 
-### Note on MinGW-64 versions
-Make sure you have a modern version of MinGW-W64 (not mingw).
-The best place to get it is from the W64devkit from
-https://github.com/skeeto/w64devkit/releases
+### Direct Odin Commands
 
-or the version installed with the raylib installer
+You can also build directly using the Odin CLI:
 
-#### If you have installed raylib from the installer
-Make sure you have added the path
+```sh
+# Debug build
+odin build src -out:bin/debug/odin-raylib-test -debug
 
-`C:\raylib\w64devkit\bin`
-
-To your path environment variable so that the compiler that came with raylib can be found.
-
-DO NOT INSTALL ANOTHER MinGW-W64 from another source such as msys2, you don't need it.
-
-## Microsoft Visual Studio 2026
-* Rename the folder to your game name
-* Run `build-VisualStudio2026.bat`
-* double click the `.slnx` file that is generated
-* develop your game
-* you are good to go
-
-# Linux Users
-* Rename the folder to your game name
-* CD into the build folder
-* run `./premake5 gmake`
-* CD back to the root
-* run `make`
-* you are good to go
-
-# MacOS Users
-* Rename the folder to your game name
-* CD into the build folder
-* run `./premake5.osx gmake`
-* CD back to the root
-* run `make`
-* you are good to go
-
-# Output files
-The built code will be in the bin dir
-
-# Working directories and the resources folder
-The example uses a utility function from `path_utils.h` that will find the resources dir and set it as the current working directory. This is very useful when starting out. If you wish to manage your own working directory you can simply remove the call to the function and the header.
-
-# Changing to C++
-Simply rename `src/main.c` to `src/main.cpp` and re-run the steps above and do a clean build.
-
-# Using your own code
-Simply remove `src/main.c` and replace it with your code, and re-run the steps above and do a clean build.
-
-# Building for other OpenGL targets
-If you need to build for a different OpenGL version than the default (OpenGL 3.3) you can specify an OpenGL version in your premake command line. Just modify the bat file or add the following to your command line
-
-## For OpenGL 1.1
-`--graphics=opengl11`
-
-## For OpenGL 2.1
-`--graphics=opengl21`
-
-## For OpenGL 4.3
-`--graphics=opengl43`
-
-## For OpenGLES 2.0
-`--graphics=opengles2`
-
-## For OpenGLES 3.0
-`--graphics=opengles3`
-
-## For Software Rendering
-`--graphics=software`
-
-*Note*
-Sofware rendering does not work with glfw, use Win32 or SDL platforms
-`--backend=win32`
-
-# Adding External Libraries 
-
-Quickstart is intentionally minimal — it only includes what is required to compile and run a basic raylib project.  
-If you want to use extra libraries, you can add them to the `build/premake5.lua` file yourself using the links function.
-
-You can find the documentation for the links function here https://premake.github.io/docs/links/
-
-### Example: adding the required libraries for tinyfiledialogs on Windows
-tinyfiledialogs requires extra Windows system libraries.
-The premake file uses filters to define options that are platform specific
-https://premake.github.io/docs/Filters/
-
-Using the windows filter adds these libraries only to the windows build.
-```
-filter "system:windows"
-    links {
-        "Comdlg32",
-        "User32",
-        "Ole32",
-        "Shell32"
-    }
+# Optimized release build
+odin build src -out:bin/release/odin-raylib-test -o:speed
 ```
 
-### Cross-platform reminder
-If you add a library, make sure to add its required dependencies for all platforms you plan to support (Windows, Linux, MacOS).
-Different libraries will have different dependencies on different platforms.
+### Running Tests
 
+Unit and logic tests live in `src/main_test.odin` and can be run via:
 
-# License
-Raylib-Quickstart by Jeffery Myers is marked with CC0 1.0. To view a copy of this license, visit https://creativecommons.org/publicdomain/zero/1.0/
+```sh
+odin test src -define:ODIN_TEST_THREADS=1
+```
 
+*(Single-threaded execution is required as tests mutate shared simulation state).*
+
+## Platform Notes
+
+### Windows
+- Install Odin and add it to your `PATH`.
+- Use a terminal such as w64devkit, Git Bash, or standard Command Prompt with `mingw32-make`.
+- Alternatively, double-click `build-MinGW-W64.bat`, which verifies `odin` is in `PATH` and calls `mingw32-make`.
+- Odin automatically links `vendor/raylib/windows/raylib.lib`. No external C/C++ compiler or Premake setup is required.
+
+### macOS
+- Install Odin (e.g., `brew install odin`).
+- Install raylib if needed (`brew install raylib`).
+- Run `make` or `make run`.
+
+### Linux
+- Install Odin from the official package or repository.
+- Ensure development libraries for OpenGL/X11 are present.
+- Run `make` or `make run`.
+
+### VSCode
+- Open the project folder in VSCode.
+- Recommended extension: `Odin Language Support` (OLS).
+- The default build task (`Ctrl+Shift+B` or `Cmd+Shift+B`) will execute `make`.
+
+> [!WARNING]
+> Do not run `premake5` or attempt to regenerate C/C++ project files. This repository contains only Odin source code; running premake would overwrite the handwritten `Makefile`.
+
+## Game Overview & Controls
+
+Starfall Command is an RTS prototype where you manage planetary mining operations across the solar system (Mercury through Neptune) while defending against and ultimately assaulting an enemy fortress sector.
+
+### Controls
+
+- **Left-Click**: Select planet, unit, or enemy HQ fortress
+- **Right-Click**:
+  - With units selected: Issue move/attack order to destination planet or sector
+  - With no units selected and Earth selected: Set Earth rally point (right-clicking Earth clears it)
+- **Space**: Center camera on Earth
+- **1 - 9**: Recall saved squad
+- **Shift + 1 - 9**: Save current unit selection to squad
+- **P / F10**: Open Pause Menu
+- **F5**: Quick-save game to `savegame.txt`
+- **ESC**: Cancel most recently queued unit build / dismiss modal overlays
+- **U**: Purchase drone build speed upgrade (Earth command base)
+- **Shift + M / Shift + C**: Batch-queue 5 miners / 5 combat drones (available at max build speed)
+
+## Project Structure
+
+- `src/main.odin`: Game simulation, rendering, audio, UI, and save system
+- `src/main_test.odin`: Logic and regression test suite
+- `Makefile`: Hand-written cross-platform build script for Odin
+- `build-MinGW-W64.bat`: Windows batch launcher for `make`
+- `savegame.txt`: Saved game state file (gitignored)
+
+## License
+
+Raylib-Quickstart base by Jeffery Myers is marked with CC0 1.0. To view a copy of this license, visit https://creativecommons.org/publicdomain/zero/1.0/
