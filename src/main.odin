@@ -153,17 +153,6 @@ SCIFI_PANEL_SOLID:: rl.Color{8, 22, 30, 255}      // Solid dark teal backing (#0
 SCIFI_TEXT       :: rl.Color{215, 245, 245, 255}  // Primary crisp text (#D7F5F5)
 SCIFI_MUTED      :: rl.Color{85, 145, 155, 255}   // Secondary muted tech text (#55919B)
 
-// Compatibility aliases:
-NEON_CYAN        :: SCIFI_CYAN
-NEON_BLUE        :: SCIFI_BLUE
-NEON_AMBER       :: SCIFI_AMBER
-NEON_AMBER_DIM   :: SCIFI_AMBER_DIM
-NEON_DIM         :: SCIFI_DIM
-NEON_STEEL       :: SCIFI_STEEL
-NEON_PANEL       :: SCIFI_PANEL
-NEON_PANEL_SOLID :: SCIFI_PANEL_SOLID
-NEON_TEXT        :: SCIFI_TEXT
-NEON_MUTED       :: SCIFI_MUTED
 
 // ---- Inspector layout ---------------------------------------------------
 // One horizontal grid for the whole side panel: headers, cards, buttons,
@@ -174,7 +163,6 @@ NEON_MUTED       :: SCIFI_MUTED
 PANEL_PAD_X :: 20
 PANEL_CONTENT_W :: SCREEN_PANEL_WIDTH - 2 * PANEL_PAD_X
 CARD_INSET :: 10
-BTN_TEXT_PAD_X :: 9
 BTN_GAP :: 12
 BUILD_BTN_W :: 139
 BUILD_BTN_H :: 36
@@ -182,8 +170,6 @@ BASE_BTN_H :: 36
 SLOT_SIZE :: 18
 GRID_PITCH :: 24
 PROD_PITCH :: 34
-PANEL_HEADER_Y :: 20
-PANEL_DIVIDER_Y :: 48
 PANEL_SUB_Y :: 60
 OUTPOST_CARD_Y :: PANEL_SUB_Y
 BASES_Y :: 60
@@ -205,15 +191,10 @@ DIALOG_PAD :: 28
 DIALOG_BTN_H :: 44
 HUD_PAD :: 16
 PIPS_OFF :: 56
-READOUT_X :: 215
 BADGE_PAD :: 8
 BADGE_GAP :: 8
 BADGE_Y :: 72
 BADGE_H :: 20
-HUD_DOCK_H :: 50
-HUD_TEXT_X :: HUD_PAD + 20
-HUD_TEXT_Y :: HUD_PAD + 11
-HUD_COL_GAP :: 24
 BOTTOM_DOCK_H :: 36
 ROSTER_BASE_Y :: 150
 ROSTER_BELOW_QUEUE :: 206
@@ -528,7 +509,7 @@ update_camera :: proc(dt: f32) {
 	if rl.IsKeyDown(.Q) || rl.IsKeyDown(.MINUS) { zoom -= dt * 3 }
 	if rl.IsKeyDown(.E) || rl.IsKeyDown(.EQUAL) { zoom += dt * 3 }
 	zoom_y := camera.position.y - zoom * 2.2
-	zoom_y = clamp_f32(zoom_y, 15, 200)
+	zoom_y = clamp(zoom_y, 15, 200)
 	camera.position.x = camera_target.x
 	camera.position.y = zoom_y
 	camera.position.z = camera_target.z + camera.position.y * 1.0
@@ -614,15 +595,9 @@ select_earth :: proc() { selected_planet = EARTH }
 
 // Digit keys 1..9 map to control groups; 0 = no squad key this frame.
 squad_key_pressed :: proc() -> int {
-	if rl.IsKeyPressed(.ONE) { return 1 }
-	if rl.IsKeyPressed(.TWO) { return 2 }
-	if rl.IsKeyPressed(.THREE) { return 3 }
-	if rl.IsKeyPressed(.FOUR) { return 4 }
-	if rl.IsKeyPressed(.FIVE) { return 5 }
-	if rl.IsKeyPressed(.SIX) { return 6 }
-	if rl.IsKeyPressed(.SEVEN) { return 7 }
-	if rl.IsKeyPressed(.EIGHT) { return 8 }
-	if rl.IsKeyPressed(.NINE) { return 9 }
+	for k in rl.KeyboardKey.ONE..=rl.KeyboardKey.NINE {
+		if rl.IsKeyPressed(k) { return int(k) - int(rl.KeyboardKey.ONE) + 1 }
+	}
 	return 0
 }
 
@@ -782,20 +757,6 @@ constructing_miners_at :: proc(p: int) -> int {
 }
 
 // Pull available Earth mining drones into the build site until n are assigned.
-// Called every tick so drones that finish a cycle are gathered dynamically.
-assign_constructing_miners :: proc(p, n: int) {
-	assigned := constructing_miners_at(p)
-	for i := 0; i < unit_count; i += 1 {
-		if assigned >= n { break }
-		u := &units[i]
-		if u.kind == .MINING && !u.enemy && u.target_planet == p && u.state == .MINING {
-			u.state = .CONSTRUCTING
-			u.progress = 0
-			assigned += 1
-		}
-	}
-}
-
 resume_constructing_miners :: proc(p: int) {
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
@@ -1107,7 +1068,7 @@ update_planet_combat :: proc(dt: f32, p: int) {
 			base_timer[p] += dt
 			for base_timer[p] >= COMBAT_TICK {
 				base_timer[p] -= COMBAT_TICK
-				enemy_base_hp[p] = max_int(enemy_base_hp[p] - players, 0)
+				enemy_base_hp[p] = max(enemy_base_hp[p] - players, 0)
 				if enemy_base_hp[p] == 0 { break }
 			}
 		}
@@ -1566,7 +1527,7 @@ draw_world :: proc() {
 	}
 	draw_hq_fortress(ENEMY_HQ_POSITION, hq_color, hq_trim, hq_glow)
 	if selected_planet == ENEMY_HOME {
-		rl.DrawCubeWiresV(ENEMY_HQ_POSITION, {4.6, 4.6, 4.6}, NEON_CYAN)
+		rl.DrawCubeWiresV(ENEMY_HQ_POSITION, {4.6, 4.6, 4.6}, SCIFI_CYAN)
 	}
 	draw_rally_flag()
 	for i := 0; i < unit_count; i += 1 {
@@ -1632,7 +1593,7 @@ draw_world :: proc() {
 				// Engine trail streak behind transit fighters.
 				if rl.Vector3Length(heading) > 0.001 {
 					trail := u.position - rl.Vector3Normalize(heading) * 1.2
-					rl.DrawLine3D(u.position, trail, rl.Fade(u.enemy ? rl.RED : NEON_CYAN, 0.6))
+					rl.DrawLine3D(u.position, trail, rl.Fade(u.enemy ? rl.RED : SCIFI_CYAN, 0.6))
 				}
 				drawn += 1
 			}
@@ -2090,7 +2051,7 @@ production_first_y :: proc() -> int {
 production_orders_y :: proc() -> int {
 	base_y := ORDERS_BASE_Y
 	if selected_planet == EARTH && !base_button_visible() { base_y -= BASE_COLLAPSE_Y }
-	return base_y + max_int(base_counts[selected_planet] - 1, 0) * PROD_PITCH
+	return base_y + max(base_counts[selected_planet] - 1, 0) * PROD_PITCH
 }
 
 queued_count :: proc(planet: int) -> int {
@@ -2137,12 +2098,6 @@ unit_tile_y :: proc(kind: Unit_Type) -> int {
 	}
 	if kind == .COMBAT { y += SECTION_PAD_Y + mining_rows * (TILE_SIZE + TILE_GAP) }
 	return y
-}
-
-roster_ordinal :: proc(index: int, kind: Unit_Type) -> int {
-	ordinal := 0
-	for i := 0; i < index; i += 1 { if unit_in_roster(i, kind) { ordinal += 1 } }
-	return ordinal
 }
 
 // Enemy mirror of the roster predicates: garrison drones and attackers bound
@@ -2679,7 +2634,7 @@ draw_miner_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector3 
 
 draw_fighter_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector3) {
 	if !drone_visuals_ready {
-		rl.DrawSphere(position, 0.35, enemy ? rl.RED : NEON_BLUE)
+		rl.DrawSphere(position, 0.35, enemy ? rl.RED : SCIFI_BLUE)
 		return
 	}
 	h := heading
@@ -2703,11 +2658,6 @@ draw_fighter_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector
 	rl.DrawModelEx(model, position, axis, angle, {1, 1, 1}, rl.WHITE)
 }
 
-// Player fighters are neon blue, enemy fighters red.
-draw_fighter :: proc(position: rl.Vector3, enemy: bool) {
-	draw_fighter_drone(position, enemy, {1, 0, 0})
-}
-
 // Visible laser fire during battles: short flying bolts from each shooter
 // toward its target (player fire neon cyan, enemy fire RED), mirroring the
 // update_planet_combat rules — dogfights, miner sweeps and base sieges.
@@ -2718,7 +2668,7 @@ draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, 
 	num_e := min(ec, rep_count(ec))
 	if num_p > 0 && num_e > 0 {
 		// Dogfight: visible fighters trade fire.
-		for i in 0..<num_p { draw_laser_bolt(player_spots[i], enemy_spots[i % num_e], f32(i) * 2.3, NEON_CYAN) }
+		for i in 0..<num_p { draw_laser_bolt(player_spots[i], enemy_spots[i % num_e], f32(i) * 2.3, SCIFI_CYAN) }
 		for j in 0..<num_e { draw_laser_bolt(enemy_spots[j], player_spots[j % num_p], f32(j) * 2.3 + 1.1, rl.RED) }
 	} else if num_e > 0 {
 		// Enemy fighters strafing unescorted player miners (kill_player_miner).
@@ -2746,10 +2696,10 @@ draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, 
 			}
 		}
 		if tc > 0 {
-			for i in 0..<num_p { draw_laser_bolt(player_spots[i], target_spots[i % tc], f32(i) * 2.3, NEON_CYAN) }
+			for i in 0..<num_p { draw_laser_bolt(player_spots[i], target_spots[i % tc], f32(i) * 2.3, SCIFI_CYAN) }
 		} else if enemy_base_hp[p] > 0 {
 			base := sector_pos(p) + rl.Vector3{0, sector_radius(p) * 0.6, 0}
-			for i in 0..<num_p { draw_laser_bolt(player_spots[i], base, f32(i) * 2.3, NEON_CYAN) }
+			for i in 0..<num_p { draw_laser_bolt(player_spots[i], base, f32(i) * 2.3, SCIFI_CYAN) }
 		}
 	}
 }
@@ -2765,7 +2715,7 @@ draw_laser_bolt :: proc(from, to: rl.Vector3, offset: f32, color: rl.Color) {
 	dir := diff * (1.0 / dist)
 	for phase in 0..<2 {
 		head := math.mod(laser_anim_time * LASER_BOLT_SPEED + offset + f32(phase) * dist * 0.5, dist)
-		tail := clamp_f32(head - LASER_BOLT_LEN, 0, dist)
+		tail := clamp(head - LASER_BOLT_LEN, 0, dist)
 		rl.DrawLine3D(from + dir * tail, from + dir * head, color)
 	}
 }
@@ -2793,14 +2743,14 @@ draw_selection_ring :: proc(center: rl.Vector3, radius: f32) {
 		rl.DrawLine3D(
 			{center.x + math.cos(a) * radius, center.y - 0.25, center.z + math.sin(a) * radius},
 			{center.x + math.cos(b) * radius, center.y - 0.25, center.z + math.sin(b) * radius},
-			rl.Fade(NEON_CYAN, pulse),
+			rl.Fade(SCIFI_CYAN, pulse),
 		)
 		// Outer halo ring for depth.
 		or_ := radius + 0.22
 		rl.DrawLine3D(
 			{center.x + math.cos(a) * or_, center.y - 0.25, center.z + math.sin(a) * or_},
 			{center.x + math.cos(b) * or_, center.y - 0.25, center.z + math.sin(b) * or_},
-			rl.Fade(NEON_CYAN, 0.25 * pulse),
+			rl.Fade(SCIFI_CYAN, 0.25 * pulse),
 		)
 	}
 }
@@ -2809,7 +2759,7 @@ draw_selection_ring :: proc(center: rl.Vector3, radius: f32) {
 
 // Draws a panel with 45-degree chamfered corners matching futuristic HUD frames.
 draw_chamfered_panel :: proc(rect: rl.Rectangle, chamfer: f32, fill: rl.Color, border: rl.Color) {
-	c := clamp_f32(chamfer, 0, min(rect.width, rect.height) * 0.5)
+	c := clamp(chamfer, 0, min(rect.width, rect.height) * 0.5)
 	x, y, w, h := rect.x, rect.y, rect.width, rect.height
 	if c <= 0 {
 		rl.DrawRectangleRec(rect, fill)
@@ -2869,37 +2819,12 @@ draw_corner_brackets :: proc(rect: rl.Rectangle, offset: f32, length: f32, color
 	rl.DrawLineV({x + w, y + h - l}, {x + w, y + h}, color)
 }
 
-// Trapezoidal title callout tab protruding from the top edge of a frame.
-draw_scifi_callout_tab :: proc(x, y, w, h: f32, label: cstring, text_size: c.int = 11, color: rl.Color = SCIFI_CYAN) {
-	slant: f32 = min(8.0, w * 0.25)
-	p0 := rl.Vector2{x, y}
-	p1 := rl.Vector2{x + slant, y - h}
-	p2 := rl.Vector2{x + w - slant, y - h}
-	p3 := rl.Vector2{x + w, y}
-
-	// Trapezoid fill
-	rl.DrawRectangleRec({x + slant, y - h, w - 2 * slant, h}, SCIFI_PANEL_SOLID)
-	rl.DrawTriangle(p0, {x + slant, y}, p1, SCIFI_PANEL_SOLID)
-	rl.DrawTriangle({x + w - slant, y}, p3, p2, SCIFI_PANEL_SOLID)
-
-	// Trapezoid border
-	rl.DrawLineV(p0, p1, color)
-	rl.DrawLineV(p1, p2, color)
-	rl.DrawLineV(p2, p3, color)
-
-	// Label centered
-	tw := f32(rl.MeasureText(label, text_size))
-	tx := x + (w - tw) / 2
-	ty := y - h + (h - f32(text_size)) / 2
-	rl.DrawText(label, c.int(tx), c.int(ty), text_size, color)
-}
-
 // Draws an aerospace HUD dock for the top-left with an angled 45° wing cut on its bottom-right corner,
 // multi-layer glowing neon borders, and detached corner bracket accents (inspired by Star Fox Zero cockpit HUD).
 draw_winged_panel_left :: proc(rect: rl.Rectangle, chamfer: f32, wing_cut: f32, fill: rl.Color, border: rl.Color) {
 	x, y, w, h := rect.x, rect.y, rect.width, rect.height
-	ch := clamp_f32(chamfer, 2, 8)
-	wing := clamp_f32(wing_cut, 8, min(w * 0.4, h * 0.8))
+	ch := clamp(chamfer, 2, 8)
+	wing := clamp(wing_cut, 8, min(w * 0.4, h * 0.8))
 
 	v0 := rl.Vector2{x + ch, y}
 	v1 := rl.Vector2{x + w - ch, y}
@@ -2964,8 +2889,8 @@ draw_winged_panel_left :: proc(rect: rl.Rectangle, chamfer: f32, wing_cut: f32, 
 // multi-layer glowing neon borders, and detached corner bracket accents.
 draw_winged_panel_right :: proc(rect: rl.Rectangle, chamfer: f32, wing_cut: f32, fill: rl.Color, border: rl.Color) {
 	x, y, w, h := rect.x, rect.y, rect.width, rect.height
-	ch := clamp_f32(chamfer, 2, 8)
-	wing := clamp_f32(wing_cut, 8, min(w * 0.4, h * 0.8))
+	ch := clamp(chamfer, 2, 8)
+	wing := clamp(wing_cut, 8, min(w * 0.4, h * 0.8))
 
 	v0 := rl.Vector2{x + ch, y}
 	v1 := rl.Vector2{x + w - ch, y}
@@ -3132,7 +3057,7 @@ draw_status_card :: proc(card: rl.Rectangle, border: rl.Color) {
 
 // Digital segmented progress/meter bar (blocks ■ ■ ■ □ □).
 draw_segmented_meter :: proc(rect: rl.Rectangle, value: f32, segments: int, filled_color: rl.Color, empty_color: rl.Color = SCIFI_DIM) {
-	v := clamp_f32(value, 0, 1)
+	v := clamp(value, 0, 1)
 	if segments <= 0 { return }
 	gap: f32 = 2.0
 	seg_w := (rect.width - gap * f32(segments - 1)) / f32(segments)
@@ -3198,11 +3123,6 @@ draw_optical_reticle_2d :: proc(center: rl.Vector2, radius: f32, color: rl.Color
 		rl.DrawRectangleLinesEx({lbl_x - 6, lbl_y - 2, tw + 12, 17}, 1, SCIFI_STEEL)
 		rl.DrawText(label, c.int(lbl_x), c.int(lbl_y), 13, SCIFI_MINT)
 	}
-}
-
-// Sci-fi targeting brackets: four corner ticks around a screen rect.
-draw_target_brackets :: proc(rect: rl.Rectangle, color: rl.Color) {
-	draw_corner_brackets(rect, 0, 7, color)
 }
 
 // High-tech tactile button: 45° chamfered corners, centered label,
@@ -3277,27 +3197,14 @@ draw_progress :: proc(rect: rl.Rectangle, value: f32, color: rl.Color) {
 state_color :: proc(state: Unit_State) -> rl.Color {
 	switch state {
 	case .IDLE: return rl.GRAY
-	case .TRANSIT: return NEON_BLUE
+	case .TRANSIT: return SCIFI_BLUE
 	case .MINING: return rl.GREEN
 	case .RETURNING: return rl.ORANGE
-	case .DEPOSITING: return NEON_CYAN
+	case .DEPOSITING: return SCIFI_CYAN
 	case .GUARDING: return rl.RED
-	case .CONSTRUCTING: return NEON_CYAN
+	case .CONSTRUCTING: return SCIFI_CYAN
 	}
 	return rl.WHITE
-}
-
-state_name :: proc(state: Unit_State) -> cstring {
-	switch state {
-	case .IDLE: return "IDLE"
-	case .TRANSIT: return "IN TRANSIT"
-	case .MINING: return "MINING"
-	case .RETURNING: return "RETURNING"
-	case .DEPOSITING: return "DEPOSITING"
-	case .GUARDING: return "GUARDING"
-	case .CONSTRUCTING: return "CONSTRUCTING"
-	}
-	return "UNKNOWN"
 }
 
 selection_count :: proc() -> int {
@@ -3602,12 +3509,12 @@ draw_combat_nebulae :: proc() {
 		palpitation := 0.85 + 0.28 * pulse1 + 0.16 * pulse2
 		radius_pulse := 1.0 + 0.14 * math.sin(t * (pulse_speed * 0.7) + f32(s))
 
-		effective_intensity := clamp_f32(intensity * palpitation, 0.0, 1.6)
+		effective_intensity := clamp(intensity * palpitation, 0.0, 1.6)
 
 		// 1. Grand Outer Ambient Nebula Shroud (deep cosmic space haze)
 		// Scaled down by half for a cleaner, tighter atmospheric halo
 		grand_r := max(base_r * 5.5, 120.0) * radius_pulse
-		grand_alpha := u8(clamp_f32(75.0 * effective_intensity, 0, 255))
+		grand_alpha := u8(clamp(75.0 * effective_intensity, 0, 255))
 		rl.DrawCircleGradient(screen_pos, grand_r, rl.Color{160, 12, 35, grand_alpha}, rl.Color{0, 0, 0, 0})
 
 		secondary_grand_pos := rl.Vector2{
@@ -3615,7 +3522,7 @@ draw_combat_nebulae :: proc() {
 			screen_pos.y + math.sin(t * 0.25 + f32(s)) * (base_r * 1.0),
 		}
 		secondary_r := max(base_r * 4.75, 100.0) * radius_pulse
-		rl.DrawCircleGradient(secondary_grand_pos, secondary_r, rl.Color{190, 20, 50, u8(clamp_f32(60.0 * effective_intensity, 0, 255))}, rl.Color{0, 0, 0, 0})
+		rl.DrawCircleGradient(secondary_grand_pos, secondary_r, rl.Color{190, 20, 50, u8(clamp(60.0 * effective_intensity, 0, 255))}, rl.Color{0, 0, 0, 0})
 
 		// 2. Multi-tiered Asymmetric Billowing Gas Clouds (12 organic lobes across 3 tiers)
 		// Tier 1: Outer billowing wisps (4 lobes)
@@ -3625,7 +3532,7 @@ draw_combat_nebulae :: proc() {
 			dist := max(base_r * (1.9 + 0.3 * math.sin(t * 0.6 + fi * 2.2 + f32(s))), 35.0)
 			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.82}
 			r := max(base_r * (1.9 + 0.25 * math.cos(t * 1.0 + fi * 1.5)) * radius_pulse, 32.5)
-			alpha := u8(clamp_f32(65.0 * effective_intensity, 0, 255))
+			alpha := u8(clamp(65.0 * effective_intensity, 0, 255))
 			rl.DrawCircleGradient(center, r, rl.Color{195, 18, 42, alpha}, rl.Color{0, 0, 0, 0})
 		}
 
@@ -3636,10 +3543,10 @@ draw_combat_nebulae :: proc() {
 			dist := max(base_r * (1.15 + 0.225 * math.sin(t * 0.75 + fi * 1.9 + f32(s))), 22.5)
 			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.84}
 			r := max(base_r * (1.5 + 0.225 * math.cos(t * 1.2 + fi * 1.8)) * radius_pulse, 25.0)
-			alpha := u8(clamp_f32(90.0 * effective_intensity, 0, 255))
-			r_val := u8(clamp_f32(235.0 + 20.0 * math.sin(fi * 2.0), 0, 255))
-			g_val := u8(clamp_f32(35.0 + 25.0 * math.cos(fi * 1.6), 0, 255))
-			b_val := u8(clamp_f32(30.0 + 20.0 * math.sin(fi * 3.0), 0, 255))
+			alpha := u8(clamp(90.0 * effective_intensity, 0, 255))
+			r_val := u8(clamp(235.0 + 20.0 * math.sin(fi * 2.0), 0, 255))
+			g_val := u8(clamp(35.0 + 25.0 * math.cos(fi * 1.6), 0, 255))
+			b_val := u8(clamp(30.0 + 20.0 * math.sin(fi * 3.0), 0, 255))
 			rl.DrawCircleGradient(center, r, rl.Color{r_val, g_val, b_val, alpha}, rl.Color{0, 0, 0, 0})
 		}
 
@@ -3650,18 +3557,18 @@ draw_combat_nebulae :: proc() {
 			dist := max(base_r * (0.65 + 0.15 * math.sin(t * 0.9 + fi * 2.5)), 12.5)
 			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.86}
 			r := max(base_r * (1.2 + 0.175 * math.cos(t * 1.3 + fi * 2.0)) * radius_pulse, 20.0)
-			alpha := u8(clamp_f32(110.0 * effective_intensity, 0, 255))
+			alpha := u8(clamp(110.0 * effective_intensity, 0, 255))
 			rl.DrawCircleGradient(center, r, rl.Color{255, 60, 32, alpha}, rl.Color{0, 0, 0, 0})
 		}
 
 		// 3. Hot Inner Combat Corona & Shockwave Disc (backlighting the body silhouette)
 		corona_r := max(base_r * 1.4, 22.5) * radius_pulse
-		corona_alpha := u8(clamp_f32(135.0 * effective_intensity, 0, 255))
+		corona_alpha := u8(clamp(135.0 * effective_intensity, 0, 255))
 		rl.DrawCircleGradient(screen_pos, corona_r, rl.Color{255, 55, 28, corona_alpha}, rl.Color{0, 0, 0, 0})
 
 		// Scorching inner core ring right behind planet edge
 		inner_core_r := max(base_r * 1.2, 16.0) * (0.95 + 0.1 * palpitation)
-		inner_alpha := u8(clamp_f32(115.0 * effective_intensity, 0, 255))
+		inner_alpha := u8(clamp(115.0 * effective_intensity, 0, 255))
 		rl.DrawCircleGradient(screen_pos, inner_core_r, rl.Color{255, 125, 45, inner_alpha}, rl.Color{0, 0, 0, 0})
 
 		// 4. Ionization Tendrils / Plasma Streamers (fine drifting filaments)
@@ -3674,7 +3581,7 @@ draw_combat_nebulae :: proc() {
 				screen_pos.y + math.sin(spark_angle) * spark_dist * 0.88,
 			}
 			spark_r := max(base_r * (0.7 + 0.175 * math.cos(t * 2.1 + fk)), 12.5)
-			spark_alpha := u8(clamp_f32(50.0 * effective_intensity, 0, 255))
+			spark_alpha := u8(clamp(50.0 * effective_intensity, 0, 255))
 			rl.DrawCircleGradient(spark_pos, spark_r, rl.Color{255, 135, 50, spark_alpha}, rl.Color{0, 0, 0, 0})
 		}
 	}
@@ -3764,7 +3671,7 @@ draw_earth_industry_lights :: proc() {
 		to_cam := cam_to_hub / cam_dist
 		facing := rl.Vector3DotProduct(hub_rot, to_cam)
 		if facing <= 0.02 { continue }
-		limb_fade := clamp_f32((facing - 0.02) / 0.18, 0.0, 1.0)
+		limb_fade := clamp((facing - 0.02) / 0.18, 0.0, 1.0)
 		net_intensity := earth_industry_intensity * limb_fade
 
 		hub_screen := rl.GetWorldToScreen(hub_3d, camera)
@@ -3786,13 +3693,13 @@ draw_earth_industry_lights :: proc() {
 
 		// 1. Soft industrial city / factory light bloom spill
 		halo_r := max(screen_r * 0.22, 10.0)
-		halo_alpha := u8(clamp_f32(95.0 * net_intensity, 0, 255))
+		halo_alpha := u8(clamp(95.0 * net_intensity, 0, 255))
 		halo_col := hub.theme == 1 ? rl.Color{0, 230, 215, halo_alpha} : rl.Color{255, 140, 25, halo_alpha}
 		rl.DrawCircleGradient(hub_screen, halo_r, halo_col, rl.Color{0, 0, 0, 0})
 
 		// 2. Main Foundry Core / Forge Furnace (warm golden-amber pulsing heart)
 		foundry_pulse := 0.65 + 0.35 * math.sin(t * 3.0 + fh * 1.5)
-		foundry_alpha := u8(clamp_f32(foundry_pulse * 255.0 * net_intensity, 0, 255))
+		foundry_alpha := u8(clamp(foundry_pulse * 255.0 * net_intensity, 0, 255))
 		rl.DrawCircleGradient(hub_screen, glow_r, rl.Color{255, 145, 20, foundry_alpha}, rl.Color{0, 0, 0, 0})
 		rl.DrawCircleV(hub_screen, core_r, rl.Color{255, 225, 120, foundry_alpha})
 
@@ -3813,7 +3720,7 @@ draw_earth_industry_lights :: proc() {
 		bay_cycle := math.mod(t * 1.4 + fh * 0.85, 2.0)
 		bay_on := bay_cycle < 1.25
 		bay_bright: f32 = bay_on ? (0.85 + 0.15 * math.sin(t * 9.0 + fh)) : 0.0
-		bay_alpha := u8(clamp_f32(bay_bright * 255.0 * net_intensity, 0, 255))
+		bay_alpha := u8(clamp(bay_bright * 255.0 * net_intensity, 0, 255))
 		if bay_alpha > 5 {
 			rl.DrawCircleGradient(pos1_screen, glow_r * 0.9, rl.Color{0, 240, 220, bay_alpha}, rl.Color{0, 0, 0, 0})
 			rl.DrawCircleV(pos1_screen, core_r * 0.9, rl.Color{200, 255, 245, bay_alpha})
@@ -3823,7 +3730,7 @@ draw_earth_industry_lights :: proc() {
 		bay2_cycle := math.mod(t * 1.2 + fh * 1.4 + 0.8, 1.8)
 		bay2_on := bay2_cycle < 1.05
 		bay2_bright: f32 = bay2_on ? (0.80 + 0.20 * math.sin(t * 8.0 + fh * 2.0)) : 0.0
-		bay2_alpha := u8(clamp_f32(bay2_bright * 255.0 * net_intensity, 0, 255))
+		bay2_alpha := u8(clamp(bay2_bright * 255.0 * net_intensity, 0, 255))
 		if bay2_alpha > 5 {
 			rl.DrawCircleGradient(pos2_screen, glow_r * 0.85, rl.Color{40, 255, 210, bay2_alpha}, rl.Color{0, 0, 0, 0})
 			rl.DrawCircleV(pos2_screen, core_r * 0.85, rl.Color{220, 255, 240, bay2_alpha})
@@ -3838,7 +3745,7 @@ draw_earth_industry_lights :: proc() {
 				weld_bright = 0.95 + 0.05 * math.sin(t * 60.0)
 			}
 		}
-		weld_alpha := u8(clamp_f32(weld_bright * 255.0 * net_intensity, 0, 255))
+		weld_alpha := u8(clamp(weld_bright * 255.0 * net_intensity, 0, 255))
 		if weld_alpha > 10 {
 			rl.DrawCircleGradient(pos3_screen, glow_r * 0.95, rl.Color{200, 240, 255, weld_alpha}, rl.Color{0, 0, 0, 0})
 			rl.DrawCircleV(pos3_screen, core_r * 0.95, rl.Color{255, 255, 255, weld_alpha})
@@ -3847,7 +3754,7 @@ draw_earth_industry_lights :: proc() {
 		// 5. Strobe Hazard Beacon (sharp periodic warning flash)
 		strobe_cycle := math.mod(t * 1.5 + fh * 0.4, 1.0)
 		strobe_bright: f32 = strobe_cycle < 0.18 ? (1.0 - (strobe_cycle / 0.18) * 0.85) : 0.0
-		strobe_alpha := u8(clamp_f32(strobe_bright * 255.0 * net_intensity, 0, 255))
+		strobe_alpha := u8(clamp(strobe_bright * 255.0 * net_intensity, 0, 255))
 		if strobe_alpha > 10 {
 			rl.DrawCircleGradient(pos4_screen, glow_r * 0.75, rl.Color{255, 195, 20, strobe_alpha}, rl.Color{0, 0, 0, 0})
 			rl.DrawCircleV(pos4_screen, core_r * 0.75, rl.Color{255, 240, 140, strobe_alpha})
@@ -3856,13 +3763,13 @@ draw_earth_industry_lights :: proc() {
 		// 6. Shipyard Gantry Spire / Launch Laser Beam (rising above surface)
 		spire_3d := hub_3d + hub_rot * (earth.radius * 0.25)
 		spire_screen := rl.GetWorldToScreen(spire_3d, camera)
-		beam_alpha := u8(clamp_f32(190.0 * net_intensity, 0, 255))
+		beam_alpha := u8(clamp(190.0 * net_intensity, 0, 255))
 		beam_col := hub.theme == 1 ? rl.Color{0, 245, 220, beam_alpha} : rl.Color{255, 160, 40, beam_alpha}
 		rl.DrawLineEx(hub_screen, spire_screen, max(screen_r * 0.03, 1.8), beam_col)
 
 		// Pulsing tip beacon at the top of the gantry tower
 		beacon_on := math.mod(t * 2.2 + fh * 0.5, 1.0) < 0.25
-		beacon_alpha := u8(clamp_f32((beacon_on ? 255.0 : 40.0) * net_intensity, 0, 255))
+		beacon_alpha := u8(clamp((beacon_on ? 255.0 : 40.0) * net_intensity, 0, 255))
 		rl.DrawCircleV(spire_screen, max(screen_r * 0.04, 2.2), rl.Color{255, 60, 50, beacon_alpha})
 	}
 }
@@ -4014,7 +3921,7 @@ step_simulation :: proc(dt: f32) {
 			target = 1.0
 		}
 		rate: f32 = in_combat ? 3.5 : 1.2
-		combat_nebula_intensity[s] += (target - combat_nebula_intensity[s]) * clamp_f32(dt * rate, 0.0, 1.0)
+		combat_nebula_intensity[s] += (target - combat_nebula_intensity[s]) * clamp(dt * rate, 0.0, 1.0)
 	}
 	// Victory latch: every planet liberated AND the enemy HQ destroyed.
 	if !victory && victory_achieved() { victory = true }
@@ -5021,15 +4928,15 @@ draw_rally_flag :: proc() {
 	rl.DrawCylinderEx(base, top, 0.07, 0.07, 6, rl.Color{205, 208, 218, 255})
 	// Pennant: two windings so it reads from either side.
 	tip := rl.Vector3{p.position.x + 1.7, top.y - 0.55, p.position.z}
-	rl.DrawTriangle3D({p.position.x, top.y, p.position.z}, {p.position.x, top.y - 1.3, p.position.z}, tip, NEON_CYAN)
-	rl.DrawTriangle3D({p.position.x, top.y - 1.3, p.position.z}, {p.position.x, top.y, p.position.z}, tip, NEON_CYAN)
+	rl.DrawTriangle3D({p.position.x, top.y, p.position.z}, {p.position.x, top.y - 1.3, p.position.z}, tip, SCIFI_CYAN)
+	rl.DrawTriangle3D({p.position.x, top.y - 1.3, p.position.z}, {p.position.x, top.y, p.position.z}, tip, SCIFI_CYAN)
 }
 
 // ---- Camera zoom ---------------------------------------------------------
 
 // camera.position.y spans [15, 200] (clamped in update_camera); 15 = 100%.
 zoom_percent :: proc() -> int {
-	return int(clamp_f32((200 - camera.position.y) / 185.0 * 100.0, 0, 100))
+	return int(clamp((200 - camera.position.y) / 185.0 * 100.0, 0, 100))
 }
 
 // Ray-sphere hit test for the enemy HQ (pick_planet covers planets only).
@@ -5062,15 +4969,4 @@ pick_planet :: proc(mouse: rl.Vector2) -> int {
 	return hit
 }
 
-distance :: proc(a, b: rl.Vector3) -> f32 {
-	dx := a.x - b.x; dy := a.y - b.y; dz := a.z - b.z
-	return math.sqrt(dx*dx + dy*dy + dz*dz)
-}
-
-clamp_f32 :: proc(value, low, high: f32) -> f32 {
-	if value < low { return low }
-	if value > high { return high }
-	return value
-}
-
-max_int :: proc(a, b: int) -> int { if a > b { return a }; return b }
+distance :: rl.Vector3Distance
