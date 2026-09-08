@@ -573,6 +573,9 @@ representational_rendering_one_cube_per_ten :: proc(t: ^testing.T) {
 	testing.expect(t, rep_count(GARRISON_FIGHTERS[JUPITER]) == 5, "45 garrison fighters render as 5 cubes")
 	testing.expect(t, rep_count(GARRISON_FIGHTERS[NEPTUNE]) == 10, "95 garrison fighters render as 10 cubes")
 	testing.expect(t, rep_count(ENEMY_HQ_GARRISON) == 50, "500-fighter HQ garrison renders as 50 cubes")
+	testing.expect(t, rep_count(GARRISON_MINERS[JUPITER]) == 1, "10 garrison miners render as 1 drone")
+	testing.expect(t, rep_count(GARRISON_MINERS[SATURN]) == 2, "14 garrison miners render as 2 drones")
+	testing.expect(t, rep_count(GARRISON_MINERS[NEPTUNE]) == 3, "22 garrison miners render as 3 drones")
 }
 
 @(test)
@@ -594,6 +597,38 @@ transit_fleets_render_representationally :: proc(t: ^testing.T) {
 		expected := p == NEPTUNE ? 15 : 0
 		testing.expectf(t, transit_fighters_at(p, true) == expected, "planet %d enemy transit count %d != %d", p, transit_fighters_at(p, true), expected)
 	}
+}
+
+@(test)
+transit_miners_render_representationally :: proc(t: ^testing.T) {
+	reset_world()
+	for i in 0..<12 {
+		units[unit_count] = Unit{kind = .MINING, state = .TRANSIT, position = {}, home_planet = EARTH, affiliation = MARS, target_planet = MARS}
+		unit_count += 1
+	}
+	for i in 0..<25 {
+		units[unit_count] = Unit{kind = .MINING, state = .RETURNING, position = {}, home_planet = EARTH, affiliation = JUPITER, target_planet = JUPITER}
+		unit_count += 1
+	}
+	testing.expect(t, transit_miners_at(MARS, false) == 12, "12 player miners in transit to Mars")
+	testing.expect(t, rep_count(transit_miners_at(MARS, false)) == 2, "12 transit miners render as 2 drones")
+	testing.expect(t, returning_miners_at(JUPITER, false) == 25, "25 player miners returning from Jupiter")
+	testing.expect(t, rep_count(returning_miners_at(JUPITER, false)) == 3, "25 returning miners render as 3 drones")
+}
+
+@(test)
+stationed_miners_render_representationally :: proc(t: ^testing.T) {
+	reset_world()
+	for i in 0..<15 {
+		units[unit_count] = Unit{kind = .MINING, state = .MINING, position = {}, home_planet = EARTH, affiliation = MARS, target_planet = MARS}
+		unit_count += 1
+	}
+	testing.expect(t, stationed_miners_at(MARS, false) == 15, "15 player miners mining Mars")
+	testing.expect(t, rep_count(stationed_miners_at(MARS, false)) == 2, "15 stationed miners render as 2 drones")
+	testing.expect(t, stationed_miners_at(NEPTUNE, true) == 0, "no enemy miners before init")
+	spawn_garrison(NEPTUNE, 0, GARRISON_MINERS[NEPTUNE])
+	testing.expect(t, stationed_miners_at(NEPTUNE, true) == 22, "22 enemy miners at Neptune")
+	testing.expect(t, rep_count(stationed_miners_at(NEPTUNE, true)) == 3, "22 enemy miners render as 3 drones")
 }
 
 @(test)

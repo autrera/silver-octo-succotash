@@ -316,6 +316,19 @@ laser_anim_time: f32
 // Planets flare up when drones are actively fighting there; enemy HQ maintains an
 // ominous background presence that surges to maximum intensity during an assault.
 combat_nebula_intensity: [SECTOR_COUNT]f32
+sector_combat_state: [SECTOR_COUNT]bool
+// Pre-allocated sector rendering spots for draw_world representation pass
+World_Sector_Spots :: struct {
+	player_combat: [256]rl.Vector3,
+	enemy_combat:  [256]rl.Vector3,
+	player_miners: [256]rl.Vector3,
+	enemy_miners:  [256]rl.Vector3,
+	pc:  int,
+	ec:  int,
+	pmc: int,
+	emc: int,
+}
+world_sector_spots: [SECTOR_COUNT]World_Sector_Spots
 // Visual intensity of Earth's manufacturing industry lights [0..1]: flares up
 // when units or bases are being constructed on Earth, turning surface lights on and off.
 earth_industry_intensity: f32
@@ -676,12 +689,15 @@ box_select :: proc(mouse: rl.Vector2, panel_x: f32) {
 	if replace { clear_selection() }
 	m_ord := 0
 	c_ord := 0
+	y_mining := unit_tile_y(.MINING)
+	y_combat := unit_tile_y(.COMBAT)
 	for i := 0; i < unit_count; i += 1 {
 		kind := units[i].kind
 		if !unit_in_roster(i, kind) { continue }
 		ord := kind == .MINING ? m_ord : c_ord
+		y := kind == .MINING ? y_mining : y_combat
 		if kind == .MINING { m_ord += 1 } else { c_ord += 1 }
-		tile := unit_tile_rect(panel_x, unit_tile_y(kind), ord)
+		tile := unit_tile_rect(panel_x, y, ord)
 		if rl.CheckCollisionRecs(tile, rect) {
 			if ctrl_down() { selected_units[i] = !selected_units[i] } else { selected_units[i] = true }
 		}
@@ -699,9 +715,10 @@ shift_down :: proc() -> bool {
 click_unit_tiles :: proc(mouse: rl.Vector2, panel_x: f32, kind: Unit_Type) -> bool {
 	if ghost_view() { return false }
 	ordinal := 0
+	y := unit_tile_y(kind)
 	for i := 0; i < unit_count; i += 1 {
 		if !unit_in_roster(i, kind) { continue }
-		if rl.CheckCollisionPointRec(mouse, unit_tile_rect(panel_x, unit_tile_y(kind), ordinal)) {
+		if rl.CheckCollisionPointRec(mouse, unit_tile_rect(panel_x, y, ordinal)) {
 			if !ctrl_down() { clear_selection(); selected_units[i] = true } else { selected_units[i] = !selected_units[i] }
 			return true
 		}
@@ -1261,10 +1278,26 @@ kill_enemy_miner :: proc(p: int) -> bool {
 
 // Drones actively fighting at sector s (dogfight, miner sweep, or base siege).
 sector_in_combat :: proc(s: int) -> bool {
-	players, enemies := planet_combatants(s)
+	players := 0
+	enemies := 0
+	has_player_miners := false
+	has_enemy_miners := false
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .COMBAT && u.state == .GUARDING && u.affiliation == s {
+			if u.enemy { enemies += 1 } else { players += 1 }
+			if players > 0 && enemies > 0 { return true }
+		} else if u.kind == .MINING {
+			if u.enemy && u.affiliation == s {
+				has_enemy_miners = true
+			} else if !u.enemy && u.target_planet == s && u.state != .TRANSIT {
+				has_player_miners = true
+			}
+		}
+	}
 	if players > 0 && enemies > 0 { return true }
-	if enemies > 0 && (player_miners_at(s) || (s == EARTH && base_counts[s] > 0)) { return true }
-	if players > 0 && (enemy_miner_count(s) > 0 || enemy_base_hp[s] > 0) { return true }
+	if enemies > 0 && (has_player_miners || (s == EARTH && base_counts[s] > 0)) { return true }
+	if players > 0 && (has_enemy_miners || enemy_base_hp[s] > 0) { return true }
 	return false
 }
 
@@ -1368,10 +1401,13 @@ is_effective_miner :: proc(index: int) -> bool {
 // DEPOSIT_DURATION — the round trip at MINING_TRANSIT_SPEED dominates for
 // distant planets, so MPS falls with distance.
 planet_mps :: proc(planet: int) -> f32 {
+	cap := planet_mining_cap(planet)
 	effective := 0
 	for i := 0; i < unit_count; i += 1 {
-		if units[i].kind == .MINING && !units[i].enemy && units[i].state != .CONSTRUCTING && units[i].target_planet == planet && is_effective_miner(i) {
+		u := &units[i]
+		if u.kind == .MINING && !u.enemy && u.state != .CONSTRUCTING && u.target_planet == planet {
 			effective += 1
+			if effective >= cap { break }
 		}
 	}
 	round_trip := 2.0 * distance(planets[planet].position, planets[EARTH].position)
@@ -1382,8 +1418,23 @@ planet_mps :: proc(planet: int) -> f32 {
 
 // Empire-wide income: the sum of every planet's MPS, shown on Earth.
 global_mps :: proc() -> f32 {
-	total := f32(0)
-	for p in 0..<PLANET_COUNT { total += planet_mps(p) }
+	counts: [PLANET_COUNT]int
+	caps: [PLANET_COUNT]int
+	for p in 0..<PLANET_COUNT { caps[p] = planet_mining_cap(p) }
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .MINING && !u.enemy && u.state != .CONSTRUCTING && u.target_planet >= 0 && u.target_planet < PLANET_COUNT {
+			p := u.target_planet
+			if counts[p] < caps[p] { counts[p] += 1 }
+		}
+	}
+	total: f32 = 0
+	for p in 0..<PLANET_COUNT {
+		round_trip := 2.0 * distance(planets[p].position, planets[EARTH].position)
+		travel_time := round_trip / MINING_TRANSIT_SPEED
+		cycle_time := MINING_DURATION + DEPOSIT_DURATION + travel_time
+		total += f32(counts[p]) * f32(mining_rate(p)) / cycle_time
+	}
 	return total
 }
 
@@ -1550,79 +1601,143 @@ draw_world :: proc() {
 		rl.DrawCubeWiresV(ENEMY_HQ_POSITION, {4.6, 4.6, 4.6}, SCIFI_CYAN)
 	}
 	draw_rally_flag()
-	for i := 0; i < unit_count; i += 1 {
-		u := &units[i]
-		if is_concealed(u) { continue }
-		if u.kind == .MINING {
-			heading: rl.Vector3
-			if u.state == .TRANSIT {
-				heading = sector_pos(u.target_planet) - u.position
-			} else if u.state == .RETURNING {
-				heading = planets[EARTH].position - u.position
-			} else {
-				center := planets[EARTH].position
-				if u.target_planet >= 0 && u.target_planet < SECTOR_COUNT {
-					center = sector_pos(u.target_planet)
-				}
-				heading = drone_heading(u.position, center)
-			}
-			draw_miner_drone(u.position, u.enemy, heading)
-		}
-		if !u.enemy && selected_units[i] { draw_selection_ring(u.position, 0.78) }
-	}
-	// Fighting drones render representationally per side and group: one drone
-	// model per up-to-10 drones (ceil(count/10)), so a 5-fighter enemy wave in
-	// transit shows as one fighter and the 40-strong Jupiter garrison as
-	// four. This applies in orbit (guarding) and in transit (per target
+
+	// Drones render representationally per side and group: one drone
+	// model per up-to-10 drones (ceil(count/10)), so a 5-drone wave in
+	// transit shows as one drone and the 40-strong Jupiter garrison as
+	// four. This applies in orbit / on-site and in transit (per target
 	// planet). Rosters, tracking and selection still use the real unit list.
-	player_spots: [MAX_UNITS]rl.Vector3
-	enemy_spots: [MAX_UNITS]rl.Vector3
+	sector_vis: [SECTOR_COUNT]bool
 	for p in 0..<SECTOR_COUNT {
-		if !has_vision(p) { continue } // Enemy garrison under fog renders nothing.
-		pc, ec := 0, 0
-		for i := 0; i < unit_count; i += 1 {
-			u := &units[i]
-			if u.kind != .COMBAT || u.state != .GUARDING || u.affiliation != p { continue }
-			if u.enemy { enemy_spots[ec] = u.position; ec += 1 } else { player_spots[pc] = u.position; pc += 1 }
-		}
-		for d in 0..<rep_count(pc) { draw_fighter_drone(player_spots[d], false, drone_heading(player_spots[d], sector_pos(p))) }
-		for d in 0..<rep_count(ec) { draw_fighter_drone(enemy_spots[d], true, drone_heading(enemy_spots[d], sector_pos(p))) }
-		draw_combat_lasers(p, player_spots[:], enemy_spots[:], pc, ec)
+		sector_vis[p] = has_vision(p)
+		world_sector_spots[p].pc = 0
+		world_sector_spots[p].ec = 0
+		world_sector_spots[p].pmc = 0
+		world_sector_spots[p].emc = 0
 	}
+
 	transit_counts: [SECTOR_COUNT][2]int
+	miner_transit_counts: [SECTOR_COUNT][2]int
+	miner_return_counts: [SECTOR_COUNT][2]int
+
+	// Pass 1: selection rings, stationed unit spots, and transit counts.
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
-		if u.kind == .COMBAT && u.state == .TRANSIT && u.target_planet >= 0 && u.target_planet < SECTOR_COUNT {
-			transit_counts[u.target_planet][u.enemy ? 1 : 0] += 1
+		if selected_units[i] {
+			draw_selection_ring(u.position, 0.78)
+		}
+		if u.kind == .COMBAT {
+			if u.state == .GUARDING {
+				p := u.affiliation
+				if p >= 0 && p < SECTOR_COUNT && sector_vis[p] {
+					s := &world_sector_spots[p]
+					if u.enemy {
+						if s.ec < 256 { s.enemy_combat[s.ec] = u.position }
+						s.ec += 1
+					} else {
+						if s.pc < 256 { s.player_combat[s.pc] = u.position }
+						s.pc += 1
+					}
+				}
+			} else if u.state == .TRANSIT {
+				p := u.target_planet
+				if p >= 0 && p < SECTOR_COUNT {
+					transit_counts[p][u.enemy ? 1 : 0] += 1
+				}
+			}
+		} else if u.kind == .MINING {
+			p := miner_stationed_planet(u)
+			if p >= 0 && p < SECTOR_COUNT && sector_vis[p] {
+				s := &world_sector_spots[p]
+				if u.enemy {
+					if s.emc < 256 { s.enemy_miners[s.emc] = u.position }
+					s.emc += 1
+				} else {
+					if s.pmc < 256 { s.player_miners[s.pmc] = u.position }
+					s.pmc += 1
+				}
+			} else if u.target_planet >= 0 && u.target_planet < SECTOR_COUNT {
+				side := u.enemy ? 1 : 0
+				if u.state == .TRANSIT {
+					miner_transit_counts[u.target_planet][side] += 1
+				} else if u.state == .RETURNING {
+					miner_return_counts[u.target_planet][side] += 1
+				}
+			}
 		}
 	}
+
+	// Draw stationed drones and lasers per sector.
+	for p in 0..<SECTOR_COUNT {
+		if !sector_vis[p] { continue }
+		s := &world_sector_spots[p]
+		sp := sector_pos(p)
+		for d in 0..<rep_count(s.pc) { draw_fighter_drone(s.player_combat[d], false, drone_heading(s.player_combat[d], sp)) }
+		for d in 0..<rep_count(s.ec) { draw_fighter_drone(s.enemy_combat[d], true, drone_heading(s.enemy_combat[d], sp)) }
+		draw_combat_lasers(p, s.player_combat[:], s.enemy_combat[:], s.pc, s.ec, s.player_miners[:], s.enemy_miners[:], s.pmc, s.emc)
+		for d in 0..<rep_count(s.pmc) { draw_miner_drone(s.player_miners[d], false, drone_heading(s.player_miners[d], sp)) }
+		for d in 0..<rep_count(s.emc) { draw_miner_drone(s.enemy_miners[d], true, drone_heading(s.enemy_miners[d], sp)) }
+	}
+
+	vis_combat: [SECTOR_COUNT][2]int
+	vis_miner_tr: [SECTOR_COUNT][2]int
+	vis_miner_ret: [SECTOR_COUNT][2]int
+	drawn_combat: [SECTOR_COUNT][2]int
+	drawn_miner_tr: [SECTOR_COUNT][2]int
+	drawn_miner_ret: [SECTOR_COUNT][2]int
+
 	for p in 0..<SECTOR_COUNT {
 		for side in 0..<2 {
-			enemy := side == 1
-			if enemy && !has_vision(p) { continue } // Enemy transits to a dark planet are hidden.
-			visible := rep_count(transit_counts[p][enemy ? 1 : 0])
-			if visible == 0 { continue }
-			drawn := 0
-			for i := 0; i < unit_count; i += 1 {
-				u := &units[i]
-				if u.kind != .COMBAT || u.state != .TRANSIT || u.target_planet != p || u.enemy != enemy { continue }
-				if drawn >= visible { break }
-				to := sector_pos(u.target_planet)
-				heading := to - u.position
-				draw_fighter_drone(u.position, u.enemy, heading)
-				// Engine trail streak behind transit fighters.
-				if rl.Vector3Length(heading) > 0.001 {
-					trail := u.position - rl.Vector3Normalize(heading) * 1.2
-					rl.DrawLine3D(u.position, trail, rl.Fade(u.enemy ? rl.RED : SCIFI_CYAN, 0.6))
-				}
-				drawn += 1
-			}
+			if side == 1 && !sector_vis[p] { continue }
+			vis_combat[p][side] = rep_count(transit_counts[p][side])
+			vis_miner_tr[p][side] = rep_count(miner_transit_counts[p][side])
+			vis_miner_ret[p][side] = rep_count(miner_return_counts[p][side])
 		}
 	}
-	// The transit lines make dispatches visibly physical rather than teleporting.
+
+	// Pass 2: draw transit units and transit lines in a single pass.
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
-		if u.state == .TRANSIT && !is_concealed(u) { rl.DrawLine3D(u.position, sector_pos(u.target_planet), rl.Color{0, 225, 255, 90}) }
+		if u.state == .TRANSIT {
+			p := u.target_planet
+			if p >= 0 && p < SECTOR_COUNT {
+				side := u.enemy ? 1 : 0
+				can_see := !u.enemy || sector_vis[p]
+				if u.kind == .COMBAT {
+					if can_see && drawn_combat[p][side] < vis_combat[p][side] {
+						drawn_combat[p][side] += 1
+						to := sector_pos(p)
+						heading := to - u.position
+						draw_fighter_drone(u.position, u.enemy, heading)
+						if rl.Vector3Length(heading) > 0.001 {
+							trail := u.position - rl.Vector3Normalize(heading) * 1.2
+							rl.DrawLine3D(u.position, trail, rl.Fade(u.enemy ? rl.RED : SCIFI_CYAN, 0.6))
+						}
+					}
+				} else if u.kind == .MINING {
+					if can_see && drawn_miner_tr[p][side] < vis_miner_tr[p][side] {
+						drawn_miner_tr[p][side] += 1
+						to := sector_pos(p)
+						heading := to - u.position
+						draw_miner_drone(u.position, u.enemy, heading)
+					}
+				}
+				if can_see {
+					rl.DrawLine3D(u.position, sector_pos(p), rl.Color{0, 225, 255, 90})
+				}
+			}
+		} else if u.state == .RETURNING {
+			p := u.target_planet
+			if p >= 0 && p < SECTOR_COUNT && u.kind == .MINING {
+				side := u.enemy ? 1 : 0
+				if (!u.enemy || sector_vis[p]) && drawn_miner_ret[p][side] < vis_miner_ret[p][side] {
+					drawn_miner_ret[p][side] += 1
+					to := planets[EARTH].position
+					heading := to - u.position
+					draw_miner_drone(u.position, u.enemy, heading)
+				}
+			}
+		}
 	}
 	rl.EndMode3D()
 	// Luminous industrial manufacturing lights on Earth when units are being created
@@ -1804,40 +1919,48 @@ draw_inspector :: proc() {
 	if ghost_view() {
 		draw_ghost_rosters(x)
 	} else if selected_planet == EARTH || has_vision(selected_planet) {
-		mining_hdr := selected_planet != ENEMY_HOME ? rl.TextFormat("MINING DRONES (%d/%d)", roster_count(.MINING), planet_mining_cap(selected_planet)) : rl.TextFormat("MINING DRONES (%d)", roster_count(.MINING))
-		draw_section_header(x + PANEL_PAD_X, f32(unit_tile_y(.MINING) - 23), PANEL_CONTENT_W, mining_hdr, SCIFI_AMBER)
+		mining_count := roster_count(.MINING)
+		mining_hdr := selected_planet != ENEMY_HOME ? rl.TextFormat("MINING DRONES (%d/%d)", mining_count, planet_mining_cap(selected_planet)) : rl.TextFormat("MINING DRONES (%d)", mining_count)
+		y_mining := unit_tile_y(.MINING)
+		draw_section_header(x + PANEL_PAD_X, f32(y_mining - 23), PANEL_CONTENT_W, mining_hdr, SCIFI_AMBER)
 		m_ord := 0
 		for i := 0; i < unit_count; i += 1 {
 			if unit_in_roster(i, .MINING) {
-				draw_unit_tile(i, x, unit_tile_y(.MINING), m_ord, false)
+				draw_unit_tile(i, x, y_mining, m_ord, false)
 				m_ord += 1
 			}
 		}
-		draw_section_header(x + PANEL_PAD_X, f32(unit_tile_y(.COMBAT) - 23), PANEL_CONTENT_W, rl.TextFormat("FIGHTING DRONES (%d)", roster_count(.COMBAT)), SCIFI_BLUE)
+		combat_count := roster_count(.COMBAT)
+		y_combat := unit_tile_y(.COMBAT)
+		draw_section_header(x + PANEL_PAD_X, f32(y_combat - 23), PANEL_CONTENT_W, rl.TextFormat("FIGHTING DRONES (%d)", combat_count), SCIFI_BLUE)
 		c_ord := 0
 		for i := 0; i < unit_count; i += 1 {
 			if unit_in_roster(i, .COMBAT) {
-				draw_unit_tile(i, x, unit_tile_y(.COMBAT), c_ord, false)
+				draw_unit_tile(i, x, y_combat, c_ord, false)
 				c_ord += 1
 			}
 		}
 		if has_vision(selected_planet) {
-			if enemy_roster_count(.MINING) > 0 {
-				draw_section_header(x + PANEL_PAD_X, f32(enemy_tile_y(.MINING) - 23), PANEL_CONTENT_W, rl.TextFormat("HOSTILE MINING (%d)", enemy_roster_count(.MINING)), SCIFI_RED)
+			enemy_mining := enemy_roster_count(.MINING)
+			if enemy_mining > 0 {
+				y_em := enemy_tile_y(.MINING)
+				draw_section_header(x + PANEL_PAD_X, f32(y_em - 23), PANEL_CONTENT_W, rl.TextFormat("HOSTILE MINING (%d)", enemy_mining), SCIFI_RED)
 				em_ord := 0
 				for i := 0; i < unit_count; i += 1 {
 					if enemy_in_roster(i, .MINING) {
-						draw_unit_tile(i, x, enemy_tile_y(.MINING), em_ord, true)
+						draw_unit_tile(i, x, y_em, em_ord, true)
 						em_ord += 1
 					}
 				}
 			}
-			if enemy_roster_count(.COMBAT) > 0 {
-				draw_section_header(x + PANEL_PAD_X, f32(enemy_tile_y(.COMBAT) - 23), PANEL_CONTENT_W, rl.TextFormat("HOSTILE FIGHTERS (%d)", enemy_roster_count(.COMBAT)), SCIFI_RED)
+			enemy_combat := enemy_roster_count(.COMBAT)
+			if enemy_combat > 0 {
+				y_ec := enemy_tile_y(.COMBAT)
+				draw_section_header(x + PANEL_PAD_X, f32(y_ec - 23), PANEL_CONTENT_W, rl.TextFormat("HOSTILE FIGHTERS (%d)", enemy_combat), SCIFI_RED)
 				ec_ord := 0
 				for i := 0; i < unit_count; i += 1 {
 					if enemy_in_roster(i, .COMBAT) {
-						draw_unit_tile(i, x, enemy_tile_y(.COMBAT), ec_ord, true)
+						draw_unit_tile(i, x, y_ec, ec_ord, true)
 						ec_ord += 1
 					}
 				}
@@ -2681,9 +2804,7 @@ draw_fighter_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector
 // Visible laser fire during battles: short flying bolts from each shooter
 // toward its target (player fire neon cyan, enemy fire RED), mirroring the
 // update_planet_combat rules — dogfights, miner sweeps and base sieges.
-draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, ec: int) {
-	target_spots: [256]rl.Vector3
-	tc := 0
+draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, ec: int, player_miner_spots, enemy_miner_spots: []rl.Vector3, pmc, emc: int) {
 	num_p := min(pc, rep_count(pc))
 	num_e := min(ec, rep_count(ec))
 	if num_p > 0 && num_e > 0 {
@@ -2692,31 +2813,17 @@ draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, 
 		for j in 0..<num_e { draw_laser_bolt(enemy_spots[j], player_spots[j % num_p], f32(j) * 2.3 + 1.1, rl.RED) }
 	} else if num_e > 0 {
 		// Enemy fighters strafing unescorted player miners (kill_player_miner).
-		for i := 0; i < unit_count; i += 1 {
-			u := &units[i]
-			if u.kind == .MINING && !u.enemy && u.target_planet == p && u.state != .TRANSIT {
-				target_spots[tc] = u.position
-				tc += 1
-				if tc >= len(target_spots) { break }
-			}
-		}
+		num_tc := min(pmc, rep_count(pmc))
 		for j in 0..<num_e {
-			if tc == 0 { break }
-			draw_laser_bolt(enemy_spots[j], target_spots[j % tc], f32(j) * 2.3, rl.RED)
+			if num_tc == 0 { break }
+			draw_laser_bolt(enemy_spots[j], player_miner_spots[j % num_tc], f32(j) * 2.3, rl.RED)
 		}
 	} else if num_p > 0 {
 		// Player fighters sweeping enemy miners (kill_enemy_miner), then
 		// besieging the enemy base itself.
-		for i := 0; i < unit_count; i += 1 {
-			u := &units[i]
-			if u.kind == .MINING && u.enemy && u.affiliation == p {
-				target_spots[tc] = u.position
-				tc += 1
-				if tc >= len(target_spots) { break }
-			}
-		}
-		if tc > 0 {
-			for i in 0..<num_p { draw_laser_bolt(player_spots[i], target_spots[i % tc], f32(i) * 2.3, SCIFI_CYAN) }
+		if emc > 0 {
+			num_tc := min(emc, rep_count(emc))
+			for i in 0..<num_p { draw_laser_bolt(player_spots[i], enemy_miner_spots[i % num_tc], f32(i) * 2.3, SCIFI_CYAN) }
 		} else if enemy_base_hp[p] > 0 {
 			base := sector_pos(p) + rl.Vector3{0, sector_radius(p) * 0.6, 0}
 			for i in 0..<num_p { draw_laser_bolt(player_spots[i], base, f32(i) * 2.3, SCIFI_CYAN) }
@@ -2750,6 +2857,48 @@ transit_fighters_at :: proc(target_planet: int, enemy: bool) -> int {
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.kind == .COMBAT && u.state == .TRANSIT && u.target_planet == target_planet && u.enemy == enemy { count += 1 }
+	}
+	return count
+}
+
+// Mining drones in transit to a planet, grouped by side — the unit side of
+// the transit representational rendering.
+transit_miners_at :: proc(target_planet: int, enemy: bool = false) -> int {
+	count := 0
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .MINING && u.state == .TRANSIT && u.target_planet == target_planet && u.enemy == enemy { count += 1 }
+	}
+	return count
+}
+
+// Mining drones returning from a planet to Earth.
+returning_miners_at :: proc(target_planet: int, enemy: bool = false) -> int {
+	count := 0
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .MINING && u.state == .RETURNING && u.target_planet == target_planet && u.enemy == enemy { count += 1 }
+	}
+	return count
+}
+
+// Planet a stationed (non-transit) miner is physically located at.
+miner_stationed_planet :: proc(u: ^Unit) -> int {
+	if u.state == .TRANSIT || u.state == .RETURNING { return -1 }
+	if u.state == .DEPOSITING { return EARTH }
+	if u.enemy { return u.affiliation }
+	if u.target_planet >= 0 && u.target_planet < SECTOR_COUNT { return u.target_planet }
+	if u.affiliation >= 0 && u.affiliation < SECTOR_COUNT { return u.affiliation }
+	return EARTH
+}
+
+// Stationed mining drones at a planet, grouped by side.
+stationed_miners_at :: proc(p: int, enemy: bool) -> int {
+	count := 0
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind != .MINING || u.enemy != enemy { continue }
+		if miner_stationed_planet(u) == p { count += 1 }
 	}
 	return count
 }
@@ -3523,7 +3672,7 @@ draw_combat_nebulae :: proc() {
 		// Palpitating rhythm: organic multi-frequency heartbeat pulse
 		// Combines fundamental throb with secondary harmonic for an authentic heart-palpitation cadence
 		t := laser_anim_time
-		pulse_speed: f32 = sector_in_combat(s) ? 3.8 : 2.4
+		pulse_speed: f32 = sector_combat_state[s] ? 3.8 : 2.4
 		pulse1 := math.sin(t * pulse_speed + f32(s) * 1.8)
 		pulse2 := math.sin(t * (pulse_speed * 2.0) + f32(s) * 2.5 + 0.45)
 		palpitation := 0.85 + 0.28 * pulse1 + 0.16 * pulse2
@@ -3832,9 +3981,16 @@ squad_count :: proc(group: int) -> int {
 
 // Global HUD squad badges: `[n:count]` per assigned squad, under the top bar.
 draw_squad_hud :: proc() {
+	counts: [SQUAD_COUNT + 1]int
+	for i := 0; i < unit_count; i += 1 {
+		sq := units[i].squad
+		if sq >= 1 && sq <= SQUAD_COUNT && !units[i].enemy {
+			counts[sq] += 1
+		}
+	}
 	x := f32(HUD_PAD)
 	for g in 1..=SQUAD_COUNT {
-		count := squad_count(g)
+		count := counts[g]
 		if count == 0 { continue }
 		label := rl.TextFormat("[%d:%d]", g, count)
 		w := f32(rl.MeasureText(label, 13))
@@ -3932,6 +4088,7 @@ step_simulation :: proc(dt: f32) {
 	// Smooth transition of combat nebula intensity: rapid flare-up in battle, graceful fade-out on victory.
 	for s in 0..<SECTOR_COUNT {
 		in_combat := sector_in_combat(s)
+		sector_combat_state[s] = in_combat
 		target: f32 = 0.0
 		if s == ENEMY_HOME {
 			if !enemy_hq_destroyed() {
@@ -3953,23 +4110,48 @@ step_simulation :: proc(dt: f32) {
 // enemy fighters, enemy miners and base HP. Once it goes dark the outpost
 // inspector shows the last snapshot (last_known_intel) instead of nothing.
 update_intel :: proc() {
+	vis: [PLANET_COUNT]bool
+	any_vis := false
 	for p in 0..<PLANET_COUNT {
-		if !has_vision(p) { continue }
-		_, enemies := planet_combatants(p)
-		intel := Intel{fighters = enemies, miners = enemy_miner_count(p), base_hp = enemy_base_hp[p]}
-		// Roster snapshot for the ghost inspector view: every unit matching the
-		// roster predicates (miners targeting p, combatants affiliated with p).
-		for i := 0; i < unit_count && intel.unit_count < INTEL_UNIT_CAP; i += 1 {
-			u := &units[i]
-			in_roster := u.affiliation == p
-			if u.kind == .MINING { in_roster = u.target_planet == p }
-			if in_roster {
-				intel.units[intel.unit_count] = Intel_Unit{kind = u.kind, state = u.state, enemy = u.enemy}
-				intel.unit_count += 1
+		if has_vision(p) {
+			vis[p] = true
+			any_vis = true
+			last_known_intel[p] = Intel{base_hp = enemy_base_hp[p]}
+			intel_recorded[p] = true
+		}
+	}
+	if !any_vis { return }
+
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .COMBAT {
+			p := u.affiliation
+			if p >= 0 && p < PLANET_COUNT && vis[p] {
+				intel := &last_known_intel[p]
+				if u.enemy && u.state == .GUARDING {
+					intel.fighters += 1
+				}
+				if intel.unit_count < INTEL_UNIT_CAP {
+					intel.units[intel.unit_count] = Intel_Unit{kind = u.kind, state = u.state, enemy = u.enemy}
+					intel.unit_count += 1
+				}
+			}
+		} else if u.kind == .MINING {
+			if u.enemy {
+				p_aff := u.affiliation
+				if p_aff >= 0 && p_aff < PLANET_COUNT && vis[p_aff] {
+					last_known_intel[p_aff].miners += 1
+				}
+			}
+			p_tgt := u.target_planet
+			if p_tgt >= 0 && p_tgt < PLANET_COUNT && vis[p_tgt] {
+				intel := &last_known_intel[p_tgt]
+				if intel.unit_count < INTEL_UNIT_CAP {
+					intel.units[intel.unit_count] = Intel_Unit{kind = u.kind, state = u.state, enemy = u.enemy}
+					intel.unit_count += 1
+				}
 			}
 		}
-		last_known_intel[p] = intel
-		intel_recorded[p] = true
 	}
 }
 
@@ -4916,10 +5098,16 @@ has_vision :: proc(p: int) -> bool {
 	if p < 0 || p >= SECTOR_COUNT { return false }
 	if p == EARTH { return true }
 	if combat_vision_timer[p] > 0 { return true }
+	r := sector_radius(p) + 2.0
+	r2 := r * r
+	sp := sector_pos(p)
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.enemy { continue }
-		if distance(u.position, sector_pos(p)) <= sector_radius(p) + 2.0 {
+		dx := u.position.x - sp.x
+		dy := u.position.y - sp.y
+		dz := u.position.z - sp.z
+		if dx*dx + dy*dy + dz*dz <= r2 {
 			return true
 		}
 	}
