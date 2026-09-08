@@ -93,6 +93,10 @@ DEPOSIT_DURATION :: 0.5
 // Scout survival: garrison defenses hold fire this long against a miner
 // freshly pinned at an occupied planet (.IDLE progress doubles as the clock).
 SCOUT_SURVIVAL :: 3.5
+// Combat vision linger: when the player's last fighting drone at a planet is
+// destroyed in combat, vision of that planet persists for this many seconds
+// before falling back under fog of war.
+COMBAT_VISION_LINGER :: 3.0
 // Flying laser bolts: flight speed along the shooter->target ray and the
 // visible bolt length.
 LASER_BOLT_SPEED :: 14.0
@@ -288,6 +292,7 @@ wave_started: bool
 combat_timer: [SECTOR_COUNT]f32
 miner_timer: [SECTOR_COUNT]f32
 base_timer: [SECTOR_COUNT]f32
+combat_vision_timer: [SECTOR_COUNT]f32
 
 game_paused := false
 controls_overlay_open := false
@@ -424,6 +429,7 @@ reset_world :: proc() {
 		combat_timer[p] = 0
 		miner_timer[p] = 0
 		base_timer[p] = 0
+		combat_vision_timer[p] = 0
 	}
 	enemy_base_hp = GARRISON_BASE_HP
 	base_counts = {}
@@ -996,7 +1002,16 @@ mined_planet_count :: proc() -> int {
 	return mined_planets(&seen)
 }
 
+update_combat_vision :: proc(dt: f32) {
+	for p in 0..<SECTOR_COUNT {
+		if combat_vision_timer[p] > 0 {
+			combat_vision_timer[p] = max(combat_vision_timer[p] - dt, 0)
+		}
+	}
+}
+
 update_enemy_waves :: proc(dt: f32) {
+	update_combat_vision(dt)
 	// The wave clock only advances while the player mines 2+ worlds, so a
 	// smaller footprint draws no retaliation at all.
 	if mined_planet_count() >= WAVE_MIN_MINING_PLANETS {
@@ -1033,7 +1048,12 @@ update_planet_combat :: proc(dt: f32, p: int) {
 		combat_timer[p] += dt
 		for combat_timer[p] >= COMBAT_TICK {
 			combat_timer[p] -= COMBAT_TICK
-			if !kill_fighter(p, false) || !kill_fighter(p, true) { break }
+			if !kill_fighter(p, false) { break }
+			rem_players, _ := planet_combatants(p)
+			if rem_players == 0 {
+				combat_vision_timer[p] = COMBAT_VISION_LINGER
+			}
+			if !kill_fighter(p, true) { break }
 		}
 	} else if enemies > 0 {
 		combat_timer[p] = 0
@@ -4304,12 +4324,13 @@ serialize_game_state :: proc(allocator := context.temp_allocator) -> string {
 	}
 
 	for s in 0..<SECTOR_COUNT {
-		fmt.sbprintf(&b, "SECTOR %d %d %.4f %.4f %.4f\n",
+		fmt.sbprintf(&b, "SECTOR %d %d %.4f %.4f %.4f %.4f\n",
 			s,
 			enemy_base_hp[s],
 			combat_timer[s],
 			miner_timer[s],
-			base_timer[s])
+			base_timer[s],
+			combat_vision_timer[s])
 	}
 
 	for p in 0..<PLANET_COUNT {
@@ -4459,6 +4480,12 @@ deserialize_game_state :: proc(content: string) -> bool {
 					combat_timer[s] = ct
 					miner_timer[s] = mt
 					base_timer[s] = bt
+				}
+				if len(fields) >= 7 {
+					cvt, _ := strconv.parse_f32(fields[6])
+					if s >= 0 && s < SECTOR_COUNT {
+						combat_vision_timer[s] = cvt
+					}
 				}
 			}
 		case "INTEL":
@@ -4880,13 +4907,15 @@ draw_game_over_overlay :: proc() {
 
 // ---- Fog of war ----------------------------------------------------------
 
-// Dynamic, presence-based vision: a planet is visible only while at least one
+// Dynamic, presence-based vision: a planet is visible while at least one
 // player unit is physically near it — stationed in orbit, mining, guarding or
-// passing within radius + 2.0. Earth is always lit. Pulling every unit away
-// (retreat, destruction, or a transit leg) puts the planet straight back
-// under fog.
+// passing within radius + 2.0. Earth is always lit. When the last player
+// fighting drone at a planet is destroyed in combat, vision lingers for
+// COMBAT_VISION_LINGER seconds before the planet falls back under fog.
 has_vision :: proc(p: int) -> bool {
+	if p < 0 || p >= SECTOR_COUNT { return false }
 	if p == EARTH { return true }
+	if combat_vision_timer[p] > 0 { return true }
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.enemy { continue }

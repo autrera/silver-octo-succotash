@@ -2264,6 +2264,7 @@ save_load_game_roundtrip_preserves_state :: proc(t: ^testing.T) {
 	pending_count[EARTH] = 2
 	enemy_base_hp[VENUS] = 0
 	combat_timer[VENUS] = 0.15
+	combat_vision_timer[VENUS] = 1.75
 	intel_recorded[MARS] = true
 	last_known_intel[MARS].fighters = 12
 	last_known_intel[MARS].miners = 4
@@ -2302,6 +2303,7 @@ save_load_game_roundtrip_preserves_state :: proc(t: ^testing.T) {
 	testing.expect(t, pending[EARTH][1] == .COMBAT, "pending slot 1 restored")
 	testing.expect(t, enemy_base_hp[VENUS] == 0, "enemy base hp restored")
 	testing.expect(t, abs(combat_timer[VENUS] - 0.15) < 0.01, "combat timer restored")
+	testing.expect(t, abs(combat_vision_timer[VENUS] - 1.75) < 0.01, "combat vision timer restored")
 	testing.expect(t, intel_recorded[MARS] == true, "intel recorded restored")
 	testing.expect(t, last_known_intel[MARS].fighters == 12, "intel fighters restored")
 	testing.expect(t, last_known_intel[MARS].unit_count == 1, "intel unit count restored")
@@ -2626,6 +2628,105 @@ earth_industry_lights_intensity_transitions :: proc(t: ^testing.T) {
 	// 7. reset_world resets earth_industry_intensity to 0
 	reset_world()
 	testing.expect(t, earth_industry_intensity == 0.0, "reset_world zeroes earth_industry_intensity")
+}
+
+@(test)
+combat_vision_lingers_when_last_fighter_destroyed :: proc(t: ^testing.T) {
+	reset_world()
+	add_guarding_fighter(JUPITER, false) // 1 player fighter
+	add_guarding_fighter(JUPITER, true)  // 2 enemy fighters
+	add_guarding_fighter(JUPITER, true)
+	testing.expect(t, has_vision(JUPITER), "Jupiter is lit while player fighter is present")
+
+	// 1 combat tick resolves 1 kill trade: player fighter falls, 1 enemy fighter falls
+	update_enemy_waves(f32(COMBAT_TICK))
+	players, enemies := planet_combatants(JUPITER)
+	testing.expect(t, players == 0 && enemies == 1, "last player fighter destroyed; 1 enemy remains")
+	testing.expect(t, unit_count == 1 && units[0].enemy, "only the enemy fighter remains")
+
+	// Combat vision linger: Jupiter stays visible for COMBAT_VISION_LINGER seconds
+	testing.expect(t, combat_vision_timer[JUPITER] > 0, "combat vision timer started at Jupiter")
+	testing.expect(t, has_vision(JUPITER), "Jupiter remains lit under lingering combat vision")
+	testing.expect(t, !is_concealed(&units[0]), "surviving enemy fighter is visible during linger window")
+
+	// 1s later: vision still active
+	update_enemy_waves(1.0)
+	testing.expect(t, has_vision(JUPITER), "Jupiter remains lit 1s after combat loss")
+	testing.expect(t, combat_vision_timer[JUPITER] > 0, "timer still counting down")
+
+	// Advance past the full linger duration: fog descends
+	update_enemy_waves(f32(COMBAT_VISION_LINGER))
+	testing.expect(t, combat_vision_timer[JUPITER] == 0, "combat vision timer expired")
+	testing.expect(t, !has_vision(JUPITER), "Jupiter falls back under fog of war after linger window")
+	testing.expect(t, is_concealed(&units[0]), "enemy fighter is now concealed under fog")
+}
+
+@(test)
+combat_vision_does_not_trigger_while_fighters_remain :: proc(t: ^testing.T) {
+	reset_world()
+	for i in 0..<3 { add_guarding_fighter(MARS, false) }
+	for i in 0..<3 { add_guarding_fighter(MARS, true) }
+
+	// Tick 1: 2v2 remain. Vision timer must NOT trigger because 2 player fighters remain.
+	update_enemy_waves(f32(COMBAT_TICK))
+	players, _ := planet_combatants(MARS)
+	testing.expect(t, players == 2, "2 player fighters remain")
+	testing.expect(t, combat_vision_timer[MARS] == 0, "timer not set while player fighters remain")
+
+	// Tick 2: 1v1 remain. Vision timer still not set.
+	update_enemy_waves(f32(COMBAT_TICK))
+	players, _ = planet_combatants(MARS)
+	testing.expect(t, players == 1, "1 player fighter remains")
+	testing.expect(t, combat_vision_timer[MARS] == 0, "timer not set while 1 fighter remains")
+
+	// Tick 3: 0v0 remain (last player fighter destroyed). Vision timer activates!
+	update_enemy_waves(f32(COMBAT_TICK))
+	players, _ = planet_combatants(MARS)
+	testing.expect(t, players == 0, "0 player fighters remain")
+	testing.expect(t, combat_vision_timer[MARS] > 0, "timer activates when last fighter falls")
+	testing.expect(t, has_vision(MARS), "Mars stays lit under lingering vision")
+}
+
+@(test)
+combat_vision_lingers_at_enemy_hq :: proc(t: ^testing.T) {
+	reset_world()
+	add_guarding_fighter(ENEMY_HOME, false)
+	add_guarding_fighter(ENEMY_HOME, true)
+	testing.expect(t, has_vision(ENEMY_HOME), "HQ is lit while player fighter is present")
+
+	// 1 tick: player fighter falls
+	update_enemy_waves(f32(COMBAT_TICK))
+	players, _ := planet_combatants(ENEMY_HOME)
+	testing.expect(t, players == 0, "player fighter destroyed at HQ")
+	testing.expect(t, combat_vision_timer[ENEMY_HOME] > 0, "timer activated for ENEMY_HOME")
+	testing.expect(t, has_vision(ENEMY_HOME), "HQ remains lit under lingering vision")
+
+	// Advance past linger window
+	update_enemy_waves(f32(COMBAT_VISION_LINGER) + 0.5)
+	testing.expect(t, !has_vision(ENEMY_HOME), "HQ goes dark after linger window expires")
+}
+
+@(test)
+combat_vision_updates_intel_before_fog :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = VENUS
+	add_guarding_fighter(VENUS, false)
+	add_guarding_fighter(VENUS, true)
+	add_guarding_fighter(VENUS, true)
+
+	// Step simulation for 1 combat tick: fighter destroyed, intel updates during lingering vision
+	step_simulation(f32(COMBAT_TICK))
+	testing.expect(t, combat_vision_timer[VENUS] > 0, "combat vision timer active at Venus")
+	testing.expect(t, has_vision(VENUS), "Venus has vision during linger window")
+	testing.expect(t, intel_recorded[VENUS], "intel recorded during linger window")
+	testing.expect(t, last_known_intel[VENUS].fighters == 1, "intel accurately captured surviving 1 enemy fighter")
+	testing.expect(t, !ghost_view(), "live view active during lingering vision")
+
+	// Step past linger window: Venus falls back to fog, ghost view activates with fresh intel
+	step_simulation(f32(COMBAT_VISION_LINGER) + 0.5)
+	testing.expect(t, !has_vision(VENUS), "Venus is dark after linger window")
+	testing.expect(t, ghost_view(), "ghost view activates once Venus is dark")
+	testing.expect(t, last_known_intel[VENUS].fighters == 1, "accurate post-battle intel preserved in ghost view")
 }
 
 
