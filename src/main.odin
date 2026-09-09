@@ -50,16 +50,23 @@ COMBAT_TICK :: 0.2
 // defenders or miners left, one base falls every BASE_SIEGE_TIME seconds.
 BASE_SIEGE_TIME :: 2.0
 // Enemy attack waves: first at the 3-minute mark, then every 3 minutes. The
-// clock only advances while the player actively mines WAVE_MIN_MINING_PLANETS
-// (2) or more worlds — a smaller footprint draws no retaliation.
+// clock advances while the player has liberated WAVE_MIN_LIBERATED_PLANETS
+// (2) or more worlds (Earth + at least one other).
 WAVE_FIRST_DELAY :: 180
 WAVE_INTERVAL :: 180
-// Attacks only occur once the player mines at least this many worlds.
+// Attacks only occur once the player liberates at least this many worlds.
+WAVE_MIN_LIBERATED_PLANETS :: 2
 WAVE_MIN_MINING_PLANETS :: 2
-// Wave size scales with liberation: (liberated planets - 1) * 15 fighters —
+// Wave size scales with liberation: (liberated planets - 1) * 15 fighters -
 // 3 liberated planets send 30 fighters. Earth starts liberated, so the first
 // wave only bites once a second world falls.
 WAVE_FIGHTERS_PER_LIBERATED :: 15
+
+// Minor attack waves: every 60s the closest unliberated planet to Earth launches
+// 5 combat drones against the closest liberated planet (not Earth unless Earth
+// is the closest). Independent of mined planets.
+MINOR_WAVE_INTERVAL :: 75.0
+MINOR_WAVE_SIZE :: 5
 // Every planet except Earth opens occupied: garrison fighters, garrison
 // miners and enemy base HP all scale up with distance from Earth
 // (Venus 10/4/10 ... Neptune 95/22/60; indexed by sector, with the enemy HQ
@@ -68,8 +75,8 @@ GARRISON_FIGHTERS := [SECTOR_COUNT]int{30, 10, 0, 20, 45, 60, 75, 95, ENEMY_HQ_G
 GARRISON_MINERS := [SECTOR_COUNT]int{8, 4, 0, 6, 10, 14, 18, 22, 0}
 GARRISON_BASE_HP := [SECTOR_COUNT]int{20, 10, 0, 15, 30, 40, 50, 60, ENEMY_HQ_BASE_HP}
 // Drone production per command base line (mining 6s, combat 10s).
-MINER_BUILD_TIME :: 6.0
-COMBAT_BUILD_TIME :: 10.0
+MINER_BUILD_TIME :: 4.0
+COMBAT_BUILD_TIME :: 8.0
 // Command base construction price, deducted up front when the build queues.
 BASE_COST :: 500
 // Drone build-speed upgrade: 5000 minerals per level; each level builds
@@ -298,6 +305,7 @@ inspector_drag_active: bool
 enemy_base_hp: [SECTOR_COUNT]int
 enemy_wave_timer: f32
 wave_started: bool
+minor_wave_timer: f32
 // Per-planet combat pacing: 1:1 fighter trades, miner sweeps and base damage
 // all tick on COMBAT_TICK.
 combat_timer: [SECTOR_COUNT]f32
@@ -426,12 +434,24 @@ initialize_game :: proc() {
 	unit_count = 0
 	units[unit_count] = Unit{kind = .MINING, state = .MINING, position = {3.8, 0.4, 0}, home_planet = EARTH, affiliation = EARTH, target_planet = EARTH}
 	unit_count += 1
-	units[unit_count] = Unit{kind = .COMBAT, state = .GUARDING, position = {0, 3.8, 0}, home_planet = EARTH, affiliation = EARTH, target_planet = EARTH, orbit_angle = 0.5}
-	unit_count += 1
+	for i in 0..<5 {
+		angle := f32(i) * (2 * math.PI / 5.0)
+		pos := orbit_pos(planets[EARTH].position, planets[EARTH].radius, angle)
+		units[unit_count] = Unit{
+			kind = .COMBAT,
+			state = .GUARDING,
+			position = pos,
+			home_planet = EARTH,
+			affiliation = EARTH,
+			target_planet = EARTH,
+			orbit_angle = angle,
+		}
+		unit_count += 1
+	}
 	// Space backdrop: deterministic starfield (independent of the wave RNG).
 	generate_stars()
 	// Every non-Earth sector opens occupied: the GARRISON_* tables form the
-	// fixed occupation ladder (Venus easiest ... Neptune hardest, HQ last) —
+	// fixed occupation ladder (Venus easiest ... Neptune hardest, HQ last) -
 	// after the Earth-centered repositioning this no longer tracks distance.
 	for p in 0..<SECTOR_COUNT {
 		if p == EARTH { continue }
@@ -467,6 +487,7 @@ reset_world :: proc() {
 	minerals = 350
 	enemy_wave_timer = 0
 	wave_started = false
+	minor_wave_timer = 0
 	selected_planet = EARTH
 	production = {}
 	pending_count = {}
@@ -1141,8 +1162,8 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 }
 
 // Enemy waves: every 3 minutes (first at the 3-minute mark) a single wave
-// lifts off from the enemy HQ (the old Neptune orbit) — but only while the
-// player actively mines WAVE_MIN_MINING_PLANETS (2) or more worlds. The wave
+// lifts off from the enemy HQ (the old Neptune orbit) - but only while the
+// player has liberated WAVE_MIN_LIBERATED_PLANETS (2) or more worlds. The wave
 // is never random: it strikes the liberated planet closest to the enemy HQ
 // with (liberated planets - 1) * WAVE_FIGHTERS_PER_LIBERATED fighters (3
 // liberated worlds send 30). While the player presses an assault on a
@@ -1184,24 +1205,156 @@ update_combat_vision :: proc(dt: f32) {
 
 update_enemy_waves :: proc(dt: f32) {
 	update_combat_vision(dt)
-	// The wave clock only advances while the player mines 2+ worlds, so a
-	// smaller footprint draws no retaliation at all.
-	if mined_planet_count() >= WAVE_MIN_MINING_PLANETS {
+	update_minor_wave(dt)
+	update_wave(dt)
+	for p in 0..<SECTOR_COUNT { update_planet_combat(dt, p) }
+}
+
+// Minor wave: every 60 seconds the closest unliberated planet to Earth launches
+// 5 combat drones against the closest liberated planet (not Earth unless Earth
+// is the closest). This attack runs independently of the 180s wave.
+update_minor_wave :: proc(dt: f32) {
+	minor_wave_timer += dt
+	if minor_wave_timer >= MINOR_WAVE_INTERVAL {
+		launch_minor_wave()
+	}
+}
+
+launch_minor_wave :: proc() {
+	minor_wave_timer = 0
+	source, found := closest_unliberated_planet_to_earth()
+	if !found { return }
+	target := closest_liberated_planet_to(source)
+	spawn_minor_wave(source, target, MINOR_WAVE_SIZE)
+}
+
+// Warning before minor wave: 3 seconds before launch, the targeted planet
+// receives an ominous red glow at half battle intensity.
+minor_wave_warning_planet :: proc() -> int {
+	if minor_wave_timer < MINOR_WAVE_INTERVAL - 3.0 { return -1 }
+	source, found := closest_unliberated_planet_to_earth()
+	if !found { return -1 }
+	return closest_liberated_planet_to(source)
+}
+
+// A planet is under attack warning if an impending minor wave is within 3s
+// of launching against it, or if enemy combat drones are currently in transit
+// toward it. The warning red glow persists during transit and transitions to
+// full battle glow once combat begins.
+planet_under_attack_warning :: proc(p: int) -> bool {
+	if p < 0 || p >= PLANET_COUNT { return false }
+	if minor_wave_warning_planet() == p { return true }
+	return transit_fighters_at(p, true) > 0
+}
+
+closest_unliberated_planet_to_earth :: proc() -> (int, bool) {
+	best := -1
+	best_d: f32 = 1e9
+	earth_pos := planets[EARTH].position
+	for p in 0..<PLANET_COUNT {
+		if p == EARTH { continue }
+		if planet_liberated(p) { continue }
+		d := distance(planets[p].position, earth_pos)
+		if best < 0 || d < best_d {
+			best = p
+			best_d = d
+		}
+	}
+	return best, best >= 0
+}
+
+closest_liberated_planet_to :: proc(attacker: int) -> int {
+	attacker_pos := planets[attacker].position
+	best_other := -1
+	best_other_d: f32 = 1e9
+
+	for p in 0..<PLANET_COUNT {
+		if p == EARTH || p == attacker { continue }
+		if !planet_liberated(p) { continue }
+		d := distance(planets[p].position, attacker_pos)
+		if best_other < 0 || d < best_other_d {
+			best_other = p
+			best_other_d = d
+		}
+	}
+
+	earth_d := distance(planets[EARTH].position, attacker_pos)
+	if best_other >= 0 && best_other_d <= earth_d {
+		return best_other
+	}
+	return EARTH
+}
+
+spawn_minor_wave :: proc(source, target: int, count: int = MINOR_WAVE_SIZE) {
+	spawn_count := min(count, MAX_UNITS - unit_count)
+	if spawn_count <= 0 { return }
+	src_pos := planets[source].position
+	src_rad := planets[source].radius
+	target_pos := sector_pos(target)
+
+	to_target := target_pos - src_pos
+	dist := rl.Vector3Length(to_target)
+	dir := dist > 0.001 ? to_target / dist : rl.Vector3{1, 0, 0}
+
+	world_up := rl.Vector3{0, 1, 0}
+	right := rl.Vector3CrossProduct(dir, world_up)
+	if rl.Vector3Length(right) < 0.01 {
+		right = rl.Vector3CrossProduct(dir, {0, 0, 1})
+	}
+	right = rl.Vector3Normalize(right)
+	up := rl.Vector3Normalize(rl.Vector3CrossProduct(right, dir))
+
+	launch_dist := dist - (src_rad + 1.5)
+	launch_origin := src_pos + dir * (src_rad + 1.5)
+
+	formation_offsets := [5][2]f32{
+		{ 0.0,  0.0},
+		{-1.3,  0.4},
+		{ 1.3,  0.4},
+		{-2.6, -0.3},
+		{ 2.6, -0.3},
+	}
+
+	for i in 0..<spawn_count {
+		angle := f32(i) * (2 * math.PI / f32(spawn_count))
+		ox := formation_offsets[i % 5][0]
+		oy := formation_offsets[i % 5][1]
+		if i >= 5 {
+			ox += f32((i / 5) * 2) * (i % 2 == 0 ? 1.0 : -1.0)
+		}
+		raw_pos := launch_origin + right * ox + up * oy
+		pos := target_pos - rl.Vector3Normalize(target_pos - raw_pos) * launch_dist
+		units[unit_count] = Unit{
+			kind = .COMBAT,
+			state = .TRANSIT,
+			position = pos,
+			home_planet = source,
+			affiliation = target,
+			target_planet = target,
+			enemy = true,
+			orbit_angle = angle,
+		}
+		unit_count += 1
+	}
+}
+
+// Wave: every 180 seconds, advancing while 2+ worlds are liberated.
+update_wave :: proc(dt: f32) {
+	if liberated_planet_count() >= WAVE_MIN_LIBERATED_PLANETS {
 		enemy_wave_timer += dt
 		interval := f32(WAVE_FIRST_DELAY)
 		if wave_started { interval = f32(WAVE_INTERVAL) }
 		if enemy_wave_timer >= interval {
-			launch_attack_wave()
+			launch_wave()
 		}
 	}
-	for p in 0..<SECTOR_COUNT { update_planet_combat(dt, p) }
 }
 
 // One attack cycle: a single wave of attack_wave_size() fighters. While the
 // player presses an assault on a weakened HQ the wave musters there as
 // guarding defenders instead; otherwise it sorties against the liberated
 // planet closest to the enemy HQ. A destroyed HQ launches nothing, ever.
-launch_attack_wave :: proc() {
+launch_wave :: proc() {
 	size := attack_wave_size()
 	enemy_wave_timer = 0
 	wave_started = true
@@ -1212,6 +1365,10 @@ launch_attack_wave :: proc() {
 		return
 	}
 	spawn_n_enemies_to(closest_liberated_planet_to_hq(), size)
+}
+
+launch_attack_wave :: proc() {
+	launch_wave()
 }
 
 update_planet_combat :: proc(dt: f32, p: int) {
@@ -1603,7 +1760,6 @@ update_combat :: proc(u: ^Unit, dt: f32) {
 		travel(u, target, COMBAT_TRANSIT_SPEED * dt)
 		if distance(u.position, target) <= sector_radius(u.target_planet) + 1.4 {
 			u.state = .GUARDING
-			u.orbit_angle = 0
 			u.position = orbit_pos(sector_pos(u.affiliation), sector_radius(u.affiliation), u.orbit_angle)
 		}
 	} else if u.state == .GUARDING {
@@ -1855,7 +2011,7 @@ draw_world :: proc() {
 	for p in 0..<SECTOR_COUNT {
 		for side in 0..<2 {
 			if side == 1 && !sector_vis[p] { continue }
-			vis_combat[p][side] = rep_count(transit_counts[p][side])
+			vis_combat[p][side] = max(min(transit_counts[p][side], 10), rep_count(transit_counts[p][side]))
 			vis_miner_tr[p][side] = rep_count(miner_transit_counts[p][side])
 			vis_miner_ret[p][side] = rep_count(miner_return_counts[p][side])
 		}
@@ -1889,7 +2045,8 @@ draw_world :: proc() {
 					}
 				}
 				if can_see {
-					rl.DrawLine3D(u.position, sector_pos(p), rl.Color{0, 225, 255, 90})
+					line_col := u.enemy ? rl.Color{255, 60, 75, 70} : rl.Color{0, 225, 255, 90}
+					rl.DrawLine3D(u.position, sector_pos(p), line_col)
 				}
 			}
 		} else if u.state == .RETURNING {
@@ -4300,11 +4457,26 @@ step_simulation :: proc(dt: f32) {
 	} else {
 		earth_industry_intensity = max(earth_industry_intensity - dt * 1.8, 0.0)
 	}
-	// Smooth transition of combat nebula intensity: rapid flare-up in battle, graceful fade-out on victory.
+	update_combat_nebula_intensity(dt)
+	// Victory latch: every planet liberated AND the enemy HQ destroyed.
+	if !victory && victory_achieved() { victory = true }
+	// Defeat latch (edge-triggered; reset_world clears it): no bases AND no units.
+	if !victory && !defeated && defeat_condition() { defeated = true }
+}
+
+// Smooth transition of combat nebula intensity: rapid flare-up in battle,
+// graceful fade-out on victory, and warning red glow at half battle intensity
+// starting 3 seconds before launch and persisting through enemy transit until
+// the battle begins (transitioning smoothly from warning glare to battle glare).
+update_combat_nebula_intensity :: proc(dt: f32) {
 	for s in 0..<SECTOR_COUNT {
 		in_combat := sector_in_combat(s)
 		sector_combat_state[s] = in_combat
 		target: f32 = 0.0
+		is_warning := planet_under_attack_warning(s)
+		if is_warning {
+			target = 0.5
+		}
 		if s == ENEMY_HOME {
 			if !enemy_hq_destroyed() {
 				target = in_combat ? 1.0 : 0.65
@@ -4312,13 +4484,9 @@ step_simulation :: proc(dt: f32) {
 		} else if in_combat {
 			target = 1.0
 		}
-		rate: f32 = in_combat ? 3.5 : 1.2
+		rate: f32 = (in_combat || is_warning) ? 3.5 : 1.2
 		combat_nebula_intensity[s] += (target - combat_nebula_intensity[s]) * clamp(dt * rate, 0.0, 1.0)
 	}
-	// Victory latch: every planet liberated AND the enemy HQ destroyed.
-	if !victory && victory_achieved() { victory = true }
-	// Defeat latch (edge-triggered; reset_world clears it): no bases AND no units.
-	if !victory && !defeated && defeat_condition() { defeated = true }
 }
 
 // Fog-of-war intel memory: while a planet is lit, keep snapshotting its
@@ -4702,6 +4870,7 @@ serialize_game_state :: proc(allocator := context.temp_allocator) -> string {
 	fmt.sbprintf(&b, "SELECTED_PLANET %d\n", selected_planet)
 	fmt.sbprintf(&b, "BASE_BUILD %d %.4f\n", base_build_planet, base_build_progress)
 	fmt.sbprintf(&b, "WAVES %.4f %d\n", enemy_wave_timer, wave_started ? 1 : 0)
+	fmt.sbprintf(&b, "MINOR_WAVE %.4f\n", minor_wave_timer)
 	fmt.sbprintf(&b, "CAMERA_TARGET %.4f %.4f %.4f\n", camera_target.x, camera_target.y, camera_target.z)
 	fmt.sbprintf(&b, "CAMERA_POS %.4f %.4f %.4f\n", camera.position.x, camera.position.y, camera.position.z)
 
@@ -4839,6 +5008,11 @@ deserialize_game_state :: proc(content: string) -> bool {
 				st := fields[2] == "1"
 				enemy_wave_timer = tm
 				wave_started = st
+			}
+		case "MINOR_WAVE":
+			if len(fields) >= 2 {
+				tm, _ := strconv.parse_f32(fields[1])
+				minor_wave_timer = tm
 			}
 		case "CAMERA_TARGET":
 			if len(fields) >= 4 {

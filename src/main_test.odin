@@ -81,14 +81,14 @@ wave_timer_first_at_180_seconds_then_every_180 :: proc(t: ^testing.T) {
 	// First wave at the 3-minute mark, then every 3 minutes. Venus is mined
 	// and liberated, yet both waves strike Earth: targeting follows HQ
 	// distance, not mining.
-	update_enemy_waves(WAVE_FIRST_DELAY - 0.1)
+	update_wave(WAVE_FIRST_DELAY - 0.1)
 	testing.expect(t, unit_count == before, "no wave before the 3-minute mark")
-	update_enemy_waves(0.2)
+	update_wave(0.2)
 	testing.expect(t, unit_count - before == 15, "first wave spawns at 180s")
 	testing.expect(t, units[before].target_planet == EARTH, "Earth is closer to the HQ than Venus")
-	update_enemy_waves(WAVE_INTERVAL - 0.1)
+	update_wave(WAVE_INTERVAL - 0.1)
 	testing.expect(t, unit_count - before == 15, "no extra wave before 3 minutes elapse")
-	update_enemy_waves(0.2)
+	update_wave(0.2)
 	testing.expect(t, unit_count - before == 30, "second wave spawns 3 minutes after the first")
 }
 
@@ -118,20 +118,27 @@ mined_planet_count_counts_distinct_planets_with_player_miners :: proc(t: ^testin
 }
 
 @(test)
-waves_require_two_mining_planets :: proc(t: ^testing.T) {
+waves_require_two_liberated_planets :: proc(t: ^testing.T) {
 	reset_world()
-	enemy_base_hp[VENUS] = 0 // armed size-wise, but nobody mines.
-	update_enemy_waves(f32(WAVE_FIRST_DELAY))
-	testing.expect(t, unit_count == 0, "no mining draws no retaliation")
-	testing.expect(t, enemy_wave_timer == 0, "clock frozen below 2 mined planets")
-	add_miner(EARTH)
-	update_enemy_waves(f32(WAVE_FIRST_DELAY))
-	testing.expect(t, unit_count == 1, "one mined planet still draws no retaliation")
-	testing.expect(t, enemy_wave_timer == 0, "clock frozen at 1 mined planet")
-	add_miner(VENUS)
+	// Only Earth is liberated at start: clock is frozen, no wave
+	testing.expect(t, liberated_planet_count() == 1, "only Earth liberated at start")
+	update_wave(f32(WAVE_FIRST_DELAY))
+	testing.expect(t, unit_count == 0, "no wave with only Earth liberated")
+	testing.expect(t, enemy_wave_timer == 0, "clock frozen below 2 liberated planets")
+
+	// Liberate Venus (Earth + Venus = 2 liberated planets)
+	enemy_base_hp[VENUS] = 0
+	testing.expect(t, liberated_planet_count() == 2, "two planets now liberated")
+
+	// 179.9s passes: clock advances, but wave not launched yet
+	update_wave(f32(WAVE_FIRST_DELAY) - 0.1)
+	testing.expect(t, unit_count == 0, "no wave before 180s")
+	testing.expect(t, enemy_wave_timer >= f32(WAVE_FIRST_DELAY) - 0.1, "wave clock advances")
+
+	// Cross 180s: wave launches 15 fighters against the closest liberated planet to HQ
 	before := unit_count
-	update_enemy_waves(f32(WAVE_FIRST_DELAY))
-	testing.expect(t, unit_count - before == 15, "two mined planets draw the wave")
+	update_wave(0.2)
+	testing.expect(t, unit_count - before == 15, "two liberated planets draw the 15-fighter wave")
 }
 
 @(test)
@@ -161,7 +168,7 @@ wave_strikes_closest_liberated_planet_to_hq :: proc(t: ^testing.T) {
 	add_miner(EARTH)
 	add_miner(MARS)
 	before := unit_count
-	update_enemy_waves(f32(WAVE_FIRST_DELAY))
+	update_wave(f32(WAVE_FIRST_DELAY))
 	// (4 liberated - 1) * 15 = 45 fighters in a single wave.
 	testing.expect(t, unit_count - before == 45, "one wave of 45 fighters")
 	for i := before; i < unit_count; i += 1 {
@@ -171,7 +178,7 @@ wave_strikes_closest_liberated_planet_to_hq :: proc(t: ^testing.T) {
 	enemy_base_hp[NEPTUNE] = GARRISON_BASE_HP[NEPTUNE]
 	testing.expect(t, closest_liberated_planet_to_hq() == MARS, "Mars is next-closest")
 	before = unit_count
-	update_enemy_waves(f32(WAVE_INTERVAL))
+	update_wave(f32(WAVE_INTERVAL))
 	testing.expect(t, unit_count - before == 30, "(3 liberated - 1) * 15 = 30 fighters")
 	for i := before; i < unit_count; i += 1 {
 		testing.expect(t, units[i].target_planet == MARS, "every fighter strikes Mars")
@@ -206,7 +213,7 @@ wave_reinforces_attacked_hq_instead_of_planets :: proc(t: ^testing.T) {
 	unit_count += 1
 	add_guarding_fighter(ENEMY_HOME, true)
 	before := unit_count
-	update_enemy_waves(f32(WAVE_FIRST_DELAY))
+	update_wave(f32(WAVE_FIRST_DELAY))
 	// (2 liberated - 1) * 15 = 15 fighters muster as HQ defenders, not as a
 	// wave against a planet.
 	testing.expect(t, unit_count - before == 15, "wave musters 15 defenders")
@@ -231,7 +238,7 @@ planet_attacks_resume_once_hq_garrison_replenished :: proc(t: ^testing.T) {
 	unit_count += 1
 	testing.expect(t, player_attacking_hq(), "HQ is under attack")
 	before := unit_count
-	update_enemy_waves(f32(WAVE_FIRST_DELAY))
+	update_wave(f32(WAVE_FIRST_DELAY))
 	testing.expect(t, unit_count - before == 15, "wave sorties while the garrison is whole")
 	testing.expect(t, units[before].target_planet == EARTH, "closest liberated planet is struck")
 	_, defenders := planet_combatants(ENEMY_HOME)
@@ -650,7 +657,7 @@ earth_starts_as_the_sole_player_planet :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, enemy_base_hp[EARTH] == 0 && planet_liberated(EARTH), "Earth starts with no enemy base")
 	players, enemies := planet_combatants(EARTH)
-	testing.expect(t, players == 1 && enemies == 0, "Earth holds only the player's starting drones")
+	testing.expect(t, players == 5 && enemies == 0, "Earth holds the player's 5 starting combat drones")
 	testing.expect(t, enemy_miner_count(EARTH) == 0, "no enemy mining drones on Earth")
 }
 
@@ -1757,7 +1764,7 @@ enemy_hq_falls_after_garrison_trade :: proc(t: ^testing.T) {
 	update_enemy_waves(f32(COMBAT_TICK))
 	testing.expect(t, enemy_base_hp[ENEMY_HOME] == 0, "HQ base takes damage per fighter per tick")
 	testing.expect(t, planet_liberated(ENEMY_HOME) && enemy_hq_destroyed(), "HQ falls once its HP hits 0")
-	// A destroyed HQ never launches another wave, ever — even fully armed
+	// A destroyed HQ never launches another wave, ever - even fully armed
 	// (2 mined planets, a second liberated world for wave size).
 	wave_started = false
 	enemy_wave_timer = 0
@@ -1765,7 +1772,7 @@ enemy_hq_falls_after_garrison_trade :: proc(t: ^testing.T) {
 	add_miner(EARTH)
 	add_miner(VENUS)
 	before := unit_count
-	update_enemy_waves(f32(WAVE_FIRST_DELAY))
+	update_wave(f32(WAVE_FIRST_DELAY))
 	testing.expect(t, unit_count == before, "no waves launch from a destroyed HQ")
 }
 
@@ -2283,7 +2290,7 @@ restart_game_restores_fresh_playable_state :: proc(t: ^testing.T) {
 	testing.expect(t, !defeated && !victory && !game_paused, "restart clears the overlays and pause")
 	testing.expect(t, base_counts[EARTH] == 1, "restart restores Earth's command base")
 	players, enemies := planet_combatants(EARTH)
-	testing.expect(t, players == 1 && enemies == 0, "restart respawns Earth's starting fighter drone")
+	testing.expect(t, players == 5 && enemies == 0, "restart respawns Earth's 5 starting fighter drones")
 	for p in 0..<PLANET_COUNT {
 		if p == EARTH { continue }
 		_, garrison := planet_combatants(p)
@@ -3334,3 +3341,309 @@ unrefined_planet_produces_no_mps_and_no_payout :: proc(t: ^testing.T) {
 	testing.expect(t, global_mps() == planet_mps(MARS), "global MPS includes Mars once refinery is built")
 	testing.expect(t, is_effective_miner(0), "miner is now effective")
 }
+
+@(test)
+player_starts_with_five_combat_drones :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+
+	players, enemies := planet_combatants(EARTH)
+	testing.expect(t, players == 5, "player starts with 5 combat drones on Earth")
+	testing.expect(t, enemies == 0, "no enemy combatants on Earth at game start")
+
+	combat_count := 0
+	miner_count := 0
+	for i in 0..<unit_count {
+		u := &units[i]
+		if u.affiliation == EARTH && !u.enemy {
+			if u.kind == .COMBAT {
+				combat_count += 1
+				testing.expect(t, u.state == .GUARDING, "starting fighter is in guard state")
+				testing.expect(t, u.home_planet == EARTH, "starting fighter home is Earth")
+				testing.expect(t, u.target_planet == EARTH, "starting fighter target is Earth")
+			} else if u.kind == .MINING {
+				miner_count += 1
+				testing.expect(t, u.state == .MINING, "starting miner is in mining state")
+			}
+		}
+	}
+	testing.expect(t, combat_count == 5, "exactly 5 player combat drones on Earth")
+	testing.expect(t, miner_count == 1, "exactly 1 player mining drone on Earth")
+}
+
+@(test)
+minor_wave_timer_advances_and_launches_every_sixty_seconds :: proc(t: ^testing.T) {
+	reset_world()
+	before := unit_count
+	testing.expect(t, minor_wave_timer == 0, "minor wave timer starts at 0")
+
+	// 59.9 seconds: no launch yet
+	update_minor_wave(59.9)
+	testing.expect(t, unit_count == before, "no minor wave before 60 seconds")
+	testing.expect(t, minor_wave_timer >= 59.9, "minor wave timer accumulated")
+
+	// 0.2s more: crosses 60s -> launches 5 enemy combat drones
+	update_minor_wave(0.2)
+	testing.expect(t, unit_count - before == 5, "minor wave launches 5 drones at 60s")
+	testing.expect(t, minor_wave_timer == 0, "minor wave timer resets to 0 after launch")
+
+	// Verify the launched drones
+	for i := before; i < unit_count; i += 1 {
+		u := &units[i]
+		testing.expect(t, u.enemy, "minor wave drone is enemy")
+		testing.expect(t, u.kind == .COMBAT, "minor wave drone is combat type")
+		testing.expect(t, u.state == .TRANSIT, "minor wave drone starts in transit")
+		testing.expect(t, u.home_planet == VENUS, "first attacker is Venus (closest unliberated to Earth)")
+		testing.expect(t, u.target_planet == EARTH, "first target is Earth (only liberated planet)")
+		testing.expect(t, u.affiliation == EARTH, "affiliation matches target")
+	}
+
+	// Another 60s: launches second minor wave
+	before = unit_count
+	update_minor_wave(60.0)
+	testing.expect(t, unit_count - before == 5, "second minor wave launches after another 60s")
+}
+
+@(test)
+minor_wave_attacks_from_closest_unliberated_planet_to_earth :: proc(t: ^testing.T) {
+	reset_world()
+	// At start, all planets except Earth are unliberated. Venus is closest to Earth (~15.54).
+	source, found := closest_unliberated_planet_to_earth()
+	testing.expect(t, found, "found unliberated planet")
+	testing.expect(t, source == VENUS, "Venus is the closest unliberated planet to Earth")
+
+	// Liberate Venus -> Uranus is now closest to Earth (dist 21.0 vs Mars 22.83).
+	enemy_base_hp[VENUS] = 0
+	source, found = closest_unliberated_planet_to_earth()
+	testing.expect(t, found, "found unliberated planet after Venus liberated")
+	testing.expect(t, source == URANUS, "Uranus is the next closest unliberated planet to Earth")
+
+	// Liberate Uranus -> Mars is now closest to Earth (dist 22.83).
+	enemy_base_hp[URANUS] = 0
+	source, found = closest_unliberated_planet_to_earth()
+	testing.expect(t, found, "found unliberated planet after Uranus liberated")
+	testing.expect(t, source == MARS, "Mars is next closest unliberated planet to Earth")
+}
+
+@(test)
+minor_wave_targets_closest_liberated_planet_not_earth_unless_earth_is_closest :: proc(t: ^testing.T) {
+	reset_world()
+	// When only Earth is liberated, Earth is the only candidate, so it is targeted.
+	target := closest_liberated_planet_to(VENUS)
+	testing.expect(t, target == EARTH, "Earth targeted when it is the only liberated planet")
+
+	// Liberate Venus. Now Earth and Venus are liberated.
+	enemy_base_hp[VENUS] = 0
+
+	// Mercury is at {-30, 2, 8}.
+	// Distance to Venus {-15, 0.8, -4}: sqrt(15^2 + 1.2^2 + 12^2) = sqrt(370.44) ~= 19.25.
+	// Distance to Earth {0, 0, 0}: sqrt(30^2 + 2^2 + 8^2) = sqrt(968) ~= 31.11.
+	// Venus is closer than Earth, so Mercury must target Venus, not Earth!
+	target_mercury := closest_liberated_planet_to(MERCURY)
+	testing.expect(t, target_mercury == VENUS, "Mercury targets Venus since Venus is closer than Earth")
+
+	// Uranus is at {5, 4, -20}.
+	// Distance to Earth {0, 0, 0}: sqrt(25 + 16 + 400) = 21.0.
+	// Distance to Venus {-15, 0.8, -4}: sqrt(20^2 + 3.2^2 + 16^2) = sqrt(666.24) ~= 25.81.
+	// Earth is closer than Venus, so Uranus must target Earth (Earth is closest).
+	target_uranus := closest_liberated_planet_to(URANUS)
+	testing.expect(t, target_uranus == EARTH, "Uranus targets Earth because Earth is the closest liberated planet")
+}
+
+@(test)
+minor_wave_runs_independently_of_mined_planets :: proc(t: ^testing.T) {
+	reset_world()
+	testing.expect(t, mined_planet_count() == 0, "0 mined planets")
+	before := unit_count
+	// 60s passes via update_minor_wave with 0 mined planets: minor wave still launches
+	update_minor_wave(60.0)
+	testing.expect(t, unit_count - before == 5, "minor wave launches even with 0 mined planets")
+
+	// Same check via update_enemy_waves with only 1 liberated planet (180s wave clock is frozen)
+	add_miner(EARTH)
+	testing.expect(t, mined_planet_count() == 1, "1 mined planet")
+	before = unit_count
+	update_enemy_waves(60.0)
+	testing.expect(t, unit_count - before == 5, "minor wave launches via update_enemy_waves with 1 mined planet")
+	testing.expect(t, enemy_wave_timer == 0, "180s wave timer remains frozen below 2 liberated planets")
+}
+
+@(test)
+minor_wave_stops_when_all_planets_liberated :: proc(t: ^testing.T) {
+	reset_world()
+	for p in 0..<PLANET_COUNT {
+		enemy_base_hp[p] = 0
+	}
+	source, found := closest_unliberated_planet_to_earth()
+	testing.expect(t, !found, "no unliberated planet when all are liberated")
+	testing.expect(t, source == -1, "source is -1")
+
+	before := unit_count
+	launch_minor_wave()
+	testing.expect(t, unit_count == before, "no units launched when all planets are liberated")
+
+	update_minor_wave(60.0)
+	testing.expect(t, unit_count == before, "no units launched from update_minor_wave when all planets liberated")
+}
+
+@(test)
+minor_wave_state_serializes_and_deserializes :: proc(t: ^testing.T) {
+	reset_world()
+	minor_wave_timer = 42.5
+	serialized := serialize_game_state()
+
+	reset_world()
+	testing.expect(t, minor_wave_timer == 0, "reset_world zeroes minor_wave_timer")
+
+	deserialize_game_state(serialized)
+	testing.expect(t, abs(minor_wave_timer - 42.5) < 0.01, "minor_wave_timer restored from save")
+}
+
+@(test)
+minor_wave_target_planet_receives_warning_glow_three_seconds_prior :: proc(t: ^testing.T) {
+	reset_world()
+	// At game start, Venus is closest unliberated to Earth, and Earth is the only liberated planet.
+	// Therefore Venus will attack Earth.
+	testing.expect(t, minor_wave_warning_planet() == -1, "no warning before 57s")
+
+	// Set minor wave timer to 56.9s (3.1s before attack) - still no warning
+	minor_wave_timer = 56.9
+	testing.expect(t, minor_wave_warning_planet() == -1, "no warning at 56.9s")
+	update_combat_nebula_intensity(0.1)
+	testing.expect(t, combat_nebula_intensity[EARTH] < 0.01, "combat nebula stays cold at 56.9s")
+
+	// Advance to 57.0s (exactly 3s before 60s attack) - warning triggers on target Earth
+	minor_wave_timer = 57.0
+	target := minor_wave_warning_planet()
+	testing.expect(t, target == EARTH, "Earth is targeted for warning 3s before launch")
+
+	// Step combat nebula intensity: drives towards 0.5 (half battle intensity)
+	for _ in 0..<20 {
+		update_combat_nebula_intensity(0.1)
+	}
+	testing.expect(t, abs(combat_nebula_intensity[EARTH] - 0.5) < 0.05, "target planet gets red glow at half battle intensity (~0.5)")
+	testing.expect(t, combat_nebula_intensity[VENUS] < 0.01, "attacking planet does not get warning glow")
+
+	// If Venus is liberated, next unliberated is Uranus, which also targets Earth.
+	enemy_base_hp[VENUS] = 0
+	target = minor_wave_warning_planet()
+	testing.expect(t, target == EARTH, "Earth targeted by Uranus")
+}
+
+@(test)
+minor_wave_fighters_travel_together_in_formation :: proc(t: ^testing.T) {
+	reset_world()
+	// Launch minor wave from Venus to Earth
+	spawn_minor_wave(VENUS, EARTH, MINOR_WAVE_SIZE)
+	testing.expect(t, unit_count == 5, "spawned 5 minor wave drones")
+
+	target_pos := sector_pos(EARTH)
+	d0 := distance(units[0].position, target_pos)
+
+	// Verify all 5 drones are equidistant to the target planet (within tiny tolerance)
+	for i in 0..<5 {
+		u := &units[i]
+		testing.expect(t, u.state == .TRANSIT, "unit in transit")
+		testing.expect(t, u.target_planet == EARTH, "unit targeting Earth")
+		di := distance(u.position, target_pos)
+		testing.expect(t, abs(di - d0) < 0.001, "all minor wave fighters start at equal distance to target")
+	}
+
+	// Verify unique orbit angles for arrival distribution
+	for i in 0..<5 {
+		for j := i + 1; j < 5; j += 1 {
+			testing.expect(t, abs(units[i].orbit_angle - units[j].orbit_angle) > 0.1, "each fighter has unique orbit angle")
+		}
+	}
+
+	// Advance them in flight by 2.0s
+	for i in 0..<5 {
+		update_combat(&units[i], 2.0)
+	}
+
+	// All 5 are still in transit and remain at identical distance to target
+	d_mid := distance(units[0].position, target_pos)
+	testing.expect(t, d_mid < d0, "drones moved closer to target")
+	for i in 0..<5 {
+		testing.expect(t, units[i].state == .TRANSIT, "drones still in transit")
+		di := distance(units[i].position, target_pos)
+		testing.expect(t, abs(di - d_mid) < 0.001, "drones remain synchronized at same distance in flight")
+	}
+
+	// Advance until they arrive at Earth: they should all arrive on the exact same frame
+	for units[0].state == .TRANSIT {
+		for i in 0..<5 {
+			update_combat(&units[i], 0.1)
+		}
+	}
+
+	// All 5 must have transitioned to GUARDING together
+	for i in 0..<5 {
+		testing.expect(t, units[i].state == .GUARDING, "all fighters arrive and guard together")
+	}
+}
+
+@(test)
+warning_glow_persists_during_transit_and_transitions_to_battle_glare :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+
+	// 1. Before warning window: no warning, intensity is 0
+	testing.expect(t, !planet_under_attack_warning(EARTH), "no warning initially")
+	testing.expect(t, combat_nebula_intensity[EARTH] < 0.01, "intensity cold initially")
+
+	// 2. 3 seconds before launch (57s): warning triggers, intensity ramps to 0.5
+	minor_wave_timer = 57.0
+	testing.expect(t, planet_under_attack_warning(EARTH), "Earth under warning at 57s")
+	for _ in 0..<25 {
+		update_combat_nebula_intensity(0.1)
+	}
+	testing.expect(t, abs(combat_nebula_intensity[EARTH] - 0.5) < 0.05, "intensity reaches warning glare (~0.5)")
+
+	// 3. Minor wave launches at 60s: fighters spawn in transit, timer resets
+	launch_minor_wave()
+	testing.expect(t, minor_wave_timer == 0, "timer resets on launch")
+	testing.expect(t, transit_fighters_at(EARTH, true) == 5, "5 enemy fighters in transit to Earth")
+	testing.expect(t, planet_under_attack_warning(EARTH), "warning persists while fighters are in transit")
+
+	// During transit: red glow must not stop or drop, remains at 0.5
+	for _ in 0..<25 {
+		update_combat_nebula_intensity(0.1)
+	}
+	testing.expect(t, abs(combat_nebula_intensity[EARTH] - 0.5) < 0.05, "red glow does not stop during transit, stays at ~0.5")
+
+	// 4. Fighters arrive at Earth and enter GUARDING: battle starts!
+	for units[unit_count - 1].state == .TRANSIT {
+		for i in 0..<unit_count {
+			if units[i].state == .TRANSIT {
+				update_combat(&units[i], 0.1)
+			}
+		}
+	}
+	testing.expect(t, transit_fighters_at(EARTH, true) == 0, "all fighters arrived")
+	testing.expect(t, sector_in_combat(EARTH), "Earth is now in combat")
+
+	// Glow transitions from warning glare (0.5) to battle glare (1.0)
+	for _ in 0..<25 {
+		update_combat_nebula_intensity(0.1)
+	}
+	testing.expect(t, abs(combat_nebula_intensity[EARTH] - 1.0) < 0.05, "glow transitions to full battle glare (~1.0)")
+
+	// 5. When enemies are defeated, battle ends and glow fades out
+	for i := 0; i < unit_count; {
+		if units[i].enemy && units[i].affiliation == EARTH {
+			remove_unit_at(i)
+		} else {
+			i += 1
+		}
+	}
+	testing.expect(t, !sector_in_combat(EARTH), "combat ended")
+	testing.expect(t, !planet_under_attack_warning(EARTH), "no attack warning after combat")
+	for _ in 0..<40 {
+		update_combat_nebula_intensity(0.1)
+	}
+	testing.expect(t, combat_nebula_intensity[EARTH] < 0.05, "battle glare gracefully fades out")
+}
+
+
+
