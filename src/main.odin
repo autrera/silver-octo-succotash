@@ -181,6 +181,8 @@ SECTION_TOP :: 92
 CARD_H :: 54
 CARD_LINE_1 :: OUTPOST_CARD_Y + 14
 CARD_LINE_2 :: OUTPOST_CARD_Y + 33
+REFINERY_BTN_Y :: 122
+OUTPOST_LIBERATED_ROSTER_Y :: 200
 BASE_PROGRESS_Y :: 134
 PROD_TITLE_Y :: 166
 PROD_FIRST_Y :: 189
@@ -268,6 +270,11 @@ pending: [PLANET_COUNT][MAX_PENDING]Unit_Type
 pending_count: [PLANET_COUNT]int
 base_build_progress: f32
 base_build_planet := -1
+REFINERY_BUILD_TIME :: 60.0
+REFINERY_CONSTRUCT_MINERS :: 10
+refinery_built: [PLANET_COUNT]bool
+refinery_building: [PLANET_COUNT]bool
+refinery_progress: [PLANET_COUNT]f32
 camera: rl.Camera3D
 // Framing: center of the planet extents (X -30..50, Z -20..24) after the
 // Earth-centered repositioning; pan/zoom covers the far-off enemy HQ.
@@ -449,6 +456,10 @@ reset_world :: proc() {
 	base_counts[EARTH] = 1
 	base_build_planet = -1
 	base_build_progress = 0
+	refinery_built = {}
+	refinery_built[EARTH] = true
+	refinery_building = {}
+	refinery_progress = {}
 	minerals = 350
 	enemy_wave_timer = 0
 	wave_started = false
@@ -564,6 +575,12 @@ update_input :: proc() {
 	}
 	// [U] buys the next drone build-speed upgrade level (Earth only).
 	if rl.IsKeyPressed(.U) { purchase_drone_speed_upgrade() }
+	// [B] builds a refinery on the selected liberated planet.
+	if rl.IsKeyPressed(.B) {
+		if selected_planet != EARTH && selected_planet != ENEMY_HOME && can_build_refinery(selected_planet) {
+			start_refinery_construction(selected_planet)
+		}
+	}
 	// Spacebar is a shortcut to select Earth in the inspector;
 	// pressing it again when Earth is already selected centers the camera at Earth.
 	if rl.IsKeyPressed(.SPACE) { select_earth() }
@@ -696,6 +713,11 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 				return
 			}
 		}
+	} else if selected_planet >= 0 && selected_planet < PLANET_COUNT && selected_planet != ENEMY_HOME {
+		if can_build_refinery(selected_planet) && rl.CheckCollisionPointRec(mouse, refinery_button_rect(panel_x)) {
+			start_refinery_construction(selected_planet)
+			return
+		}
 	}
 	if click_unit_tiles(mouse, panel_x, .MINING) || click_unit_tiles(mouse, panel_x, .COMBAT) { return }
 	if !ctrl_down() { clear_selection() }
@@ -777,6 +799,53 @@ start_base_construction :: proc() {
 	minerals -= BASE_COST
 	base_build_planet = selected_planet
 	base_build_progress = 0
+}
+
+// Refinery cost: amount of drones required to mine the planet times 10.
+refinery_cost :: proc(planet: int) -> int {
+	return planet_mining_cap(planet) * 10
+}
+
+can_build_refinery :: proc(planet: int) -> bool {
+	if planet < 0 || planet >= PLANET_COUNT || planet == EARTH { return false }
+	if !planet_liberated(planet) { return false }
+	if refinery_built[planet] || refinery_building[planet] { return false }
+	return minerals >= refinery_cost(planet)
+}
+
+refinery_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
+	return rl.Rectangle{panel_x + PANEL_PAD_X, REFINERY_BTN_Y, PANEL_CONTENT_W, BASE_BTN_H}
+}
+
+refinery_button_visible :: proc(planet: int) -> bool {
+	if planet < 0 || planet >= PLANET_COUNT || planet == EARTH { return false }
+	return planet_liberated(planet)
+}
+
+// A refinery requires a liberated planet and planet_mining_cap(planet) * 10 minerals.
+// It queues with no crew; miners already present join immediately, and newly arriving
+// miners auto-join (update_miner). The REFINERY_BUILD_TIME clock runs only with a full crew
+// of REFINERY_CONSTRUCT_MINERS (10), and all crew members resume mining after.
+start_refinery_construction :: proc(planet: int) {
+	if !can_build_refinery(planet) { return }
+	minerals -= refinery_cost(planet)
+	refinery_building[planet] = true
+	refinery_progress[planet] = 0
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .MINING && !u.enemy && u.target_planet == planet && (u.state == .IDLE || u.state == .MINING) {
+			if constructing_miners(planet) < REFINERY_CONSTRUCT_MINERS {
+				u.state = .CONSTRUCTING
+				u.progress = 0
+			}
+		}
+	}
+}
+
+// A planet can be mined once it is liberated and has an operational refinery.
+planet_can_mine :: proc(planet: int) -> bool {
+	if planet < 0 || planet >= PLANET_COUNT { return false }
+	return planet_liberated(planet) && refinery_built[planet]
 }
 
 // Player miners currently on a planet's build crew.
@@ -966,6 +1035,19 @@ update_production :: proc(dt: f32) {
 			// The new base's production line picks up waiting queue items at
 			// once, without a new unit being queued.
 			fill_production_lines(p)
+		}
+	}
+	for p in 0..<PLANET_COUNT {
+		if refinery_building[p] {
+			if constructing_miners(p) >= REFINERY_CONSTRUCT_MINERS {
+				refinery_progress[p] += dt
+			}
+			if refinery_progress[p] >= REFINERY_BUILD_TIME {
+				refinery_progress[p] = 0
+				refinery_building[p] = false
+				refinery_built[p] = true
+				resume_constructing_miners(p)
+			}
 		}
 	}
 	for p := 0; p < PLANET_COUNT; p += 1 {
@@ -1427,6 +1509,7 @@ planet_mining_cap :: proc(planet: int) -> int {
 is_effective_miner :: proc(index: int) -> bool {
 	if units[index].kind != .MINING || units[index].enemy { return false }
 	p := units[index].target_planet
+	if !planet_can_mine(p) { return false }
 	rank := 0
 	for j := 0; j < index; j += 1 {
 		u := &units[j]
@@ -1438,9 +1521,10 @@ is_effective_miner :: proc(index: int) -> bool {
 // Minerals per second delivered by a planet's effective mining drones
 // (planet_mining_cap already applied; constructing drones contribute nothing). One full
 // cycle is: transit out, mine MINING_DURATION, transit back to Earth, deposit
-// DEPOSIT_DURATION — the round trip at MINING_TRANSIT_SPEED dominates for
+// DEPOSIT_DURATION - the round trip at MINING_TRANSIT_SPEED dominates for
 // distant planets, so MPS falls with distance.
 planet_mps :: proc(planet: int) -> f32 {
+	if !planet_can_mine(planet) { return 0 }
 	cap := planet_mining_cap(planet)
 	effective := 0
 	for i := 0; i < unit_count; i += 1 {
@@ -1465,11 +1549,13 @@ global_mps :: proc() -> f32 {
 		u := &units[i]
 		if u.kind == .MINING && !u.enemy && u.state != .CONSTRUCTING && u.target_planet >= 0 && u.target_planet < PLANET_COUNT {
 			p := u.target_planet
+			if !planet_can_mine(p) { continue }
 			if counts[p] < caps[p] { counts[p] += 1 }
 		}
 	}
 	total: f32 = 0
 	for p in 0..<PLANET_COUNT {
+		if !planet_can_mine(p) { continue }
 		round_trip := 2.0 * distance(planets[p].position, planets[EARTH].position)
 		travel_time := round_trip / MINING_TRANSIT_SPEED
 		cycle_time := MINING_DURATION + DEPOSIT_DURATION + travel_time
@@ -1501,11 +1587,14 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 		travel(u, target, MINING_TRANSIT_SPEED * dt)
 		if distance(u.position, target) <= planets[u.target_planet].radius + 1.0 {
 			u.position = target
-			if planet_liberated(u.target_planet) {
+			if !u.enemy && refinery_building[u.target_planet] && constructing_miners(u.target_planet) < REFINERY_CONSTRUCT_MINERS {
+				u.state = .CONSTRUCTING
+				u.progress = 0
+			} else if planet_can_mine(u.target_planet) {
 				u.state = .MINING
 				u.progress = 0
 			} else {
-				// Occupied planet: hold in orbit until combat drones liberate it.
+				// Occupied or unrefined planet: hold in orbit until combat drones liberate it and refinery is built.
 				// progress doubles as the scout survival clock (kill_player_miner).
 				u.state = .IDLE
 				u.progress = 0
@@ -1543,9 +1632,13 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 			}
 		}
 	case .IDLE:
-		// Held at an occupied planet: resume mining once it is liberated.
+		// Held at an occupied or unrefined planet: join refinery construction if building and crew needed,
+		// or resume mining once it can be mined.
 		// Otherwise the hold time feeds the scout survival clock.
-		if planet_liberated(u.target_planet) {
+		if !u.enemy && refinery_building[u.target_planet] && constructing_miners(u.target_planet) < REFINERY_CONSTRUCT_MINERS {
+			u.state = .CONSTRUCTING
+			u.progress = 0
+		} else if planet_can_mine(u.target_planet) {
 			u.state = .MINING
 			u.progress = 0
 		} else {
@@ -1554,7 +1647,7 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 	case .GUARDING, .CONSTRUCTING:
 		// Idle miners keep their creation planet as their affiliation.
 		// Constructing miners are parked at the build site; update_production
-		// resumes them when the base completes.
+		// resumes them when the base or refinery completes.
 	}
 }
 
@@ -2138,9 +2231,19 @@ draw_outpost_inspector :: proc(x: f32) {
 		title: cstring = "UNSCOUTED SECTOR"
 		status: cstring = "STATUS UNKNOWN: DISPATCH SCOUT"
 		if planet_liberated(selected_planet) {
-			stronghold_color = SCIFI_MINT
-			title = "SECTOR LIBERATED"
-			status = "EXTRACTION CLEAR: NO PLAYER BASE"
+			if refinery_built[selected_planet] {
+				stronghold_color = SCIFI_MINT
+				title = "SECTOR LIBERATED"
+				status = "REFINERY OPERATIONAL: EXTRACTION ACTIVE"
+			} else if refinery_building[selected_planet] {
+				stronghold_color = SCIFI_CYAN
+				title = "SECTOR LIBERATED"
+				status = "REFINERY UNDER CONSTRUCTION"
+			} else {
+				stronghold_color = SCIFI_AMBER
+				title = "SECTOR LIBERATED"
+				status = "REFINERY REQUIRED FOR MINING"
+			}
 		} else {
 			stronghold_color = SCIFI_RED
 			title = "ENEMY STRONGHOLD"
@@ -2154,8 +2257,14 @@ draw_outpost_inspector :: proc(x: f32) {
 		card.height = CARD_H
 		intel := last_known_intel[selected_planet]
 		title: cstring = "ENEMY STRONGHOLD (STALE INTEL)"
-		status := rl.TextFormat("%02d FIGHTERS  BASE %02d/%02d: PREVIOUS RECON", intel.fighters, intel.base_hp, GARRISON_BASE_HP[selected_planet])
-		if intel.base_hp <= 0 { title = "LIBERATED (STALE INTEL)" }
+		status := rl.TextFormat("%02d FIGHTERS  BASE %02d/%02d: PREVIOUS RECON", intel.fighters, intel.miners, GARRISON_BASE_HP[selected_planet])
+		if intel.base_hp <= 0 {
+			if refinery_built[selected_planet] {
+				title = "LIBERATED (REFINERY ACTIVE)"
+			} else {
+				title = "LIBERATED (NO REFINERY)"
+			}
+		}
 		draw_status_card(card, SCIFI_AMBER)
 		rl.DrawText(title, i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_AMBER)
 		rl.DrawText(status, i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_MUTED)
@@ -2163,6 +2272,29 @@ draw_outpost_inspector :: proc(x: f32) {
 		draw_status_card(card, SCIFI_STEEL)
 		rl.DrawText("UNSCOUTED SECTOR", i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_MUTED)
 		rl.DrawText("STATUS UNKNOWN: DISPATCH SCOUT", i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_TEXT)
+	}
+
+	if planet_liberated(selected_planet) {
+		btn := refinery_button_rect(x)
+		if refinery_building[selected_planet] {
+			draw_chamfered_panel(btn, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
+			draw_corner_brackets(btn, 2, 6, SCIFI_CYAN)
+			if constructing_miners(selected_planet) < REFINERY_CONSTRUCT_MINERS {
+				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", constructing_miners(selected_planet), REFINERY_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 12), 11, SCIFI_CYAN)
+			} else {
+				remaining := REFINERY_BUILD_TIME - refinery_progress[selected_planet]
+				rl.DrawText(rl.TextFormat("REFINERY  %3.1fs", remaining), i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 11), 13, SCIFI_CYAN)
+			}
+			draw_progress({x + PANEL_PAD_X, btn.y + btn.height + 4, PANEL_CONTENT_W, BAR_H}, refinery_progress[selected_planet] / REFINERY_BUILD_TIME, SCIFI_CYAN)
+		} else if !refinery_built[selected_planet] {
+			cost := refinery_cost(selected_planet)
+			can_build := can_build_refinery(selected_planet)
+			draw_button(btn, rl.TextFormat("Build Refinery (%d)", cost), SCIFI_PANEL_SOLID, can_build)
+		} else {
+			draw_chamfered_panel(btn, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
+			draw_corner_brackets(btn, 2, 6, SCIFI_MINT)
+			rl.DrawText("REFINERY OPERATIONAL", i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 11), 13, SCIFI_MINT)
+		}
 	}
 }
 
@@ -2278,6 +2410,8 @@ unit_tile_y :: proc(kind: Unit_Type) -> int {
 	y := ROSTER_BASE_Y
 	if selected_planet == EARTH {
 		y = production_orders_y() + ROSTER_BELOW_QUEUE + (base_counts[selected_planet] - 1) * GRID_PITCH
+	} else if selected_planet != ENEMY_HOME && planet_liberated(selected_planet) {
+		y = OUTPOST_LIBERATED_ROSTER_Y
 	}
 	if kind == .COMBAT { y += SECTION_PAD_Y + mining_rows * (TILE_SIZE + TILE_GAP) }
 	return y
@@ -4406,6 +4540,8 @@ draw_controls_overlay :: proc() {
 	draw_control_row(col1_x, cy1, "RIGHT CLICK", "Dispatch units to planet / HQ")
 	cy1 += 18
 	draw_control_row(col1_x, cy1, "R-CLICK EARTH", "Set or clear Earth rally flag")
+	cy1 += 18
+	draw_control_row(col1_x, cy1, "B / CLICK", "Build Refinery on outpost")
 
 	// Column 2: Requisition, Simulation & Sensors
 	cy2 := box.y + 84
@@ -4545,6 +4681,13 @@ serialize_game_state :: proc(allocator := context.temp_allocator) -> string {
 				p, slot,
 				unit_type_to_string(pending[p][slot]))
 		}
+		if refinery_built[p] || refinery_building[p] || refinery_progress[p] > 0 {
+			fmt.sbprintf(&b, "REFINERY %d %d %d %.4f\n",
+				p,
+				refinery_built[p] ? 1 : 0,
+				refinery_building[p] ? 1 : 0,
+				refinery_progress[p])
+		}
 	}
 
 	for s in 0..<SECTOR_COUNT {
@@ -4636,6 +4779,18 @@ deserialize_game_state :: proc(content: string) -> bool {
 				prog, _ := strconv.parse_f32(fields[2])
 				base_build_planet = p
 				base_build_progress = prog
+			}
+		case "REFINERY":
+			if len(fields) >= 5 {
+				p, _ := strconv.parse_int(fields[1])
+				built := fields[2] == "1"
+				bld := fields[3] == "1"
+				prog, _ := strconv.parse_f32(fields[4])
+				if p >= 0 && p < PLANET_COUNT {
+					refinery_built[p] = built
+					refinery_building[p] = bld
+					refinery_progress[p] = prog
+				}
 			}
 		case "WAVES":
 			if len(fields) >= 3 {

@@ -480,6 +480,7 @@ construction_miners_stop_mining_and_resume :: proc(t: ^testing.T) {
 @(test)
 planet_mps_includes_round_trip_transit :: proc(t: ^testing.T) {
 	reset_world()
+	for p in 0..<PLANET_COUNT { enemy_base_hp[p] = 0; refinery_built[p] = true }
 	// One effective miner per planet; expected MPS is rate divided by the
 	// full cycle (mine + deposit + round trip at MINING_TRANSIT_SPEED).
 	for p in 0..<PLANET_COUNT {
@@ -519,12 +520,18 @@ miner_waits_for_liberation :: proc(t: ^testing.T) {
 
 	enemy_base_hp[JUPITER] = 0
 	update_miner(&units[0], 0, 0.1)
-	testing.expect(t, units[0].state == .MINING, "idle miner resumes after liberation")
+	testing.expect(t, units[0].state == .IDLE, "idle miner still waits after liberation until refinery is built")
+
+	refinery_built[JUPITER] = true
+	update_miner(&units[0], 0, 0.1)
+	testing.expect(t, units[0].state == .MINING, "idle miner resumes once refinery is built")
 }
 
 @(test)
 mining_round_trip_deposits_on_earth :: proc(t: ^testing.T) {
 	reset_world()
+	enemy_base_hp[JUPITER] = 0
+	refinery_built[JUPITER] = true
 	units[unit_count] = Unit{
 		kind = .MINING, state = .MINING, position = planets[JUPITER].position,
 		home_planet = EARTH, affiliation = JUPITER, target_planet = JUPITER,
@@ -1176,7 +1183,11 @@ deposit_auto_assigns_miners_to_queued_base_construction :: proc(t: ^testing.T) {
 global_mps_sums_all_planets :: proc(t: ^testing.T) {
 	reset_world()
 	testing.expect(t, global_mps() == 0, "no miners, no income")
-	for p in 0..<PLANET_COUNT { add_miner(p) }
+	for p in 0..<PLANET_COUNT {
+		enemy_base_hp[p] = 0
+		refinery_built[p] = true
+		add_miner(p)
+	}
 	sum := f32(0)
 	for p in 0..<PLANET_COUNT { sum += planet_mps(p) }
 	testing.expect(t, abs(global_mps() - sum) < 0.001, "global MPS equals the sum of all planet MPS")
@@ -1239,12 +1250,16 @@ planet_mining_caps_limit_effective_miners :: proc(t: ^testing.T) {
 	testing.expect(t, minerals == planet_mining_cap(EARTH) * mining_rate(EARTH), "only the first 10 Earth miners are paid")
 
 	reset_world()
+	enemy_base_hp[MARS] = 0
+	refinery_built[MARS] = true
 	for i in 0..<60 { add_miner(MARS) }
 	mars_cycle: f32 = MINING_DURATION + DEPOSIT_DURATION + 2.0 * distance(planets[MARS].position, planets[EARTH].position) / MINING_TRANSIT_SPEED
 	expected = f32(planet_mining_cap(MARS)) * f32(mining_rate(MARS)) / mars_cycle
 	testing.expect(t, abs(planet_mps(MARS) - expected) < 0.001, "Mars MPS caps at 50 effective miners")
 
 	reset_world()
+	enemy_base_hp[JUPITER] = 0
+	refinery_built[JUPITER] = true
 	for i in 0..<110 { add_miner(JUPITER) }
 	jupiter_cycle: f32 = MINING_DURATION + DEPOSIT_DURATION + 2.0 * distance(planets[JUPITER].position, planets[EARTH].position) / MINING_TRANSIT_SPEED
 	expected = f32(planet_mining_cap(JUPITER)) * f32(mining_rate(JUPITER)) / jupiter_cycle
@@ -2857,7 +2872,296 @@ combat_vision_updates_intel_before_fog :: proc(t: ^testing.T) {
 	testing.expect(t, last_known_intel[VENUS].fighters == 1, "accurate post-battle intel preserved in ghost view")
 }
 
+// ---- Planetary Refinery tests --------------------------------------------
 
+@(test)
+refinery_cost_equals_mining_cap_times_ten :: proc(t: ^testing.T) {
+	reset_world()
+	for p in 0..<PLANET_COUNT {
+		expected := planet_mining_cap(p) * 10
+		testing.expectf(t, refinery_cost(p) == expected,
+			"planet %d refinery cost %d != expected %d", p, refinery_cost(p), expected)
+	}
+	testing.expect(t, refinery_cost(MERCURY) == 150, "Mercury refinery costs 150 minerals")
+	testing.expect(t, refinery_cost(VENUS) == 350, "Venus refinery costs 350 minerals")
+	testing.expect(t, refinery_cost(EARTH) == 100, "Earth refinery formula is 100 minerals")
+	testing.expect(t, refinery_cost(MARS) == 500, "Mars refinery costs 500 minerals")
+	testing.expect(t, refinery_cost(JUPITER) == 1000, "Jupiter refinery costs 1000 minerals")
+	testing.expect(t, refinery_cost(SATURN) == 900, "Saturn refinery costs 900 minerals")
+	testing.expect(t, refinery_cost(URANUS) == 600, "Uranus refinery costs 600 minerals")
+	testing.expect(t, refinery_cost(NEPTUNE) == 600, "Neptune refinery costs 600 minerals")
+}
 
+@(test)
+refinery_construction_requires_liberation_and_minerals :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = MARS
+	minerals = 1000
 
+	// Occupied planet: cannot build refinery
+	testing.expect(t, !planet_liberated(MARS), "Mars starts occupied")
+	testing.expect(t, !can_build_refinery(MARS), "cannot build refinery on occupied Mars")
+	start_refinery_construction(MARS)
+	testing.expect(t, !refinery_building[MARS], "refinery construction does not start on occupied planet")
+	testing.expect(t, minerals == 1000, "minerals not deducted")
 
+	// Liberate Mars, but insufficient minerals
+	enemy_base_hp[MARS] = 0
+	testing.expect(t, planet_liberated(MARS), "Mars is liberated")
+	minerals = 400 // Mars needs 500
+	testing.expect(t, !can_build_refinery(MARS), "cannot build refinery with insufficient minerals")
+	start_refinery_construction(MARS)
+	testing.expect(t, !refinery_building[MARS], "refinery construction does not start without minerals")
+	testing.expect(t, minerals == 400, "minerals not deducted")
+
+	// With enough minerals (500), construction begins
+	minerals = 600
+	testing.expect(t, can_build_refinery(MARS), "can build refinery with enough minerals")
+	start_refinery_construction(MARS)
+	testing.expect(t, refinery_building[MARS], "refinery construction started")
+	testing.expect(t, minerals == 100, "500 minerals deducted for Mars refinery")
+	testing.expect(t, refinery_progress[MARS] == 0, "refinery progress starts at 0")
+
+	// Cannot start again while building
+	testing.expect(t, !can_build_refinery(MARS), "cannot build another refinery while one is building")
+	start_refinery_construction(MARS)
+	testing.expect(t, minerals == 100, "minerals not deducted on duplicate start")
+
+	// Earth cannot build refinery (already has one)
+	selected_planet = EARTH
+	testing.expect(t, !can_build_refinery(EARTH), "Earth cannot build refinery")
+}
+
+@(test)
+refinery_construction_takes_60s :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[VENUS] = 0
+	selected_planet = VENUS
+	minerals = 500
+	start_refinery_construction(VENUS)
+	testing.expect(t, refinery_building[VENUS], "refinery building on Venus")
+	testing.expect(t, !refinery_built[VENUS], "refinery not yet built")
+
+	// No crew present: progress is frozen
+	update_production(120.0)
+	testing.expect(t, refinery_progress[VENUS] == 0, "no build progress without a full crew")
+
+	// Add 10 miners to Venus
+	for i in 0..<REFINERY_CONSTRUCT_MINERS {
+		units[unit_count] = Unit{
+			kind = .MINING, state = .TRANSIT, position = planets[VENUS].position,
+			home_planet = EARTH, affiliation = VENUS, target_planet = VENUS,
+		}
+		unit_count += 1
+		update_miner(&units[unit_count - 1], unit_count - 1, 0.02)
+	}
+	testing.expect(t, constructing_miners(VENUS) == REFINERY_CONSTRUCT_MINERS, "full crew of 10 assembled")
+
+	// Advance 59.9s: still building
+	update_production(59.9)
+	testing.expect(t, refinery_building[VENUS], "refinery still building at 59.9s")
+	testing.expect(t, !refinery_built[VENUS], "refinery not built before 60s")
+	testing.expect(t, abs(refinery_progress[VENUS] - 59.9) < 0.01, "progress advanced by 59.9s")
+
+	// Advance remaining 0.1s: refinery completes
+	update_production(0.1)
+	testing.expect(t, !refinery_building[VENUS], "refinery no longer building after 60s")
+	testing.expect(t, refinery_built[VENUS], "refinery completed after 60s")
+	testing.expect(t, refinery_progress[VENUS] == 0, "refinery progress reset to 0")
+
+	// Miners resume mining
+	for i in 0..<unit_count {
+		if units[i].kind == .MINING && !units[i].enemy {
+			testing.expect(t, units[i].state == .MINING, "crew resumes mining after refinery completes")
+		}
+	}
+
+	// Cannot build another refinery after it is built
+	testing.expect(t, !can_build_refinery(VENUS), "cannot build refinery once already built")
+}
+
+@(test)
+miners_require_refinery_to_mine_liberated_planet :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[MARS] = 0 // Liberated
+	testing.expect(t, !planet_can_mine(MARS), "liberated planet cannot be mined without refinery")
+
+	// 10 miners arrive at liberated Mars without refinery -> all enter IDLE
+	for i in 0..<10 {
+		units[unit_count] = Unit{
+			kind = .MINING, state = .TRANSIT, position = planets[MARS].position,
+			home_planet = EARTH, affiliation = MARS, target_planet = MARS,
+		}
+		unit_count += 1
+		update_miner(&units[unit_count - 1], unit_count - 1, 0.1)
+		testing.expect(t, units[unit_count - 1].state == .IDLE, "miner holds in IDLE at liberated planet with no refinery")
+	}
+
+	// Start refinery construction: the 10 idle miners join the construction crew
+	minerals = 1000
+	start_refinery_construction(MARS)
+	testing.expect(t, constructing_miners(MARS) == 10, "10 idle miners auto-joined refinery construction")
+	for i in 0..<10 {
+		testing.expect(t, units[i].state == .CONSTRUCTING, "miner is now constructing")
+	}
+
+	// Advance partway (30s)
+	update_production(30.0)
+	testing.expect(t, abs(refinery_progress[MARS] - 30.0) < 0.01, "refinery progress advanced 30s")
+
+	// Complete refinery construction (total 60s)
+	update_production(30.0)
+	testing.expect(t, refinery_built[MARS], "refinery is now built")
+	testing.expect(t, planet_can_mine(MARS), "planet can now be mined")
+
+	// All 10 miners have automatically resumed MINING
+	for i in 0..<10 {
+		testing.expect(t, units[i].state == .MINING, "crew resumed mining once refinery is built")
+	}
+
+	// Fresh miner arriving in TRANSIT at refined planet enters MINING directly
+	units[unit_count] = Unit{
+		kind = .MINING, state = .TRANSIT, position = planets[MARS].position,
+		home_planet = EARTH, affiliation = MARS, target_planet = MARS,
+	}
+	unit_count += 1
+	update_miner(&units[unit_count - 1], unit_count - 1, 0.1)
+	testing.expect(t, units[unit_count - 1].state == .MINING, "new miner arriving at refined planet starts mining immediately")
+}
+
+@(test)
+refinery_construction_requires_ten_drones_crew :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[MARS] = 0 // Liberated
+	minerals = 1000
+	start_refinery_construction(MARS)
+	testing.expect(t, refinery_building[MARS], "refinery build queues with no crew")
+
+	// Clock is frozen with 0 crew
+	update_production(60.0)
+	testing.expect(t, refinery_progress[MARS] == 0, "clock frozen with 0 crew")
+
+	// Arriving miners auto-join one by one up to 10
+	for i in 0..<REFINERY_CONSTRUCT_MINERS {
+		units[unit_count] = Unit{
+			kind = .MINING, state = .TRANSIT, position = planets[MARS].position,
+			home_planet = EARTH, affiliation = MARS, target_planet = MARS,
+		}
+		unit_count += 1
+		update_miner(&units[unit_count - 1], unit_count - 1, 0.1)
+		testing.expectf(t, units[unit_count - 1].state == .CONSTRUCTING, "arriving miner %d joins crew", i)
+		testing.expectf(t, constructing_miners(MARS) == i + 1, "crew count is %d", i + 1)
+		if i + 1 < REFINERY_CONSTRUCT_MINERS {
+			update_production(10.0)
+			testing.expect(t, refinery_progress[MARS] == 0, "clock still frozen under 10 crew")
+		}
+	}
+	testing.expect(t, constructing_miners(MARS) == REFINERY_CONSTRUCT_MINERS, "crew is full at 10")
+
+	// 11th miner arrives: crew is full, so 11th miner enters IDLE
+	units[unit_count] = Unit{
+		kind = .MINING, state = .TRANSIT, position = planets[MARS].position,
+		home_planet = EARTH, affiliation = MARS, target_planet = MARS,
+	}
+	unit_count += 1
+	update_miner(&units[unit_count - 1], unit_count - 1, 0.1)
+	testing.expect(t, units[unit_count - 1].state == .IDLE, "11th miner enters IDLE since crew is full")
+	testing.expect(t, constructing_miners(MARS) == REFINERY_CONSTRUCT_MINERS, "crew remains capped at 10")
+
+	// Full crew: progress runs
+	update_production(20.0)
+	testing.expect(t, abs(refinery_progress[MARS] - 20.0) < 0.01, "progress advances with full crew")
+
+	// Reassign one crew member away from Mars -> crew drops to 9 -> clock freezes
+	units[0].target_planet = VENUS
+	units[0].state = .TRANSIT
+	testing.expect(t, constructing_miners(MARS) == 9, "crew drops to 9")
+	update_production(20.0)
+	testing.expect(t, abs(refinery_progress[MARS] - 20.0) < 0.01, "progress frozen after crew member leaves")
+
+	// The 11th miner (which was in IDLE) auto-joins the crew on its next update
+	update_miner(&units[unit_count - 1], unit_count - 1, 0.1)
+	testing.expect(t, units[unit_count - 1].state == .CONSTRUCTING, "idle miner steps up to fill the crew spot")
+	testing.expect(t, constructing_miners(MARS) == 10, "crew is back to 10")
+
+	// Progress resumes and completes the remaining 40.0s
+	update_production(40.0)
+	testing.expect(t, refinery_built[MARS], "refinery completed after total 60s")
+	testing.expect(t, !refinery_building[MARS], "no longer building")
+	testing.expect(t, refinery_progress[MARS] == 0, "progress reset to 0")
+
+	// All constructing miners at Mars have resumed MINING
+	for i in 1..<unit_count {
+		if units[i].target_planet == MARS {
+			testing.expect(t, units[i].state == .MINING, "Mars miner resumed mining")
+		}
+	}
+}
+
+@(test)
+save_load_game_preserves_refinery_state :: proc(t: ^testing.T) {
+	reset_world()
+	test_save_file := "test_savegame_refinery.txt"
+	defer delete_save_game(test_save_file)
+
+	enemy_base_hp[MARS] = 0
+	refinery_built[MARS] = true
+
+	enemy_base_hp[JUPITER] = 0
+	refinery_building[JUPITER] = true
+	refinery_progress[JUPITER] = 34.5
+
+	saved := save_game(test_save_file)
+	testing.expect(t, saved, "save_game wrote file")
+
+	reset_world()
+	testing.expect(t, !refinery_built[MARS], "reset cleared Mars refinery")
+	testing.expect(t, !refinery_building[JUPITER], "reset cleared Jupiter building")
+
+	loaded := load_game(test_save_file)
+	testing.expect(t, loaded, "load_game loaded file")
+
+	testing.expect(t, refinery_built[EARTH], "Earth refinery preserved")
+	testing.expect(t, refinery_built[MARS], "Mars refinery restored as built")
+	testing.expect(t, !refinery_built[JUPITER], "Jupiter refinery not built yet")
+	testing.expect(t, refinery_building[JUPITER], "Jupiter refinery restored as building")
+	testing.expect(t, abs(refinery_progress[JUPITER] - 34.5) < 0.01, "Jupiter refinery progress restored")
+}
+
+@(test)
+unrefined_planet_produces_no_mps_and_no_payout :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[MARS] = 0 // Liberated, but no refinery
+	testing.expect(t, !planet_can_mine(MARS), "liberated Mars has no refinery yet")
+
+	// Send miners to Mars
+	for i in 0..<10 {
+		units[unit_count] = Unit{
+			kind = .MINING, state = .IDLE, position = planets[MARS].position,
+			home_planet = EARTH, affiliation = MARS, target_planet = MARS,
+		}
+		unit_count += 1
+	}
+
+	// Mars MPS must be 0
+	testing.expect(t, planet_mps(MARS) == 0, "Mars MPS is 0 without a refinery")
+
+	// Global MPS must be 0 (no miners on Earth)
+	testing.expect(t, global_mps() == 0, "global MPS does not include unrefined Mars")
+
+	// Depositing attempt from unrefined planet pays 0
+	units[0].position = planets[EARTH].position
+	units[0].state = .DEPOSITING
+	units[0].progress = DEPOSIT_DURATION - 0.01
+	minerals = 0
+	testing.expect(t, !is_effective_miner(0), "miner targeting unrefined Mars is not an effective miner")
+	update_miner(&units[0], 0, 0.02)
+	testing.expect(t, minerals == 0, "deposit from unrefined planet pays out 0 minerals")
+
+	// Once refinery is completed, MPS and payout become active
+	refinery_built[MARS] = true
+	testing.expect(t, planet_can_mine(MARS), "Mars can now mine")
+	testing.expect(t, planet_mps(MARS) > 0, "Mars MPS is positive with refinery built")
+	testing.expect(t, global_mps() == planet_mps(MARS), "global MPS includes Mars once refinery is built")
+	testing.expect(t, is_effective_miner(0), "miner is now effective")
+}
