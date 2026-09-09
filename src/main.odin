@@ -77,6 +77,10 @@ BASE_COST :: 500
 DRONE_SPEED_UPGRADE_COST :: 5000
 DRONE_SPEED_UPGRADE_MAX :: 5
 DRONE_SPEED_UPGRADE_FACTOR :: 0.8
+// Batch requisition afforadance unlocked at 5 command bases on Earth.
+BATCH_BUILD_COUNT :: 5
+BATCH_MINER_COST :: 250
+BATCH_COMBAT_COST :: 625
 // A command base needs 5 mining drones present at the planet and takes one
 // full minute to build; those drones stop mining until it completes.
 BASE_CONSTRUCT_MINERS :: 5
@@ -552,26 +556,30 @@ update_input :: proc() {
 	if rl.IsKeyPressed(.ESCAPE) { cancel_last_queued() }
 	// Build shortcuts use the same validation path as the inspector buttons.
 	if rl.IsKeyPressed(.M) {
-		if shift_down() && drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
+		if shift_down() && can_build_5_miners() {
 			queue_5_miners()
 		} else {
 			queue_unit(.MINING)
 		}
 	}
 	if rl.IsKeyPressed(.C) {
-		if shift_down() && drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
+		if shift_down() && can_build_5_combat() {
 			queue_5_combat()
 		} else {
 			queue_unit(.COMBAT)
 		}
 	}
-	// [N] queues +5 mining drones (Earth only).
+	// [N] queues +5 mining drones (Earth only, unlocked at 5 bases).
 	if !ctrl_down() && rl.IsKeyPressed(.N) {
-		queue_5_miners()
+		if can_build_5_miners() {
+			queue_5_miners()
+		}
 	}
-	// [X] queues +5 combat fighters (Earth only).
+	// [X] queues +5 combat fighters (Earth only, unlocked at 5 bases).
 	if rl.IsKeyPressed(.X) {
-		queue_5_combat()
+		if can_build_5_combat() {
+			queue_5_combat()
+		}
 	}
 	// [U] buys the next drone build-speed upgrade level (Earth only).
 	if rl.IsKeyPressed(.U) { purchase_drone_speed_upgrade() }
@@ -691,12 +699,7 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 			queue_unit(.COMBAT)
 			return
 		}
-		if drone_speed_level < DRONE_SPEED_UPGRADE_MAX {
-			if rl.CheckCollisionPointRec(mouse, drone_speed_button_rect(panel_x)) {
-				purchase_drone_speed_upgrade()
-				return
-			}
-		} else {
+		if base_counts[EARTH] >= MAX_BASES {
 			if rl.CheckCollisionPointRec(mouse, queue_5_miner_button_rect(panel_x)) {
 				queue_5_miners()
 				return
@@ -705,6 +708,12 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 				queue_5_combat()
 				return
 			}
+		}
+		if rl.CheckCollisionPointRec(mouse, drone_speed_button_rect(panel_x)) {
+			if drone_speed_level < DRONE_SPEED_UPGRADE_MAX {
+				purchase_drone_speed_upgrade()
+			}
+			return
 		}
 		// Clicking an occupied build-queue slot cancels that unit (refund included).
 		for slot := 0; slot < queued_count(EARTH); slot += 1 {
@@ -939,21 +948,37 @@ queue_units :: proc(kind: Unit_Type, count: int) {
 	}
 }
 
+can_build_5_miners :: proc() -> bool {
+	return selected_planet == EARTH && base_counts[EARTH] >= MAX_BASES && minerals >= BATCH_MINER_COST && queued_count(EARTH) < base_counts[EARTH] * 5
+}
+
+can_build_5_combat :: proc() -> bool {
+	return selected_planet == EARTH && base_counts[EARTH] >= MAX_BASES && minerals >= BATCH_COMBAT_COST && queued_count(EARTH) < base_counts[EARTH] * 5
+}
+
 queue_5_miners :: proc() {
-	queue_units(.MINING, 5)
+	if !can_build_5_miners() { return }
+	queue_units(.MINING, BATCH_BUILD_COUNT)
 }
 
 queue_5_combat :: proc() {
-	queue_units(.COMBAT, 5)
+	if !can_build_5_combat() { return }
+	queue_units(.COMBAT, BATCH_BUILD_COUNT)
 }
 
 // Screen rect of the drone build-speed upgrade button. Shared by the
-// render and the click hitbox so they cannot drift apart.
+// render and the click hitbox so they cannot drift apart. Sits below the
+// +1 buttons when under 5 bases, or below the +5 buttons when 5 bases are built.
 drone_speed_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
-	return rl.Rectangle{panel_x + PANEL_PAD_X, f32(production_orders_y() + UPGRADE_DY), PANEL_CONTENT_W, UPGRADE_H}
+	dy := UPGRADE_DY
+	if base_counts[EARTH] >= MAX_BASES {
+		dy += UPGRADE_DY
+	}
+	return rl.Rectangle{panel_x + PANEL_PAD_X, f32(production_orders_y() + dy), PANEL_CONTENT_W, UPGRADE_H}
 }
 
-// Screen rects for the +5 batch build buttons that replace the upgrade button at speed level 5.
+// Screen rects for the +5 batch build buttons that unlock at 5 command bases on Earth.
+// Positioned below the +1 buttons and above the build-speed upgrade button.
 queue_5_miner_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
 	return rl.Rectangle{panel_x + PANEL_PAD_X, f32(production_orders_y() + UPGRADE_DY), BUILD_BTN_W, UPGRADE_H}
 }
@@ -968,11 +993,19 @@ controls_button_rect :: proc() -> rl.Rectangle {
 	return rl.Rectangle{HUD_PAD, dock_y, 110, BOTTOM_DOCK_H}
 }
 
+earth_queue_y :: proc() -> int {
+	dy := QUEUE_DY
+	if base_counts[EARTH] >= MAX_BASES {
+		dy += UPGRADE_DY
+	}
+	return production_orders_y() + dy
+}
+
 // Screen rect of build-queue slot `slot` (0 = queue head: active production
 // lines in base order, then pending items). Shared by the queue rendering and
 // the cancel-click hitboxes so they cannot drift apart.
 queue_slot_rect :: proc(panel_x: f32, slot: int) -> rl.Rectangle {
-	queue_y := f32(production_orders_y() + QUEUE_DY)
+	queue_y := f32(earth_queue_y())
 	row := slot / MAX_BASES
 	column := slot % MAX_BASES
 	return rl.Rectangle{panel_x + PANEL_PAD_X + f32(column * GRID_PITCH), queue_y + QUEUE_LABEL_GAP + f32(row * GRID_PITCH), SLOT_SIZE, SLOT_SIZE}
@@ -2181,15 +2214,19 @@ draw_earth_inspector :: proc(x: f32) {
 	draw_button({x + PANEL_PAD_X, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, "[M] MINER  (50)", SCIFI_PANEL_SOLID, can_build_miner)
 	draw_button({x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, "[C] COMBAT (125)", SCIFI_PANEL_SOLID, can_build_combat)
 
+	if base_counts[EARTH] >= MAX_BASES {
+		draw_button(queue_5_miner_button_rect(x), "[N] +5 MINERS (250)", SCIFI_PANEL_SOLID, can_build_5_miners())
+		draw_button(queue_5_combat_button_rect(x), "[X] +5 COMBAT (625)", SCIFI_PANEL_SOLID, can_build_5_combat())
+	}
+
 	if drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
-		draw_button(queue_5_miner_button_rect(x), "[N] +5 MINERS (250)", SCIFI_PANEL_SOLID, can_build_miner)
-		draw_button(queue_5_combat_button_rect(x), "[X] +5 COMBAT (625)", SCIFI_PANEL_SOLID, can_build_combat)
+		draw_button(drone_speed_button_rect(x), rl.TextFormat("DRONE BUILD SPEED  LVL %d/%d (MAX)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX), SCIFI_PANEL_SOLID, false)
 	} else {
 		can_upgrade_speed := minerals >= DRONE_SPEED_UPGRADE_COST
 		draw_button(drone_speed_button_rect(x), rl.TextFormat("[U] DRONE BUILD SPEED  LVL %d/%d (%d)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX, DRONE_SPEED_UPGRADE_COST), SCIFI_PANEL_SOLID, can_upgrade_speed)
 	}
 
-	queue_y := production_orders_y() + QUEUE_DY
+	queue_y := earth_queue_y()
 	queue_capacity := base_counts[EARTH] * MAX_BASES
 	queue_total := queued_count(EARTH)
 	draw_section_header(x + PANEL_PAD_X, f32(queue_y), PANEL_CONTENT_W, rl.TextFormat("QUEUE BUFFER (%d/%d)", queue_total, queue_capacity), SCIFI_CYAN)
@@ -2409,7 +2446,11 @@ unit_tile_y :: proc(kind: Unit_Type) -> int {
 	// sit at a fixed height; on Earth they flow below the build queue.
 	y := ROSTER_BASE_Y
 	if selected_planet == EARTH {
-		y = production_orders_y() + ROSTER_BELOW_QUEUE + (base_counts[selected_planet] - 1) * GRID_PITCH
+		extra_dy := 0
+		if base_counts[EARTH] >= MAX_BASES {
+			extra_dy = UPGRADE_DY
+		}
+		y = production_orders_y() + ROSTER_BELOW_QUEUE + extra_dy + (base_counts[selected_planet] - 1) * GRID_PITCH
 	} else if selected_planet != ENEMY_HOME && planet_liberated(selected_planet) {
 		y = OUTPOST_LIBERATED_ROSTER_Y
 	}

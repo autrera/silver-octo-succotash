@@ -2549,8 +2549,22 @@ queue_5_miners_shortcut :: proc(t: ^testing.T) {
 	reset_world()
 	selected_planet = EARTH
 	minerals = 1000
+
+	// Blocked below 5 bases
+	base_counts[EARTH] = 1
 	queue_5_miners()
-	testing.expect(t, queued_count(EARTH) == 5, "queue_5_miners queues 5 miners")
+	testing.expect(t, queued_count(EARTH) == 0, "queue_5_miners blocked with 1 base")
+	testing.expect(t, minerals == 1000, "no minerals spent when blocked")
+
+	base_counts[EARTH] = 4
+	queue_5_miners()
+	testing.expect(t, queued_count(EARTH) == 0, "queue_5_miners blocked with 4 bases")
+	testing.expect(t, minerals == 1000, "no minerals spent when blocked")
+
+	// Unlocked at 5 bases
+	base_counts[EARTH] = MAX_BASES
+	queue_5_miners()
+	testing.expect(t, queued_count(EARTH) == 5, "queue_5_miners queues 5 miners at 5 bases")
 	testing.expect(t, minerals == 750, "deducts 5 * 50 = 250 minerals")
 }
 
@@ -2558,10 +2572,18 @@ queue_5_miners_shortcut :: proc(t: ^testing.T) {
 queue_5_combat_shortcut :: proc(t: ^testing.T) {
 	reset_world()
 	selected_planet = EARTH
-	base_counts[EARTH] = 2
 	minerals = 1000
+
+	// Blocked below 5 bases
+	base_counts[EARTH] = 2
 	queue_5_combat()
-	testing.expect(t, queued_count(EARTH) == 5, "queue_5_combat queues 5 fighters")
+	testing.expect(t, queued_count(EARTH) == 0, "queue_5_combat blocked with 2 bases")
+	testing.expect(t, minerals == 1000, "no minerals spent when blocked")
+
+	// Unlocked at 5 bases
+	base_counts[EARTH] = MAX_BASES
+	queue_5_combat()
+	testing.expect(t, queued_count(EARTH) == 5, "queue_5_combat queues 5 fighters at 5 bases")
 	testing.expect(t, minerals == 375, "deducts 5 * 125 = 625 minerals")
 }
 
@@ -2572,6 +2594,7 @@ queue_5_earth_only :: proc(t: ^testing.T) {
 	for p in 0..<PLANET_COUNT {
 		if p == EARTH { continue }
 		selected_planet = p
+		base_counts[p] = MAX_BASES
 		queue_5_miners()
 		queue_5_combat()
 		testing.expect(t, queued_count(p) == 0, "non-Earth planet cannot queue 5 units")
@@ -2580,6 +2603,9 @@ queue_5_earth_only :: proc(t: ^testing.T) {
 
 @(test)
 queue_5_button_rects_align_with_layout :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	base_counts[EARTH] = MAX_BASES
 	panel_x: f32 = 100.0
 	miner_rect := queue_5_miner_button_rect(panel_x)
 	combat_rect := queue_5_combat_button_rect(panel_x)
@@ -2593,6 +2619,149 @@ queue_5_button_rects_align_with_layout :: proc(t: ^testing.T) {
 
 	// Total span is BUILD_BTN_W + BTN_GAP + BUILD_BTN_W = PANEL_CONTENT_W
 	testing.expect(t, miner_rect.width + BTN_GAP + combat_rect.width == PANEL_CONTENT_W, "buttons span exactly PANEL_CONTENT_W")
+
+	// Layout hierarchy when Earth has 5 bases:
+	// Row 1: +1 buttons at orders_y
+	// Row 2: +5 buttons at orders_y + UPGRADE_DY (below +1 buttons)
+	// Row 3: Speed upgrade button at orders_y + 2 * UPGRADE_DY (below +5 buttons)
+	// Below: Queue at earth_queue_y(), which sits below speed button
+	orders_y := f32(production_orders_y())
+	speed_rect_5 := drone_speed_button_rect(panel_x)
+	testing.expect(t, miner_rect.y == orders_y + UPGRADE_DY, "+5 buttons sit below +1 buttons")
+	testing.expect(t, speed_rect_5.y == miner_rect.y + UPGRADE_DY, "speed upgrade sits below +5 buttons")
+	testing.expect(t, f32(earth_queue_y()) >= speed_rect_5.y + speed_rect_5.height, "queue sits below speed upgrade")
+
+	// Layout hierarchy when Earth has < 5 bases:
+	// +5 buttons are hidden, speed upgrade sits below +1 buttons at orders_y + UPGRADE_DY
+	base_counts[EARTH] = 1
+	orders_y_1 := f32(production_orders_y())
+	speed_rect_1 := drone_speed_button_rect(panel_x)
+	testing.expect(t, speed_rect_1.y == orders_y_1 + UPGRADE_DY, "speed upgrade sits below +1 buttons under 5 bases")
+	testing.expect(t, f32(earth_queue_y()) >= speed_rect_1.y + speed_rect_1.height, "queue sits below speed upgrade under 5 bases")
+}
+
+@(test)
+inspector_clicks_handle_queue_5_and_speed_upgrade :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	minerals = 20000
+
+	// Under 5 bases: clicking speed upgrade button upgrades speed
+	base_counts[EARTH] = 1
+	testing.expect(t, drone_speed_level == 0, "starts at speed level 0")
+	speed_rect_1 := drone_speed_button_rect(0)
+	handle_inspector_click({speed_rect_1.x + 1, speed_rect_1.y + 1}, 0)
+	testing.expect(t, drone_speed_level == 1, "speed upgrades via click under 5 bases")
+	testing.expect(t, queued_count(EARTH) == 0, "no units queued under 5 bases from speed button click")
+
+	// At 5 bases: clicking +5 miner button queues 5 miners
+	base_counts[EARTH] = MAX_BASES
+	min_rect := queue_5_miner_button_rect(0)
+	handle_inspector_click({min_rect.x + 1, min_rect.y + 1}, 0)
+	testing.expect(t, queued_count(EARTH) == 5, "clicking +5 miner button queues 5 miners")
+
+	// At 5 bases: clicking +5 combat button queues 5 fighters
+	com_rect := queue_5_combat_button_rect(0)
+	handle_inspector_click({com_rect.x + 1, com_rect.y + 1}, 0)
+	testing.expect(t, queued_count(EARTH) == 10, "clicking +5 combat button queues 5 fighters")
+
+	// At 5 bases: clicking speed upgrade button at shifted Y upgrades speed
+	speed_rect_5 := drone_speed_button_rect(0)
+	handle_inspector_click({speed_rect_5.x + 1, speed_rect_5.y + 1}, 0)
+	testing.expect(t, drone_speed_level == 2, "speed upgrades via click at 5 bases at shifted position")
+}
+
+@(test)
+queue_5_buttons_disabled_without_enough_minerals :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	base_counts[EARTH] = MAX_BASES
+
+	// 0 minerals: both +5 buttons disabled
+	minerals = 0
+	testing.expect(t, !can_build_5_miners(), "+5 miners disabled with 0 minerals")
+	testing.expect(t, !can_build_5_combat(), "+5 combat disabled with 0 minerals")
+
+	// 249 minerals: enough for single miner (50) and single combat (125), but NOT +5 miners (250) or +5 combat (625)
+	minerals = 249
+	testing.expect(t, !can_build_5_miners(), "+5 miners disabled with 249 minerals")
+	testing.expect(t, !can_build_5_combat(), "+5 combat disabled with 249 minerals")
+
+	// Clicking +5 miner button with 249 minerals does nothing
+	min_rect := queue_5_miner_button_rect(0)
+	handle_inspector_click({min_rect.x + 1, min_rect.y + 1}, 0)
+	testing.expect(t, queued_count(EARTH) == 0, "clicking +5 miners with insufficient minerals does nothing")
+	testing.expect(t, minerals == 249, "no minerals deducted")
+
+	// 250 minerals: exactly enough for +5 miners, but not +5 combat
+	minerals = 250
+	testing.expect(t, can_build_5_miners(), "+5 miners enabled with exactly 250 minerals")
+	testing.expect(t, !can_build_5_combat(), "+5 combat disabled with 250 minerals")
+
+	// 624 minerals: +5 miners enabled, +5 combat disabled
+	minerals = 624
+	testing.expect(t, can_build_5_miners(), "+5 miners enabled with 624 minerals")
+	testing.expect(t, !can_build_5_combat(), "+5 combat disabled with 624 minerals")
+
+	// Clicking +5 combat with 624 minerals does nothing
+	com_rect := queue_5_combat_button_rect(0)
+	handle_inspector_click({com_rect.x + 1, com_rect.y + 1}, 0)
+	testing.expect(t, queued_count(EARTH) == 0, "clicking +5 combat with insufficient minerals does nothing")
+	testing.expect(t, minerals == 624, "no minerals deducted")
+
+	// 625 minerals: both +5 miners and +5 combat enabled
+	minerals = 625
+	testing.expect(t, can_build_5_miners(), "+5 miners enabled with 625 minerals")
+	testing.expect(t, can_build_5_combat(), "+5 combat enabled with 625 minerals")
+
+	// Queue full: both +5 buttons disabled even with plenty of minerals
+	minerals = 10000
+	pending_count[EARTH] = MAX_BASES * 5
+	testing.expect(t, queued_count(EARTH) == MAX_BASES * 5, "queue is full")
+	testing.expect(t, !can_build_5_miners(), "+5 miners disabled when queue full")
+	testing.expect(t, !can_build_5_combat(), "+5 combat disabled when queue full")
+}
+
+@(test)
+losing_base_from_cap_re_hides_queue_5_and_restores_speed_button_pos :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	base_counts[EARTH] = MAX_BASES
+
+	// At 5 bases, +5 buttons are active and speed button is at row 3 (orders_y + 2 * UPGRADE_DY)
+	orders_y := f32(production_orders_y())
+	testing.expect(t, drone_speed_button_rect(0).y == orders_y + 2 * UPGRADE_DY, "speed at row 3 with 5 bases")
+
+	// Destroy a base so base_counts drops to 4
+	destroy_player_base(EARTH)
+	testing.expect(t, base_counts[EARTH] == 4, "base count is 4")
+
+	// Now queue_5 is blocked
+	minerals = 1000
+	queue_5_miners()
+	testing.expect(t, queued_count(EARTH) == 0, "queue_5 blocked after losing 5th base")
+
+	// Speed button collapses up to row 2 (orders_y + UPGRADE_DY)
+	orders_y_4 := f32(production_orders_y())
+	testing.expect(t, drone_speed_button_rect(0).y == orders_y_4 + UPGRADE_DY, "speed returns to row 2 after losing 5th base")
+}
+
+@(test)
+drone_speed_max_at_5_bases_remains_at_row_3_and_ignores_clicks :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	base_counts[EARTH] = MAX_BASES
+	drone_speed_level = DRONE_SPEED_UPGRADE_MAX
+	minerals = 10000
+
+	speed_rect := drone_speed_button_rect(0)
+	orders_y := f32(production_orders_y())
+	testing.expect(t, speed_rect.y == orders_y + 2 * UPGRADE_DY, "max speed button sits below +5 buttons at 5 bases")
+
+	// Clicking maxed speed button does not spend minerals or increase level
+	handle_inspector_click({speed_rect.x + 1, speed_rect.y + 1}, 0)
+	testing.expect(t, drone_speed_level == DRONE_SPEED_UPGRADE_MAX, "speed level capped at max")
+	testing.expect(t, minerals == 10000, "no minerals spent when clicking capped speed upgrade")
 }
 
 @(test)
