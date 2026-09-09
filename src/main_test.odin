@@ -3881,5 +3881,54 @@ inspector_clicks_handle_orbital_defense :: proc(t: ^testing.T) {
 	testing.expect(t, orbital_defense_building[MARS], "clicking button starts orbital defense construction on Mars")
 }
 
+@(test)
+orbital_defense_launches_laser_blast_at_close_range :: proc(t: ^testing.T) {
+	reset_world()
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_hp[EARTH] = 100
+
+	r := sector_radius(EARTH)
+	target_pos := sector_pos(EARTH)
+
+	// Place an enemy fighter outside the new closer engagement distance (e.g. r + 5.0)
+	units[0] = Unit{
+		kind = .COMBAT,
+		state = .TRANSIT,
+		position = target_pos + rl.Vector3{0, 0, r + 5.0},
+		target_planet = EARTH,
+		affiliation = EARTH,
+		enemy = true,
+	}
+	unit_count = 1
+
+	// Outside engagement range: fighter must NOT be destroyed yet
+	update_orbital_defenses(0.05)
+	testing.expect(t, unit_count == 1, "fighter at r + 5.0 is not yet engaged")
+	testing.expect(t, !orbital_defense_blasts[0].active, "no blast fired yet")
+
+	// Move fighter into closer engagement range (e.g. r + 3.5)
+	fighter_target := target_pos + rl.Vector3{0, 0, r + 3.5}
+	units[0].position = fighter_target
+
+	update_orbital_defenses(0.05)
+	def_pos := orbital_defense_pos(EARTH)
+
+	testing.expect(t, unit_count == 0, "fighter at r + 3.5 is intercepted and destroyed")
+	testing.expect(t, orbital_defense_blasts[0].active, "orbital defense blast launched")
+	testing.expect(t, orbital_defense_blasts[0].planet == EARTH, "blast recorded for Earth")
+	testing.expect(t, distance(orbital_defense_blasts[0].from, def_pos) < 0.001, "blast launched from orbital defense station")
+	testing.expect(t, distance(orbital_defense_blasts[0].to, fighter_target) < 0.001, "blast directed at destroyed fighter position")
+
+	// Advancing simulation past blast duration deactivates the blast
+	update_orbital_defenses(0.4)
+	testing.expect(t, !orbital_defense_blasts[0].active, "blast expires after duration")
+
+	// Reset world cleans up all blasts
+	spawn_orbital_defense_blast(EARTH, def_pos, fighter_target, 0.35)
+	testing.expect(t, orbital_defense_blasts[0].active, "active blast present")
+	reset_world()
+	testing.expect(t, !orbital_defense_blasts[0].active, "reset_world clears all active blasts")
+}
+
 
 

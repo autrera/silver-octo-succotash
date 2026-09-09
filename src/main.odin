@@ -300,6 +300,18 @@ orbital_defense_hp: [PLANET_COUNT]int
 orbital_defense_angle: [PLANET_COUNT]f32
 orbital_defense_wave_kills: [PLANET_COUNT]int
 orbital_defense_fire_timer: [PLANET_COUNT]f32
+
+Orbital_Defense_Blast :: struct {
+	active: bool,
+	planet: int,
+	from: rl.Vector3,
+	to: rl.Vector3,
+	elapsed: f32,
+	duration: f32,
+}
+
+MAX_ORBITAL_BLASTS :: 32
+orbital_defense_blasts: [MAX_ORBITAL_BLASTS]Orbital_Defense_Blast
 camera: rl.Camera3D
 // Framing: center of the planet extents (X -30..50, Z -20..24) after the
 // Earth-centered repositioning; pan/zoom covers the far-off enemy HQ.
@@ -505,6 +517,7 @@ reset_world :: proc() {
 	orbital_defense_angle = {}
 	orbital_defense_wave_kills = {}
 	orbital_defense_fire_timer = {}
+	orbital_defense_blasts = {}
 	minerals = 350
 	enemy_wave_timer = 0
 	wave_started = false
@@ -979,6 +992,95 @@ orbital_defense_pos :: proc(planet: int) -> rl.Vector3 {
 	}
 }
 
+spawn_orbital_defense_blast :: proc(planet: int, from, to: rl.Vector3, duration: f32 = 0.35) {
+	oldest_idx := 0
+	oldest_elapsed: f32 = -1.0
+	for i in 0..<MAX_ORBITAL_BLASTS {
+		if !orbital_defense_blasts[i].active {
+			oldest_idx = i
+			break
+		}
+		if orbital_defense_blasts[i].elapsed > oldest_elapsed {
+			oldest_elapsed = orbital_defense_blasts[i].elapsed
+			oldest_idx = i
+		}
+	}
+	orbital_defense_blasts[oldest_idx] = Orbital_Defense_Blast{
+		active = true,
+		planet = planet,
+		from = from,
+		to = to,
+		elapsed = 0,
+		duration = duration,
+	}
+}
+
+update_orbital_defense_blasts :: proc(dt: f32) {
+	for i in 0..<MAX_ORBITAL_BLASTS {
+		if !orbital_defense_blasts[i].active { continue }
+		orbital_defense_blasts[i].elapsed += dt
+		if orbital_defense_blasts[i].elapsed >= orbital_defense_blasts[i].duration {
+			orbital_defense_blasts[i].active = false
+		}
+	}
+}
+
+draw_orbital_defense_blasts :: proc() {
+	for i in 0..<MAX_ORBITAL_BLASTS {
+		b := &orbital_defense_blasts[i]
+		if !b.active { continue }
+		if distance(b.from, b.to) < 0.05 { continue }
+		if !has_vision(b.planet) { continue }
+
+		t := clamp(b.elapsed / b.duration, 0.0, 1.0)
+		fade := 1.0 - t
+		alpha := u8(clamp(255.0 * fade, 0, 255))
+		glow_alpha := u8(clamp(180.0 * fade, 0, 255))
+		shock_alpha := u8(clamp(200.0 * fade, 0, 255))
+
+		// 1. Big Laser Blast Beam (from orbital defense station to enemy fighter)
+		// Core beam: brilliant solid white/cyan cylinder
+		core_r := 0.22 * fade + 0.04
+		rl.DrawCylinderEx(b.from, b.to, core_r, core_r * 0.75, 8, rl.Color{255, 255, 255, alpha})
+
+		// Outer glowing plasma cylinder: wide luminous cyan aura
+		glow_r := 0.65 * fade + 0.12
+		rl.DrawCylinderEx(b.from, b.to, glow_r, glow_r * 0.75, 8, rl.Color{0, 240, 255, glow_alpha})
+
+		// Central accelerator beam core line
+		rl.DrawLine3D(b.from, b.to, rl.Color{210, 255, 255, alpha})
+
+		// 2. Muzzle Flash & Discharge at Orbital Defense Station (b.from)
+		flash_r := 0.55 * fade + 0.08
+		rl.DrawSphere(b.from, flash_r * 0.6, rl.Color{255, 255, 255, alpha})
+		rl.DrawSphereEx(b.from, flash_r, 8, 12, rl.Color{0, 220, 255, glow_alpha})
+		rl.DrawCircle3D(b.from, 0.5 + t * 1.0, {0, 1, 0}, 90, rl.Color{0, 240, 255, glow_alpha})
+
+		// 3. Vaporization Impact & Explosion at the Enemy Fighter (b.to)
+		burst_r := 0.40 + 1.5 * math.sqrt(t)
+		rl.DrawSphere(b.to, 0.30 * fade, rl.Color{255, 255, 255, alpha})
+		rl.DrawSphereEx(b.to, burst_r * 0.75, 8, 12, rl.Color{0, 230, 255, glow_alpha})
+
+		// Expanding vector wireframe sphere shockwave
+		shock_r := 0.45 + 2.4 * t
+		rl.DrawSphereWires(b.to, shock_r, 6, 8, rl.Color{130, 255, 245, shock_alpha})
+		// Expanding horizontal planar tactical shockwave ring
+		rl.DrawCircle3D(b.to, shock_r * 1.2, {0, 1, 0}, 90, rl.Color{0, 240, 255, shock_alpha})
+
+		// High-energy plasma sparks and debris radiating outward from the blast
+		spark_dist := t * 3.4
+		for k in 0..<8 {
+			ang := f32(k) * (math.PI / 4.0)
+			elev := (f32(k % 3) - 1.0) * 0.55
+			spark_dir := rl.Vector3Normalize(rl.Vector3{math.cos(ang), elev, math.sin(ang)})
+			spark_pos := b.to + spark_dir * spark_dist
+			trail_pos := b.to + spark_dir * (spark_dist * 0.65)
+			rl.DrawLine3D(trail_pos, spark_pos, rl.Color{0, 240, 255, shock_alpha})
+			rl.DrawSphere(spark_pos, 0.08 * fade, rl.Color{255, 240, 180, alpha})
+		}
+	}
+}
+
 player_miners_count :: proc(planet: int) -> int {
 	count := 0
 	for i := 0; i < unit_count; i += 1 {
@@ -1087,6 +1189,7 @@ draw_orbital_defense_inspector_section :: proc(x: f32, btn: rl.Rectangle, p: int
 }
 
 update_orbital_defenses :: proc(dt: f32) {
+	update_orbital_defense_blasts(dt)
 	for p in 0..<PLANET_COUNT {
 		if orbital_defense_level[p] > 0 {
 			orbital_defense_angle[p] += dt * 0.8
@@ -1101,8 +1204,8 @@ update_orbital_defenses :: proc(dt: f32) {
 			if orbital_defense_wave_kills[p] < max_kills {
 				target_pos := sector_pos(p)
 				r := sector_radius(p)
-				engage_dist := r + 8.0
-				arrival_dist := r + 1.5
+				engage_dist := r + 3.8
+				arrival_dist := r + 1.65
 
 				for i := unit_count - 1; i >= 0; i -= 1 {
 					u := &units[i]
@@ -1111,7 +1214,9 @@ update_orbital_defenses :: proc(dt: f32) {
 					if d <= engage_dist {
 						if orbital_defense_fire_timer[p] <= 0 || d <= arrival_dist {
 							orbital_defense_wave_kills[p] += 1
-							orbital_defense_fire_timer[p] = 0.15
+							orbital_defense_fire_timer[p] = 0.06
+							def_pos := orbital_defense_pos(p)
+							spawn_orbital_defense_blast(p, def_pos, u.position, 0.35)
 							remove_unit_at(i)
 							if orbital_defense_wave_kills[p] >= max_kills { break }
 						}
@@ -2302,6 +2407,7 @@ draw_world :: proc() {
 			}
 		}
 	}
+	draw_orbital_defense_blasts()
 	rl.EndMode3D()
 	// Luminous industrial manufacturing lights on Earth when units are being created
 	draw_earth_industry_lights()
@@ -5783,6 +5889,7 @@ has_vision :: proc(p: int) -> bool {
 	if p < 0 || p >= SECTOR_COUNT { return false }
 	if p == EARTH { return true }
 	if combat_vision_timer[p] > 0 { return true }
+	if p < PLANET_COUNT && orbital_defense_level[p] > 0 { return true }
 	r := sector_radius(p) + 2.0
 	r2 := r * r
 	sp := sector_pos(p)
