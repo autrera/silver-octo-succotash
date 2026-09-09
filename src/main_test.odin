@@ -1,5 +1,6 @@
 package main
 
+import "core:math"
 import "core:os"
 import "core:testing"
 import rl "vendor:raylib"
@@ -886,6 +887,64 @@ spacebar_shortcut_selects_earth :: proc(t: ^testing.T) {
 	select_earth()
 	testing.expect(t, selected_planet == EARTH, "spacebar works from any planet")
 	selected_planet = EARTH
+}
+
+@(test)
+spacebar_shortcut_centers_camera_when_earth_selected :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	camera_target = {45, 0, -20}
+	camera.position = {45, 80, 60}
+	camera.target = camera_target
+
+	select_earth()
+	testing.expect(t, selected_planet == EARTH, "Earth remains selected")
+	expected_x := earth_camera_offset_x()
+	testing.expect(t, abs(camera_target.x - expected_x) < 0.001, "camera_target.x is offset to center Earth in viewport")
+	testing.expect(t, camera_target.y == planets[EARTH].position.y, "camera_target.y matches Earth")
+	testing.expect(t, camera_target.z == planets[EARTH].position.z, "camera_target.z matches Earth")
+	testing.expect(t, camera.target == camera_target, "camera.target matches camera_target")
+	testing.expect(t, camera.position.x == camera_target.x, "camera.position.x matches camera_target.x")
+}
+
+@(test)
+spacebar_two_press_sequence :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = MARS
+	camera_target = {45, 0, -20}
+
+	// First press: selects Earth, camera does not move yet
+	select_earth()
+	testing.expect(t, selected_planet == EARTH, "first press selects Earth")
+	testing.expect(t, camera_target.x == 45, "camera hasn't moved yet")
+
+	// Second press: centers camera on Earth
+	select_earth()
+	testing.expect(t, selected_planet == EARTH, "Earth still selected")
+	expected_x := earth_camera_offset_x()
+	testing.expect(t, abs(camera_target.x - expected_x) < 0.001, "second press centers camera on Earth with viewport offset")
+}
+
+@(test)
+earth_centered_in_viewport_beside_inspector :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	camera.position = {0, 89.0, 89.0}
+	select_earth()
+
+	// Math verification of perspective projection at Y = 89:
+	screen_w: f32 = 1280.0
+	screen_h: f32 = 760.0
+	viewport_w := screen_w - SCREEN_PANEL_WIDTH
+	desired_center_x := viewport_w * 0.5
+
+	fovy_rad := f32(45.0 * math.PI / 180.0)
+	view_z := camera.position.y * math.sqrt(f32(2.0))
+	view_x := -camera_target.x
+	proj_x := (f32(1.0) / math.tan(fovy_rad * 0.5)) * (screen_h / screen_w) * (view_x / view_z)
+	screen_x := (proj_x + 1.0) * 0.5 * screen_w
+
+	testing.expect(t, abs(screen_x - desired_center_x) < 0.01, "Earth screen projection is centered in viewport")
 }
 
 @(test)
@@ -2468,6 +2527,40 @@ queue_units_respects_limits :: proc(t: ^testing.T) {
 	queue_units(.MINING, 5) // only 3 slots open before cap (2 + 3 = 5)
 	testing.expect(t, queued_count(EARTH) == 5, "stops at queue capacity cap 5")
 	testing.expect(t, minerals == 1000 - 3 * 50, "only paid for the 3 units queued")
+}
+
+@(test)
+queue_5_miners_shortcut :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	minerals = 1000
+	queue_5_miners()
+	testing.expect(t, queued_count(EARTH) == 5, "queue_5_miners queues 5 miners")
+	testing.expect(t, minerals == 750, "deducts 5 * 50 = 250 minerals")
+}
+
+@(test)
+queue_5_combat_shortcut :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	base_counts[EARTH] = 2
+	minerals = 1000
+	queue_5_combat()
+	testing.expect(t, queued_count(EARTH) == 5, "queue_5_combat queues 5 fighters")
+	testing.expect(t, minerals == 375, "deducts 5 * 125 = 625 minerals")
+}
+
+@(test)
+queue_5_earth_only :: proc(t: ^testing.T) {
+	reset_world()
+	minerals = 1000
+	for p in 0..<PLANET_COUNT {
+		if p == EARTH { continue }
+		selected_planet = p
+		queue_5_miners()
+		queue_5_combat()
+		testing.expect(t, queued_count(p) == 0, "non-Earth planet cannot queue 5 units")
+	}
 }
 
 @(test)

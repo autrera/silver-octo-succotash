@@ -542,29 +542,38 @@ update_input :: proc() {
 	// Build shortcuts use the same validation path as the inspector buttons.
 	if rl.IsKeyPressed(.M) {
 		if shift_down() && drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
-			queue_units(.MINING, 5)
+			queue_5_miners()
 		} else {
 			queue_unit(.MINING)
 		}
 	}
 	if rl.IsKeyPressed(.C) {
 		if shift_down() && drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
-			queue_units(.COMBAT, 5)
+			queue_5_combat()
 		} else {
 			queue_unit(.COMBAT)
 		}
 	}
+	// [N] queues +5 mining drones (Earth only).
+	if !ctrl_down() && rl.IsKeyPressed(.N) {
+		queue_5_miners()
+	}
+	// [X] queues +5 combat fighters (Earth only).
+	if rl.IsKeyPressed(.X) {
+		queue_5_combat()
+	}
 	// [U] buys the next drone build-speed upgrade level (Earth only).
 	if rl.IsKeyPressed(.U) { purchase_drone_speed_upgrade() }
-	// Spacebar is a shortcut to select Earth in the inspector.
+	// Spacebar is a shortcut to select Earth in the inspector;
+	// pressing it again when Earth is already selected centers the camera at Earth.
 	if rl.IsKeyPressed(.SPACE) { select_earth() }
 	// Squad control groups: Shift+digit saves the selection, digit recalls it.
 	// IsKeyPressed is edge-triggered, so held-key repeat never re-triggers.
 	if group := squad_key_pressed(); group > 0 {
 		if shift_down() { save_squad(group) } else { recall_squad(group) }
 	}
-	// Debug: force the next enemy wave immediately (verify combat without waiting 3 minutes).
-	if rl.IsKeyPressed(.N) { spawn_enemy_wave() }
+	// Debug: force the next enemy wave immediately with Ctrl+N (verify combat without waiting 3 minutes).
+	if ctrl_down() && rl.IsKeyPressed(.N) { spawn_enemy_wave() }
 	// F5 quick-saves the game.
 	if rl.IsKeyPressed(.F5) {
 		if save_game() {
@@ -609,8 +618,31 @@ ctrl_down :: proc() -> bool {
 	return rl.IsKeyDown(.LEFT_CONTROL) || rl.IsKeyDown(.RIGHT_CONTROL)
 }
 
-// SPACE in update_input jumps the inspector straight to Earth.
-select_earth :: proc() { selected_planet = EARTH }
+// Horizontal world-space offset so Earth projects to the center of the visible
+// viewport beside the right-docked planet inspector (SCREEN_PANEL_WIDTH).
+earth_camera_offset_x :: proc() -> f32 {
+	screen_h := f32(rl.GetScreenHeight() > 0 ? rl.GetScreenHeight() : 760)
+	zoom_y := camera.position.y > 0 ? camera.position.y : CAMERA_START_Y
+	return f32(SCREEN_PANEL_WIDTH) * zoom_y * (2.0 - math.sqrt(f32(2.0))) / screen_h
+}
+
+center_camera_on_earth :: proc() {
+	camera_target = planets[EARTH].position
+	camera_target.x += earth_camera_offset_x()
+	camera.position.x = camera_target.x
+	camera.position.z = camera_target.z + camera.position.y * 1.0
+	camera.target = camera_target
+}
+
+// SPACE in update_input jumps the inspector straight to Earth;
+// pressing it again when Earth is already selected centers the camera at Earth.
+select_earth :: proc() {
+	if selected_planet == EARTH {
+		center_camera_on_earth()
+	} else {
+		selected_planet = EARTH
+	}
+}
 
 // Digit keys 1..9 map to control groups; 0 = no squad key this frame.
 squad_key_pressed :: proc() -> int {
@@ -649,11 +681,11 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 			}
 		} else {
 			if rl.CheckCollisionPointRec(mouse, queue_5_miner_button_rect(panel_x)) {
-				queue_units(.MINING, 5)
+				queue_5_miners()
 				return
 			}
 			if rl.CheckCollisionPointRec(mouse, queue_5_combat_button_rect(panel_x)) {
-				queue_units(.COMBAT, 5)
+				queue_5_combat()
 				return
 			}
 		}
@@ -836,6 +868,14 @@ queue_units :: proc(kind: Unit_Type, count: int) {
 		}
 		queue_unit(kind)
 	}
+}
+
+queue_5_miners :: proc() {
+	queue_units(.MINING, 5)
+}
+
+queue_5_combat :: proc() {
+	queue_units(.COMBAT, 5)
 }
 
 // Screen rect of the drone build-speed upgrade button. Shared by the
@@ -2049,8 +2089,8 @@ draw_earth_inspector :: proc(x: f32) {
 	draw_button({x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, "[C] COMBAT (125)", SCIFI_PANEL_SOLID, can_build_combat)
 
 	if drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
-		draw_button(queue_5_miner_button_rect(x), "+5 MINERS (250)", SCIFI_PANEL_SOLID, can_build_miner)
-		draw_button(queue_5_combat_button_rect(x), "+5 FIGHTERS (625)", SCIFI_PANEL_SOLID, can_build_combat)
+		draw_button(queue_5_miner_button_rect(x), "[N] +5 MINERS (250)", SCIFI_PANEL_SOLID, can_build_miner)
+		draw_button(queue_5_combat_button_rect(x), "[X] +5 COMBAT (625)", SCIFI_PANEL_SOLID, can_build_combat)
 	} else {
 		can_upgrade_speed := minerals >= DRONE_SPEED_UPGRADE_COST
 		draw_button(drone_speed_button_rect(x), rl.TextFormat("[U] DRONE BUILD SPEED  LVL %d/%d (%d)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX, DRONE_SPEED_UPGRADE_COST), SCIFI_PANEL_SOLID, can_upgrade_speed)
@@ -4345,7 +4385,7 @@ draw_controls_overlay :: proc() {
 	cy1 += 18
 	draw_control_row(col1_x, cy1, "Q / E / SCROLL", "Zoom altitude in and out")
 	cy1 += 18
-	draw_control_row(col1_x, cy1, "SPACE", "Center focus on Earth base")
+	draw_control_row(col1_x, cy1, "SPACE", "Select Earth / Center view")
 
 	cy1 += 26
 	rl.DrawText("FLEET SELECTION AND SQUADS", c.int(col1_x), c.int(cy1), 13, SCIFI_AMBER)
@@ -4373,11 +4413,13 @@ draw_controls_overlay :: proc() {
 	cy2 += 20
 	draw_control_row(col2_x, cy2, "M / CLICK", "Build Mining Drone (50)")
 	cy2 += 18
+	draw_control_row(col2_x, cy2, "N", "Build +5 Miners (250)")
+	cy2 += 18
 	draw_control_row(col2_x, cy2, "C / CLICK", "Build Combat Fighter (125)")
 	cy2 += 18
-	draw_control_row(col2_x, cy2, "U / SPEED", "Upgrade Build Speed (5,000)")
+	draw_control_row(col2_x, cy2, "X", "Build +5 Fighters (625)")
 	cy2 += 18
-	draw_control_row(col2_x, cy2, "+5 BUTTONS", "Batch-queue 5 units (Lvl 5)")
+	draw_control_row(col2_x, cy2, "U / SPEED", "Upgrade Build Speed (5,000)")
 	cy2 += 18
 	draw_control_row(col2_x, cy2, "ESC", "Cancel last build (Refund)")
 	cy2 += 18
@@ -4390,7 +4432,7 @@ draw_controls_overlay :: proc() {
 	cy2 += 18
 	draw_control_row(col2_x, cy2, "F5", "Quick-save game state")
 	cy2 += 18
-	draw_control_row(col2_x, cy2, "N", "Force enemy attack wave")
+	draw_control_row(col2_x, cy2, "CTRL + N", "Debug: force enemy wave")
 
 	cy2 += 26
 	rl.DrawText("TACTICAL SENSORS", c.int(col2_x), c.int(cy2), 13, SCIFI_AMBER)

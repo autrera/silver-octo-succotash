@@ -101,7 +101,9 @@ Starfall Command is an RTS prototype where you manage planetary mining operation
 - **Right-Click**:
   - With units selected: Issue move/attack order to destination planet or sector
   - With no units selected and Earth selected: Set Earth rally point (right-clicking Earth clears it)
-- **Space**: Center camera on Earth
+- **Space**: Select Earth in inspector (press again when Earth is selected to center camera on Earth)
+- **M / C**: Queue 1 mining drone / 1 combat fighter (Earth selected)
+- **N / X**: Queue +5 mining drones / +5 combat fighters (Earth selected)
 - **1 - 9**: Recall saved squad
 - **Shift + 1 - 9**: Save current unit selection to squad
 - **P / F10**: Open Pause Menu
