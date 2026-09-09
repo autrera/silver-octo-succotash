@@ -320,22 +320,21 @@ mining_transit_speed_reduced_25_percent :: proc(t: ^testing.T) {
 
 @(test)
 drone_build_times_doubled :: proc(t: ^testing.T) {
-	// Doubled from 3s/5s to 6s/10s in the war-economy rebalance.
-	testing.expect(t, MINER_BUILD_TIME == 6.0, "miner build time is 6s")
-	testing.expect(t, COMBAT_BUILD_TIME == 10.0, "combat drone build time is 10s")
+	testing.expect(t, MINER_BUILD_TIME == 4.0, "miner build time is 4s")
+	testing.expect(t, COMBAT_BUILD_TIME == 8.0, "combat drone build time is 8s")
 	reset_world()
 	selected_planet = EARTH
 	minerals = 1000
 	queue_unit(.MINING)
 	update_production(MINER_BUILD_TIME - 0.1)
-	testing.expect(t, production[EARTH][0].active && unit_count == 0, "miner line still building just before 6s")
+	testing.expect(t, production[EARTH][0].active && unit_count == 0, "miner line still building just before 4s")
 	update_production(0.2)
-	testing.expect(t, !production[EARTH][0].active && unit_count == 1, "miner completes at 6s")
+	testing.expect(t, !production[EARTH][0].active && unit_count == 1, "miner completes at 4s")
 	queue_unit(.COMBAT)
 	update_production(COMBAT_BUILD_TIME - 0.1)
-	testing.expect(t, production[EARTH][0].active && unit_count == 1, "combat line still building just before 10s")
+	testing.expect(t, production[EARTH][0].active && unit_count == 1, "combat line still building just before 8s")
 	update_production(0.2)
-	testing.expect(t, !production[EARTH][0].active && unit_count == 2, "combat drone completes at 10s")
+	testing.expect(t, !production[EARTH][0].active && unit_count == 2, "combat drone completes at 8s")
 }
 
 @(test)
@@ -3377,14 +3376,14 @@ minor_wave_timer_advances_and_launches_every_sixty_seconds :: proc(t: ^testing.T
 	before := unit_count
 	testing.expect(t, minor_wave_timer == 0, "minor wave timer starts at 0")
 
-	// 59.9 seconds: no launch yet
-	update_minor_wave(59.9)
-	testing.expect(t, unit_count == before, "no minor wave before 60 seconds")
-	testing.expect(t, minor_wave_timer >= 59.9, "minor wave timer accumulated")
+	// 74.9 seconds: no launch yet
+	update_minor_wave(74.9)
+	testing.expect(t, unit_count == before, "no minor wave before 75 seconds")
+	testing.expect(t, minor_wave_timer >= 74.9, "minor wave timer accumulated")
 
-	// 0.2s more: crosses 60s -> launches 5 enemy combat drones
+	// 0.2s more: crosses 75s -> launches 5 enemy combat drones
 	update_minor_wave(0.2)
-	testing.expect(t, unit_count - before == 5, "minor wave launches 5 drones at 60s")
+	testing.expect(t, unit_count - before == 5, "minor wave launches 5 drones at 75s")
 	testing.expect(t, minor_wave_timer == 0, "minor wave timer resets to 0 after launch")
 
 	// Verify the launched drones
@@ -3398,10 +3397,10 @@ minor_wave_timer_advances_and_launches_every_sixty_seconds :: proc(t: ^testing.T
 		testing.expect(t, u.affiliation == EARTH, "affiliation matches target")
 	}
 
-	// Another 60s: launches second minor wave
+	// Another 75s: launches second minor wave
 	before = unit_count
-	update_minor_wave(60.0)
-	testing.expect(t, unit_count - before == 5, "second minor wave launches after another 60s")
+	update_minor_wave(75.0)
+	testing.expect(t, unit_count - before == 5, "second minor wave launches after another 75s")
 }
 
 @(test)
@@ -3455,15 +3454,15 @@ minor_wave_runs_independently_of_mined_planets :: proc(t: ^testing.T) {
 	reset_world()
 	testing.expect(t, mined_planet_count() == 0, "0 mined planets")
 	before := unit_count
-	// 60s passes via update_minor_wave with 0 mined planets: minor wave still launches
-	update_minor_wave(60.0)
+	// 75s passes via update_minor_wave with 0 mined planets: minor wave still launches
+	update_minor_wave(75.0)
 	testing.expect(t, unit_count - before == 5, "minor wave launches even with 0 mined planets")
 
 	// Same check via update_enemy_waves with only 1 liberated planet (180s wave clock is frozen)
 	add_miner(EARTH)
 	testing.expect(t, mined_planet_count() == 1, "1 mined planet")
 	before = unit_count
-	update_enemy_waves(60.0)
+	update_enemy_waves(75.0)
 	testing.expect(t, unit_count - before == 5, "minor wave launches via update_enemy_waves with 1 mined planet")
 	testing.expect(t, enemy_wave_timer == 0, "180s wave timer remains frozen below 2 liberated planets")
 }
@@ -3504,16 +3503,16 @@ minor_wave_target_planet_receives_warning_glow_three_seconds_prior :: proc(t: ^t
 	reset_world()
 	// At game start, Venus is closest unliberated to Earth, and Earth is the only liberated planet.
 	// Therefore Venus will attack Earth.
-	testing.expect(t, minor_wave_warning_planet() == -1, "no warning before 57s")
+	testing.expect(t, minor_wave_warning_planet() == -1, "no warning before 72s")
 
-	// Set minor wave timer to 56.9s (3.1s before attack) - still no warning
-	minor_wave_timer = 56.9
-	testing.expect(t, minor_wave_warning_planet() == -1, "no warning at 56.9s")
+	// Set minor wave timer to 71.9s (3.1s before attack) - still no warning
+	minor_wave_timer = 71.9
+	testing.expect(t, minor_wave_warning_planet() == -1, "no warning at 71.9s")
 	update_combat_nebula_intensity(0.1)
-	testing.expect(t, combat_nebula_intensity[EARTH] < 0.01, "combat nebula stays cold at 56.9s")
+	testing.expect(t, combat_nebula_intensity[EARTH] < 0.01, "combat nebula stays cold at 71.9s")
 
-	// Advance to 57.0s (exactly 3s before 60s attack) - warning triggers on target Earth
-	minor_wave_timer = 57.0
+	// Advance to 72.0s (exactly 3s before 75s attack) - warning triggers on target Earth
+	minor_wave_timer = 72.0
 	target := minor_wave_warning_planet()
 	testing.expect(t, target == EARTH, "Earth is targeted for warning 3s before launch")
 
@@ -3592,15 +3591,15 @@ warning_glow_persists_during_transit_and_transitions_to_battle_glare :: proc(t: 
 	testing.expect(t, !planet_under_attack_warning(EARTH), "no warning initially")
 	testing.expect(t, combat_nebula_intensity[EARTH] < 0.01, "intensity cold initially")
 
-	// 2. 3 seconds before launch (57s): warning triggers, intensity ramps to 0.5
-	minor_wave_timer = 57.0
-	testing.expect(t, planet_under_attack_warning(EARTH), "Earth under warning at 57s")
+	// 2. 3 seconds before launch (72s): warning triggers, intensity ramps to 0.5
+	minor_wave_timer = 72.0
+	testing.expect(t, planet_under_attack_warning(EARTH), "Earth under warning at 72s")
 	for _ in 0..<25 {
 		update_combat_nebula_intensity(0.1)
 	}
 	testing.expect(t, abs(combat_nebula_intensity[EARTH] - 0.5) < 0.05, "intensity reaches warning glare (~0.5)")
 
-	// 3. Minor wave launches at 60s: fighters spawn in transit, timer resets
+	// 3. Minor wave launches at 75s: fighters spawn in transit, timer resets
 	launch_minor_wave()
 	testing.expect(t, minor_wave_timer == 0, "timer resets on launch")
 	testing.expect(t, transit_fighters_at(EARTH, true) == 5, "5 enemy fighters in transit to Earth")
@@ -3643,6 +3642,243 @@ warning_glow_persists_during_transit_and_transitions_to_battle_glare :: proc(t: 
 		update_combat_nebula_intensity(0.1)
 	}
 	testing.expect(t, combat_nebula_intensity[EARTH] < 0.05, "battle glare gracefully fades out")
+}
+
+// ---- Orbital Defense Tests -----------------------------------------------
+
+@(test)
+orbital_defense_initial_state :: proc(t: ^testing.T) {
+	reset_world()
+	for p in 0..<PLANET_COUNT {
+		testing.expect(t, orbital_defense_level[p] == 0, "orbital defense level starts at 0")
+		testing.expect(t, !orbital_defense_building[p], "orbital defense not building initially")
+		testing.expect(t, orbital_defense_progress[p] == 0, "orbital defense progress starts at 0")
+		testing.expect(t, orbital_defense_hp[p] == 0, "orbital defense HP starts at 0")
+	}
+}
+
+@(test)
+orbital_defense_build_requirements :: proc(t: ^testing.T) {
+	reset_world()
+	// Unliberated Mars cannot build defense
+	minerals = 2000
+	for i in 0..<10 { add_miner(MARS) }
+	testing.expect(t, !planet_liberated(MARS), "Mars is occupied")
+	testing.expect(t, !can_build_orbital_defense(MARS), "cannot build defense on unliberated planet")
+
+	// Liberate Mars
+	enemy_base_hp[MARS] = 0
+	testing.expect(t, planet_liberated(MARS), "Mars is liberated")
+	testing.expect(t, can_build_orbital_defense(MARS), "can build defense with 10 miners and 1000+ minerals")
+
+	// Lacks minerals
+	minerals = 999
+	testing.expect(t, !can_build_orbital_defense(MARS), "cannot build defense without 1000 minerals")
+	minerals = 1000
+
+	// Lacks miners: remove 1 miner -> only 9 miners
+	remove_unit_at(unit_count - 1)
+	testing.expect(t, player_miners_count(MARS) == 9, "9 miners assigned")
+	testing.expect(t, !can_build_orbital_defense(MARS), "cannot build defense with fewer than 10 miners")
+
+	// Earth starts liberated, needs 10 miners and 1000 minerals
+	for i in 0..<10 { add_miner(EARTH) }
+	testing.expect(t, can_build_orbital_defense(EARTH), "Earth can build defense with 10 miners and 1000 minerals")
+}
+
+@(test)
+orbital_defense_timed_construction_and_crew :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[MARS] = 0
+	minerals = 1000
+	for i in 0..<10 { add_miner(MARS) }
+
+	start_orbital_defense_construction(MARS)
+	testing.expect(t, minerals == 0, "1000 minerals deducted for construction")
+	testing.expect(t, orbital_defense_building[MARS], "construction is underway")
+	testing.expect(t, constructing_miners(MARS) == 10, "all 10 miners join construction crew")
+
+	// Advance 59.9 seconds: not done yet
+	update_production(59.9)
+	testing.expect(t, orbital_defense_building[MARS], "defense still building at 59.9s")
+	testing.expect(t, orbital_defense_level[MARS] == 0, "level is still 0 at 59.9s")
+
+	// 0.2s more: completes at 60s
+	update_production(0.2)
+	testing.expect(t, !orbital_defense_building[MARS], "construction completed")
+	testing.expect(t, orbital_defense_level[MARS] == 1, "orbital defense reaches level 1")
+	testing.expect(t, orbital_defense_hp[MARS] == 100, "level 1 orbital defense has 100 HP")
+	testing.expect(t, constructing_miners(MARS) == 0, "miners resume duties after construction completes")
+}
+
+@(test)
+orbital_defense_upgrades_up_to_level_10 :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[VENUS] = 0
+	for i in 0..<10 { add_miner(VENUS) }
+
+	for lvl in 1..=10 {
+		minerals = 1000
+		testing.expect(t, can_build_orbital_defense(VENUS), "can upgrade to next level")
+		start_orbital_defense_construction(VENUS)
+		testing.expect(t, orbital_defense_building[VENUS], "upgrade started")
+		update_production(ORBITAL_DEFENSE_BUILD_TIME)
+		testing.expect(t, orbital_defense_level[VENUS] == lvl, "reached level")
+		testing.expect(t, orbital_defense_hp[VENUS] == lvl * 100, "HP scales to level * 100")
+	}
+
+	// At level 10 (max), cannot upgrade further
+	minerals = 2000
+	testing.expect(t, orbital_defense_level[VENUS] == 10, "at max level 10")
+	testing.expect(t, !can_build_orbital_defense(VENUS), "cannot upgrade past level 10")
+}
+
+@(test)
+orbital_defense_intercepts_inbound_fighters :: proc(t: ^testing.T) {
+	reset_world()
+	// Level 1 defense on Earth (can destroy 10 enemy fighters)
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_hp[EARTH] = 100
+
+	// Launch 15 enemy fighters from Venus to Earth
+	spawn_minor_wave(VENUS, EARTH, 15)
+	testing.expect(t, unit_count == 15, "15 enemy fighters spawned in transit")
+
+	// Advance simulation so they travel toward Earth
+	// Speed is 2.5/s, distance Venus->Earth is ~15.54, travel time ~6.2s
+	for s := 0; s < 70; s += 1 {
+		update_units(0.1)
+		update_enemy_waves(0.1)
+	}
+
+	// Out of 15 fighters, exactly 10 should be destroyed by orbital defense before reaching Earth
+	// Remaining 5 reach Earth and enter GUARDING
+	players, enemies := planet_combatants(EARTH)
+	testing.expect(t, enemies == 5, "exactly 5 enemy fighters broke through and reached Earth")
+	testing.expect(t, unit_count == 5, "total surviving units is 5 (10 destroyed by defense)")
+}
+
+@(test)
+orbital_defense_destroys_all_fighters_if_under_cap :: proc(t: ^testing.T) {
+	reset_world()
+	// Level 1 defense on Earth (cap = 10)
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_hp[EARTH] = 100
+
+	// Launch 5 enemy fighters (minor wave size)
+	spawn_minor_wave(VENUS, EARTH, 5)
+	testing.expect(t, unit_count == 5, "5 enemy fighters in transit")
+
+	for s := 0; s < 70; s += 1 {
+		update_units(0.1)
+		update_enemy_waves(0.1)
+	}
+
+	// All 5 destroyed before reaching Earth! 0 reach the planet.
+	players, enemies := planet_combatants(EARTH)
+	testing.expect(t, enemies == 0, "0 enemy fighters reached Earth")
+	testing.expect(t, unit_count == 0, "all 5 destroyed in transit by orbital defense")
+}
+
+@(test)
+orbital_defense_takes_damage_and_destroys_miners_and_refinery :: proc(t: ^testing.T) {
+	reset_world()
+	// Setup liberated Mars with Level 1 orbital defense, operational refinery, and 5 miners
+	enemy_base_hp[MARS] = 0
+	refinery_built[MARS] = true
+	orbital_defense_level[MARS] = 1
+	orbital_defense_hp[MARS] = 50 // 50 HP remaining
+	for i in 0..<5 { add_miner(MARS) }
+
+	// 5 enemy fighters arrive and guard Mars (no player fighters defending)
+	for i in 0..<5 { add_guarding_fighter(MARS, true) }
+
+	testing.expect(t, orbital_defense_level[MARS] == 1, "defense starts active")
+	testing.expect(t, refinery_built[MARS], "refinery starts built")
+	testing.expect(t, player_miners_at(MARS), "miners present on Mars")
+
+	// 5 enemies deal 5 damage per COMBAT_TICK (0.2s) -> 25 damage per second.
+	// In 1.0s (5 ticks): 25 damage taken -> HP drops from 50 to 25.
+	update_enemy_waves(1.0)
+	testing.expect(t, orbital_defense_level[MARS] == 1, "defense still alive at 25 HP")
+	testing.expect(t, orbital_defense_hp[MARS] == 25, "defense took 25 damage from 5 enemy fighters")
+	testing.expect(t, refinery_built[MARS], "refinery intact while defense stands")
+
+	// 1.2s more (6 ticks = 30 damage): drops to <= 0 -> defense destroyed!
+	update_enemy_waves(1.2)
+	testing.expect(t, orbital_defense_level[MARS] == 0, "defense destroyed when HP reached 0")
+	testing.expect(t, orbital_defense_hp[MARS] == 0, "defense HP is 0")
+	testing.expect(t, !refinery_built[MARS], "refinery destroyed along with orbital defense")
+	testing.expect(t, !player_miners_at(MARS), "miners destroyed along with orbital defense")
+}
+
+@(test)
+friendly_fighters_defend_orbital_defense :: proc(t: ^testing.T) {
+	reset_world()
+	// Earth has Level 1 orbital defense and 5 friendly fighters
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_hp[EARTH] = 100
+	for i in 0..<5 { add_guarding_fighter(EARTH, false) }
+
+	// 5 enemy fighters arrive at Earth
+	for i in 0..<5 { add_guarding_fighter(EARTH, true) }
+
+	// Friendly fighters engage in dogfight!
+	update_enemy_waves(1.0) // 5 combat ticks: 5v5 resolves
+	players, enemies := planet_combatants(EARTH)
+	testing.expect(t, players == 0 && enemies == 0, "dogfight resolved 1:1")
+	// Orbital defense took NO damage because friendly fighters defended!
+	testing.expect(t, orbital_defense_hp[EARTH] == 100, "orbital defense took zero damage while fighters defended")
+	testing.expect(t, orbital_defense_level[EARTH] == 1, "orbital defense remains intact")
+}
+
+@(test)
+orbital_defense_save_and_load_persistence :: proc(t: ^testing.T) {
+	reset_world()
+	orbital_defense_level[EARTH] = 3
+	orbital_defense_hp[EARTH] = 280
+	orbital_defense_level[MARS] = 1
+	orbital_defense_building[MARS] = true
+	orbital_defense_progress[MARS] = 25.5
+	orbital_defense_hp[MARS] = 100
+
+	save_str := serialize_game_state()
+
+	reset_world()
+	testing.expect(t, orbital_defense_level[EARTH] == 0, "reset zeroes Earth defense")
+	testing.expect(t, orbital_defense_level[MARS] == 0, "reset zeroes Mars defense")
+
+	ok := deserialize_game_state(save_str)
+	testing.expect(t, ok, "deserialization succeeded")
+	testing.expect(t, orbital_defense_level[EARTH] == 3, "Earth defense level 3 restored")
+	testing.expect(t, orbital_defense_hp[EARTH] == 280, "Earth defense HP restored")
+	testing.expect(t, orbital_defense_level[MARS] == 1, "Mars defense level 1 restored")
+	testing.expect(t, orbital_defense_building[MARS], "Mars building status restored")
+	testing.expect(t, abs(orbital_defense_progress[MARS] - 25.5) < 0.1, "Mars progress restored")
+}
+
+@(test)
+inspector_clicks_handle_orbital_defense :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	minerals = 1000
+	for i in 0..<10 { add_miner(EARTH) }
+
+	panel_x: f32 = 800.0
+	btn := orbital_defense_button_rect(panel_x, EARTH)
+	handle_inspector_click({btn.x + 5, btn.y + 5}, panel_x)
+	testing.expect(t, orbital_defense_building[EARTH], "clicking button starts orbital defense construction on Earth")
+	testing.expect(t, minerals == 0, "minerals deducted")
+
+	// Outpost click
+	reset_world()
+	selected_planet = MARS
+	enemy_base_hp[MARS] = 0
+	minerals = 1000
+	for i in 0..<10 { add_miner(MARS) }
+	btn_mars := orbital_defense_button_rect(panel_x, MARS)
+	handle_inspector_click({btn_mars.x + 5, btn_mars.y + 5}, panel_x)
+	testing.expect(t, orbital_defense_building[MARS], "clicking button starts orbital defense construction on Mars")
 }
 
 
