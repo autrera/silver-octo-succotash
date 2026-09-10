@@ -4284,3 +4284,22 @@ structures_and_units_keep_planet_out_of_fog_of_war :: proc(t: ^testing.T) {
 	testing.expect(t, !has_vision(MARS), "Mars returns to fog when unit moves away and no structures exist")
 }
 
+@(test)
+orbital_defense_pos_is_on_planet_surface_at_north_pole :: proc(t: ^testing.T) {
+	reset_world()
+	defer reset_world()
+
+	for p in 0..<PLANET_COUNT {
+		planet := planets[p]
+		expected_pole := rl.Vector3{
+			planet.position.x,
+			planet.position.y + planet.radius,
+			planet.position.z,
+		}
+		actual_pos := orbital_defense_pos(p)
+		testing.expect(t, actual_pos.x == expected_pole.x, "orbital defense X matches north pole X")
+		testing.expect(t, actual_pos.y == expected_pole.y, "orbital defense Y matches north pole surface Y")
+		testing.expect(t, actual_pos.z == expected_pole.z, "orbital defense Z matches north pole Z")
+	}
+}
+

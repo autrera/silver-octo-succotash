@@ -1041,14 +1041,13 @@ orbital_defense_max_hp :: proc(planet: int) -> int {
 
 orbital_defense_pos :: proc(planet: int) -> rl.Vector3 {
 	p := planets[planet]
-	def_dist := p.radius + 2.2
-	ang := orbital_defense_angle[planet]
 	return rl.Vector3{
-		p.position.x + math.cos(ang) * def_dist,
-		p.position.y + 1.0,
-		p.position.z + math.sin(ang) * def_dist,
+		p.position.x,
+		p.position.y + p.radius,
+		p.position.z,
 	}
 }
+
 
 spawn_orbital_defense_blast :: proc(planet: int, from, to: rl.Vector3, duration: f32 = 0.35) {
 	oldest_idx := 0
@@ -2307,6 +2306,329 @@ travel :: proc(u: ^Unit, target: rl.Vector3, amount: f32) {
 	u.position.z += dz / d * amount
 }
 
+// Procedural 3D oriented quad (double-wound so it renders from front and back).
+draw_quad_3d :: proc(v1, v2, v3, v4: rl.Vector3, col: rl.Color) {
+	rl.DrawTriangle3D(v1, v2, v3, col)
+	rl.DrawTriangle3D(v1, v3, v4, col)
+	rl.DrawTriangle3D(v3, v2, v1, col)
+	rl.DrawTriangle3D(v4, v3, v1, col)
+}
+
+// Procedural 3D oriented box aligned to an arbitrary orthonormal basis (fwd, up, right).
+draw_oriented_box :: proc(
+	center: rl.Vector3,
+	half_w, half_h, half_l: f32,
+	fwd, up, right: rl.Vector3,
+	col: rl.Color,
+) {
+	p0 := center - right * half_w - up * half_h - fwd * half_l
+	p1 := center + right * half_w - up * half_h - fwd * half_l
+	p2 := center + right * half_w + up * half_h - fwd * half_l
+	p3 := center - right * half_w + up * half_h - fwd * half_l
+	p4 := center - right * half_w - up * half_h + fwd * half_l
+	p5 := center + right * half_w - up * half_h + fwd * half_l
+	p6 := center + right * half_w + up * half_h + fwd * half_l
+	p7 := center - right * half_w + up * half_h + fwd * half_l
+
+	// Rear face (-fwd)
+	draw_quad_3d(p0, p1, p2, p3, col)
+	// Front face (+fwd)
+	draw_quad_3d(p4, p5, p6, p7, col)
+	// Bottom face (-up)
+	draw_quad_3d(p0, p1, p5, p4, col)
+	// Top face (+up)
+	draw_quad_3d(p3, p2, p6, p7, col)
+	// Left face (-right)
+	draw_quad_3d(p0, p3, p7, p4, col)
+	// Right face (+right)
+	draw_quad_3d(p1, p2, p6, p5, col)
+}
+
+// Cyberpunk space version of a sand-colored Flak 88 battery mounted on the
+// planet surface at the north pole.
+draw_cyberpunk_flak88 :: proc(planet_idx: int) {
+	if planet_idx < 0 || planet_idx >= PLANET_COUNT { return }
+	planet := planets[planet_idx]
+	pole := rl.Vector3{planet.position.x, planet.position.y + planet.radius, planet.position.z}
+	lit := has_vision(planet_idx)
+	level := orbital_defense_level[planet_idx]
+
+	// Scale subtly with planet radius for consistent planetary presence
+	s: f32 = 0.84 + clamp(planet.radius * 0.07, 0.11, 0.32)
+
+	// Azimuth tracks planet spin plus tactical scanning sweep
+	azimuth := planet_spin[planet_idx] + orbital_defense_angle[planet_idx] * 0.35
+	cos_az := math.cos(azimuth)
+	sin_az := math.sin(azimuth)
+
+	up := rl.Vector3{0, 1, 0}
+	fwd := rl.Vector3{cos_az, 0, sin_az}
+	right := rl.Vector3{-sin_az, 0, cos_az}
+
+	// High-angle anti-orbital elevation with gentle breathing motion
+	elev_deg: f32 = 38.0 + 3.0 * math.sin(laser_anim_time * 1.5 + f32(planet_idx))
+	elev := elev_deg * rl.DEG2RAD
+	cos_el := math.cos(elev)
+	sin_el := math.sin(elev)
+
+	barrel_dir := fwd * cos_el + up * sin_el
+	barrel_normal := -fwd * sin_el + up * cos_el
+
+	// Palette: sand military armor contrasted with gunmetal chassis & cyan energy
+	sand_base    := rl.Color{214, 182, 134, 255}
+	sand_dark    := rl.Color{160, 132, 92, 255}
+	sand_light   := rl.Color{240, 215, 175, 255}
+	gunmetal     := rl.Color{36, 40, 46, 255}
+	frame_mid    := rl.Color{65, 72, 82, 255}
+	steel_bright := rl.Color{155, 165, 180, 255}
+	cyan_glow    := SCIFI_CYAN
+	mint_core    := SCIFI_MINT
+	amber_lens   := SCIFI_AMBER
+
+	if !lit {
+		sand_base = rl.Color{105, 100, 92, 255}
+		sand_dark = rl.Color{75, 72, 68, 255}
+		sand_light = rl.Color{125, 120, 112, 255}
+		gunmetal = rl.Color{45, 47, 52, 255}
+		frame_mid = rl.Color{55, 58, 64, 255}
+		steel_bright = rl.Color{90, 95, 102, 255}
+		cyan_glow = rl.Color{0, 120, 130, 200}
+		mint_core = rl.Color{70, 130, 120, 200}
+		amber_lens = rl.Color{120, 70, 30, 200}
+	}
+
+	// 1. Kreuzlafette: Central base collar & 4 cruciform outrigger legs on surface
+	base_b := pole + up * (0.01 * s)
+	base_m := pole + up * (0.12 * s)
+	base_t := pole + up * (0.22 * s)
+	rl.DrawCylinderEx(base_b, base_m, 0.44 * s, 0.40 * s, 12, gunmetal)
+	rl.DrawCylinderEx(base_m, base_t, 0.40 * s, 0.36 * s, 12, sand_dark)
+
+	for d_idx in 0..<4 {
+		leg_ang := azimuth + f32(d_idx) * (math.PI / 2.0)
+		ldir := rl.Vector3{math.cos(leg_ang), 0, math.sin(leg_ang)}
+		l_start := pole + up * (0.08 * s) + ldir * (0.30 * s)
+		l_end   := pole + up * (0.05 * s) + ldir * (0.80 * s)
+
+		// Tapered girder outrigger
+		rl.DrawCylinderEx(l_start, l_end, 0.085 * s, 0.060 * s, 6, sand_base)
+		rl.DrawCylinderEx(l_start, l_start + ldir * (0.10 * s), 0.095 * s, 0.090 * s, 6, gunmetal)
+
+		// Cyan conduit line along the top spine of each leg
+		c_s := l_start + up * (0.065 * s)
+		c_e := l_end + up * (0.045 * s)
+		rl.DrawLine3D(c_s, c_e, cyan_glow)
+
+		// Outrigger footpad / leveling jack
+		pad_b := pole + up * (0.01 * s) + ldir * (0.80 * s)
+		pad_t := pole + up * (0.09 * s) + ldir * (0.80 * s)
+		rl.DrawCylinderEx(pad_b, pad_t, 0.15 * s, 0.13 * s, 8, gunmetal)
+		rl.DrawCylinderEx(pad_t, pad_t + up * (0.08 * s), 0.045 * s, 0.045 * s, 6, steel_bright)
+		rl.DrawCylinderEx(pad_t, pad_t + up * (0.01 * s), 0.13 * s, 0.13 * s, 8, rl.Fade(cyan_glow, 0.7))
+	}
+
+	// 2. Azimuth Turntable Ring & Traversing Platform Deck
+	tt_b := pole + up * (0.22 * s)
+	tt_t := pole + up * (0.30 * s)
+	rl.DrawCylinderEx(tt_b, tt_t, 0.35 * s, 0.35 * s, 16, gunmetal)
+	rl.DrawCylinderEx(tt_t, tt_t + up * (0.01 * s), 0.34 * s, 0.34 * s, 16, cyan_glow)
+
+	deck_b := tt_t
+	deck_t := pole + up * (0.38 * s)
+	rl.DrawCylinderEx(deck_b, deck_t, 0.33 * s, 0.31 * s, 8, sand_base)
+
+	// 3. Twin Trunnion Stanchions (Mounting Cheeks) & Pivot Axle
+	ch_h: f32 = 0.28 * s
+	ch_w: f32 = 0.09 * s
+	ch_l: f32 = 0.26 * s
+	ch_y := 0.51 * s
+	pos_left := pole + up * ch_y - right * (0.16 * s)
+	pos_right := pole + up * ch_y + right * (0.16 * s)
+	draw_oriented_box(pos_left, ch_w * 0.5, ch_h * 0.5, ch_l * 0.5, fwd, up, right, sand_base)
+	draw_oriented_box(pos_right, ch_w * 0.5, ch_h * 0.5, ch_l * 0.5, fwd, up, right, sand_base)
+
+	axle_y := 0.58 * s
+	axle_l := pole + up * axle_y - right * (0.23 * s)
+	axle_r := pole + up * axle_y + right * (0.23 * s)
+	rl.DrawCylinderEx(axle_l, axle_r, 0.055 * s, 0.055 * s, 8, steel_bright)
+	rl.DrawCylinderEx(axle_l, axle_l - right * (0.03 * s), 0.08 * s, 0.075 * s, 8, gunmetal)
+	rl.DrawCylinderEx(axle_r, axle_r + right * (0.03 * s), 0.08 * s, 0.075 * s, 8, gunmetal)
+
+	// Hydraulic elevation ram under cradle
+	ram_b := pole + up * (0.37 * s) + fwd * (0.10 * s)
+	ram_t := pole + up * (0.53 * s) + fwd * (0.03 * s) - barrel_normal * (0.07 * s)
+	rl.DrawCylinderEx(ram_b, ram_t, 0.045 * s, 0.035 * s, 6, steel_bright)
+	rl.DrawCylinderEx(ram_b, (ram_b + ram_t) * 0.5, 0.058 * s, 0.058 * s, 6, gunmetal)
+
+	// 4. Sloped Gun Shield (Schutzschild) & Targeting Optronics
+	sh_center := pole + up * (0.58 * s) + fwd * (0.19 * s)
+	pl_w: f32 = 0.14 * s
+	pl_h: f32 = 0.44 * s
+	pl_th: f32 = 0.03 * s
+	draw_oriented_box(sh_center - right * (0.14 * s), pl_w * 0.5, pl_h * 0.5, pl_th * 0.5, fwd, up, right, sand_base)
+	draw_oriented_box(sh_center + right * (0.14 * s), pl_w * 0.5, pl_h * 0.5, pl_th * 0.5, fwd, up, right, sand_base)
+	draw_oriented_box(sh_center + up * (0.19 * s), 0.22 * s, 0.06 * s * 0.5, pl_th * 0.5, fwd, up, right, sand_light)
+
+	// Angled side cheek wings (bent backwards along -fwd)
+	h_half := up * (0.21 * s)
+	w_l_root := sh_center - right * (0.21 * s)
+	w_l_tip  := w_l_root - right * (0.16 * s) - fwd * (0.14 * s)
+	draw_quad_3d(w_l_root - h_half, w_l_tip - h_half, w_l_tip + h_half, w_l_root + h_half, sand_dark)
+
+	w_r_root := sh_center + right * (0.21 * s)
+	w_r_tip  := w_r_root + right * (0.16 * s) - fwd * (0.14 * s)
+	draw_quad_3d(w_r_root - h_half, w_r_tip - h_half, w_r_tip + h_half, w_r_root + h_half, sand_dark)
+
+	// Optronic sensor pod on left shield
+	pod_pos := sh_center - right * (0.15 * s) + up * (0.10 * s) + fwd * (0.04 * s)
+	draw_oriented_box(pod_pos, 0.055 * s, 0.065 * s, 0.075 * s, fwd, up, right, gunmetal)
+	rl.DrawSphereEx(pod_pos + fwd * (0.08 * s) + up * (0.022 * s), 0.024 * s, 6, 6, cyan_glow)
+	rl.DrawSphereEx(pod_pos + fwd * (0.08 * s) - up * (0.022 * s), 0.028 * s, 6, 6, amber_lens)
+
+	// Communications mast on right shield
+	mast_b := sh_center + right * (0.19 * s) + up * (0.22 * s)
+	mast_t := mast_b + up * (0.30 * s) - fwd * (0.04 * s)
+	rl.DrawCylinderEx(mast_b, mast_t, 0.016 * s, 0.007 * s, 4, steel_bright)
+	beacon_pulse := 0.75 + 0.25 * math.sin(laser_anim_time * 8.0 + f32(planet_idx))
+	rl.DrawSphere(mast_t, 0.022 * s, rl.Fade(cyan_glow, beacon_pulse))
+
+	// 5. Gun Cradle & Breech Mechanism
+	pivot := pole + up * (0.58 * s) + fwd * (0.03 * s)
+	breech_c := pivot - barrel_dir * (0.16 * s)
+	draw_oriented_box(breech_c, 0.10 * s, 0.09 * s, 0.15 * s, barrel_dir, barrel_normal, right, gunmetal)
+	draw_oriented_box(breech_c + barrel_normal * (0.08 * s), 0.09 * s, 0.025 * s, 0.14 * s, barrel_dir, barrel_normal, right, sand_base)
+
+	// Heatsink slats with cyan thermal channels
+	draw_oriented_box(breech_c + right * (0.105 * s), 0.008 * s, 0.045 * s, 0.11 * s, barrel_dir, barrel_normal, right, cyan_glow)
+	draw_oriented_box(breech_c - right * (0.105 * s), 0.008 * s, 0.045 * s, 0.11 * s, barrel_dir, barrel_normal, right, cyan_glow)
+
+	// Upper recoil cylinder
+	rc_s := pivot - barrel_dir * (0.18 * s) + barrel_normal * (0.11 * s)
+	rc_e := pivot + barrel_dir * (0.35 * s) + barrel_normal * (0.11 * s)
+	rl.DrawCylinderEx(rc_s, rc_e, 0.045 * s, 0.045 * s, 8, steel_bright)
+	rl.DrawCylinderEx(rc_s, rc_s + barrel_dir * (0.06 * s), 0.058 * s, 0.058 * s, 8, gunmetal)
+
+	// Lower recuperator cylinder
+	rp_s := pivot - barrel_dir * (0.14 * s) - barrel_normal * (0.09 * s)
+	rp_e := pivot + barrel_dir * (0.28 * s) - barrel_normal * (0.09 * s)
+	rl.DrawCylinderEx(rp_s, rp_e, 0.038 * s, 0.038 * s, 8, steel_bright)
+
+	// 6. Stepped Barrel with Magnetic Rail Accelerator Coils & Double-Baffle Muzzle Brake
+	// Stage 1: Base Thermal Sleeve
+	s1_s := pivot
+	s1_e := pivot + barrel_dir * (0.45 * s)
+	rl.DrawCylinderEx(s1_s, s1_e, 0.088 * s, 0.076 * s, 10, sand_base)
+	rl.DrawCylinderEx(s1_s, s1_s + barrel_dir * (0.09 * s), 0.10 * s, 0.10 * s, 10, gunmetal)
+
+	// Stage 2: Accelerator Section
+	s2_s := s1_e
+	s2_e := pivot + barrel_dir * (1.25 * s)
+	rl.DrawCylinderEx(s2_s, s2_e, 0.070 * s, 0.058 * s, 10, gunmetal)
+
+	for c_i in 0..<4 {
+		c_t: f32 = 0.12 + f32(c_i) * 0.25
+		c_pos := s2_s + barrel_dir * ((0.75 * c_t) * s)
+		c_len := c_pos + barrel_dir * (0.038 * s)
+		rl.DrawCylinderEx(c_pos, c_len, 0.082 * s, 0.082 * s, 10, cyan_glow)
+		rl.DrawCylinderEx(c_pos, c_pos + barrel_dir * (0.008 * s), 0.086 * s, 0.086 * s, 10, mint_core)
+		rl.DrawCylinderEx(c_len - barrel_dir * (0.008 * s), c_len, 0.086 * s, 0.086 * s, 10, mint_core)
+	}
+
+	// Stage 3: Forward Barrel
+	s3_s := s2_e
+	s3_e := pivot + barrel_dir * (1.75 * s)
+	rl.DrawCylinderEx(s3_s, s3_e, 0.054 * s, 0.044 * s, 10, sand_base)
+
+	// Stage 4: Double-Baffle Muzzle Brake
+	mb_s := s3_e
+	mb_e := s3_e + barrel_dir * (0.22 * s)
+	rl.DrawCylinderEx(mb_s, mb_e, 0.074 * s, 0.074 * s, 8, gunmetal)
+	baf1 := mb_s + barrel_dir * (0.06 * s)
+	rl.DrawCylinderEx(baf1, baf1 + barrel_dir * (0.03 * s), 0.092 * s, 0.092 * s, 8, frame_mid)
+	baf2 := mb_s + barrel_dir * (0.13 * s)
+	rl.DrawCylinderEx(baf2, baf2 + barrel_dir * (0.03 * s), 0.092 * s, 0.092 * s, 8, frame_mid)
+
+	rl.DrawCylinderEx(mb_e - barrel_dir * (0.015 * s), mb_e, 0.048 * s, 0.048 * s, 8, mint_core)
+	rl.DrawSphereEx(mb_e, 0.032 * s, 6, 6, cyan_glow)
+
+	// 7. Tech upgrades for higher defense levels
+	if level >= 2 {
+		cap_l := pole + up * (0.40 * s) - right * (0.24 * s) - fwd * (0.08 * s)
+		cap_r := pole + up * (0.40 * s) + right * (0.24 * s) - fwd * (0.08 * s)
+		rl.DrawCylinderEx(cap_l, cap_l + up * (0.16 * s), 0.060 * s, 0.060 * s, 8, sand_dark)
+		rl.DrawCylinderEx(cap_r, cap_r + up * (0.16 * s), 0.060 * s, 0.060 * s, 8, sand_dark)
+		rl.DrawLine3D(cap_l + up * (0.02 * s), cap_l + up * (0.14 * s), cyan_glow)
+		rl.DrawLine3D(cap_r + up * (0.02 * s), cap_r + up * (0.14 * s), cyan_glow)
+
+		rail_s := s1_e + barrel_normal * (0.085 * s)
+		rail_e := s2_e + barrel_normal * (0.075 * s)
+		rl.DrawLine3D(rail_s, rail_e, cyan_glow)
+	}
+
+	if level >= 3 {
+		radar_b := pole + up * (0.40 * s) + right * (0.24 * s) - fwd * (0.14 * s)
+		radar_t := radar_b + up * (0.24 * s)
+		rl.DrawCylinderEx(radar_b, radar_t, 0.02 * s, 0.015 * s, 4, steel_bright)
+
+		radar_sweep := laser_anim_time * 2.2 + f32(planet_idx)
+		r_dir := rl.Vector3{math.cos(radar_sweep), 0.35, math.sin(radar_sweep)}
+		rl.DrawCylinderEx(radar_t, radar_t + r_dir * (0.025 * s), 0.12 * s, 0.08 * s, 8, sand_light)
+		rl.DrawLine3D(radar_t, radar_t + r_dir * (0.13 * s), cyan_glow)
+		rl.DrawSphere(radar_t + r_dir * (0.035 * s), 0.022 * s, cyan_glow)
+	}
+
+	if level >= 4 {
+		p_pulse := 0.65 + 0.35 * math.sin(laser_anim_time * 6.0 + f32(planet_idx))
+		rl.DrawSphereEx(breech_c, 0.08 * s * p_pulse, 6, 8, rl.Fade(cyan_glow, 0.85))
+	}
+}
+
+// Visual construction site for an orbital defense battery being assembled by miners
+draw_cyberpunk_flak88_construction_site :: proc(planet_idx: int) {
+	if planet_idx < 0 || planet_idx >= PLANET_COUNT { return }
+	planet := planets[planet_idx]
+	pole := rl.Vector3{planet.position.x, planet.position.y + planet.radius, planet.position.z}
+	up := rl.Vector3{0, 1, 0}
+	s: f32 = 0.84 + clamp(planet.radius * 0.07, 0.11, 0.32)
+
+	gunmetal := rl.Color{40, 44, 52, 255}
+	cyan_glow := SCIFI_CYAN
+	mint_core := SCIFI_MINT
+
+	// Base outriggers & pads
+	for d_idx in 0..<4 {
+		ang := f32(d_idx) * (math.PI / 2.0)
+		ldir := rl.Vector3{math.cos(ang), 0, math.sin(ang)}
+		l_start := pole + up * (0.05 * s)
+		l_end := pole + up * (0.04 * s) + ldir * (0.75 * s)
+		rl.DrawLine3D(l_start, l_end, cyan_glow)
+
+		pad_b := pole + up * (0.01 * s) + ldir * (0.75 * s)
+		pad_t := pole + up * (0.07 * s) + ldir * (0.75 * s)
+		rl.DrawCylinderEx(pad_b, pad_t, 0.13 * s, 0.11 * s, 8, gunmetal)
+	}
+
+	rl.DrawCylinderEx(pole + up * (0.02 * s), pole + up * (0.03 * s), 0.38 * s, 0.38 * s, 16, cyan_glow)
+	rl.DrawCylinderEx(pole + up * (0.18 * s), pole + up * (0.19 * s), 0.34 * s, 0.34 * s, 16, cyan_glow)
+
+	pulse := 0.70 + 0.30 * math.sin(laser_anim_time * 3.5)
+	rl.DrawSphereWires(pole + up * (0.45 * s), 0.85 * s, 6, 10, rl.Fade(cyan_glow, pulse * 0.45))
+	rl.DrawCylinderEx(pole + up * (0.035 * s), pole + up * (0.045 * s), 0.95 * s, 0.95 * s, 24, rl.Fade(cyan_glow, 0.55))
+
+	prog: f32 = 0.0
+	if ORBITAL_DEFENSE_BUILD_TIME > 0 {
+		prog = clamp(orbital_defense_progress[planet_idx] / ORBITAL_DEFENSE_BUILD_TIME, 0.05, 0.95)
+	}
+	ring_y := 0.08 + prog * 0.70
+	rl.DrawCylinderEx(pole + up * (ring_y * s), pole + up * ((ring_y + 0.015) * s), 0.65 * s * (1.05 - prog * 0.3), 0.65 * s * (1.05 - prog * 0.3), 20, mint_core)
+
+	spark_ang := laser_anim_time * 6.5 + f32(planet_idx) * 2.0
+	spark_pt := pole + up * (ring_y * s) + rl.Vector3{math.cos(spark_ang) * 0.45 * s, 0, math.sin(spark_ang) * 0.45 * s}
+	spark_target := pole + up * (0.15 * s)
+	rl.DrawLine3D(spark_pt, spark_target, rl.Color{255, 255, 200, 255})
+	rl.DrawSphere(spark_pt, 0.045 * s, rl.Color{255, 255, 220, 255})
+}
+
 draw_world :: proc() {
 	viewport_w := rl.GetScreenWidth() - SCREEN_PANEL_WIDTH
 	// Stars and combat nebulae project to screen space before the 3D pass,
@@ -2360,11 +2682,11 @@ draw_world :: proc() {
 				rl.DrawLine3D(p_in, p_out, SCIFI_CYAN)
 			}
 		}
-		// Orbital Defense: blue cube orbiting the planet
+		// Orbital Defense: cyberpunk sand-colored Flak 88 battery on the planet surface at the north pole
 		if orbital_defense_level[p] > 0 {
-			def_pos := orbital_defense_pos(p)
-			rl.DrawCube(def_pos, 0.9, 0.9, 0.9, rl.Color{0, 140, 255, 255})
-			rl.DrawCubeWires(def_pos, 0.92, 0.92, 0.92, rl.Color{120, 220, 255, 255})
+			draw_cyberpunk_flak88(p)
+		} else if orbital_defense_building[p] {
+			draw_cyberpunk_flak88_construction_site(p)
 		}
 	}
 	// The enemy HQ fortress at Neptune's old orbit: layered battlestation —
