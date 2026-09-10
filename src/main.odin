@@ -195,12 +195,12 @@ CARD_LINE_2 :: OUTPOST_CARD_Y + 33
 REFINERY_BTN_Y :: 122
 ORBITAL_DEFENSE_BTN_Y :: 166
 OUTPOST_LIBERATED_ROSTER_Y :: 235
-BASE_PROGRESS_Y :: 134
-PROD_TITLE_Y :: 166
-PROD_FIRST_Y :: 189
+BASE_PROGRESS_Y :: 132
+PROD_TITLE_Y :: 182
+PROD_FIRST_Y :: 205
 PROD_BAR_DY :: 16
-ORDERS_BASE_Y :: 260
-BASE_COLLAPSE_Y :: PROD_TITLE_Y - SECTION_TOP
+ORDERS_BASE_Y :: 276
+BASE_COLLAPSE_Y :: BASE_BTN_H + 8
 UPGRADE_DY :: 48
 UPGRADE_H :: 36
 QUEUE_DY :: 108
@@ -756,6 +756,12 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 			start_base_construction()
 			return
 		}
+		if rl.CheckCollisionPointRec(mouse, orbital_defense_button_rect(panel_x, EARTH)) {
+			if can_build_orbital_defense(EARTH) {
+				start_orbital_defense_construction(EARTH)
+			}
+			return
+		}
 		orders_y := f32(production_orders_y())
 		if rl.CheckCollisionPointRec(mouse, {panel_x + PANEL_PAD_X, orders_y, BUILD_BTN_W, BUILD_BTN_H}) {
 			queue_unit(.MINING)
@@ -778,12 +784,6 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 		if rl.CheckCollisionPointRec(mouse, drone_speed_button_rect(panel_x)) {
 			if drone_speed_level < DRONE_SPEED_UPGRADE_MAX {
 				purchase_drone_speed_upgrade()
-			}
-			return
-		}
-		if rl.CheckCollisionPointRec(mouse, orbital_defense_button_rect(panel_x, EARTH)) {
-			if can_build_orbital_defense(EARTH) {
-				start_orbital_defense_construction(EARTH)
 			}
 			return
 		}
@@ -1154,6 +1154,25 @@ destroy_orbital_defense :: proc(planet: int) {
 	}
 }
 
+earth_orbital_defense_y :: proc() -> f32 {
+	if !base_button_visible() {
+		return SECTION_TOP
+	}
+	y: f32 = SECTION_TOP + BASE_BTN_H + 8
+	if base_build_planet == EARTH {
+		y += 4 + BAR_H
+	}
+	return y
+}
+
+earth_orbital_defense_bottom_y :: proc() -> f32 {
+	y := earth_orbital_defense_y() + BASE_BTN_H
+	if orbital_defense_building[EARTH] {
+		y += 4 + BAR_H
+	}
+	return y
+}
+
 outpost_orbital_defense_y :: proc(planet: int) -> f32 {
 	y: f32 = ORBITAL_DEFENSE_BTN_Y
 	if planet >= 0 && planet < PLANET_COUNT && refinery_building[planet] {
@@ -1176,11 +1195,7 @@ outpost_liberated_roster_y :: proc(planet: int) -> int {
 
 orbital_defense_button_rect :: proc(panel_x: f32, planet: int) -> rl.Rectangle {
 	if planet == EARTH {
-		dy := UPGRADE_DY * 2
-		if base_counts[EARTH] >= MAX_BASES {
-			dy += UPGRADE_DY
-		}
-		return rl.Rectangle{panel_x + PANEL_PAD_X, f32(production_orders_y() + dy), PANEL_CONTENT_W, UPGRADE_H}
+		return rl.Rectangle{panel_x + PANEL_PAD_X, earth_orbital_defense_y(), PANEL_CONTENT_W, BASE_BTN_H}
 	} else {
 		return rl.Rectangle{panel_x + PANEL_PAD_X, outpost_orbital_defense_y(planet), PANEL_CONTENT_W, BASE_BTN_H}
 	}
@@ -1344,7 +1359,7 @@ controls_button_rect :: proc() -> rl.Rectangle {
 }
 
 earth_queue_y :: proc() -> int {
-	dy := QUEUE_DY + UPGRADE_DY
+	dy := QUEUE_DY
 	if base_counts[EARTH] >= MAX_BASES {
 		dy += UPGRADE_DY
 	}
@@ -2734,6 +2749,8 @@ draw_earth_inspector :: proc(x: f32) {
 		}
 	}
 
+	draw_orbital_defense_inspector_section(x, orbital_defense_button_rect(x, EARTH), EARTH)
+
 	prod_title_y := production_title_y()
 	prod_first_y := production_first_y()
 	draw_section_header(x + PANEL_PAD_X, f32(prod_title_y), PANEL_CONTENT_W, "PRODUCTION MATRIX", SCIFI_CYAN)
@@ -2770,8 +2787,6 @@ draw_earth_inspector :: proc(x: f32) {
 		can_upgrade_speed := minerals >= DRONE_SPEED_UPGRADE_COST
 		draw_button(drone_speed_button_rect(x), rl.TextFormat("[U] DRONE BUILD SPEED  LVL %d/%d (%d)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX, DRONE_SPEED_UPGRADE_COST), SCIFI_PANEL_SOLID, can_upgrade_speed)
 	}
-
-	draw_orbital_defense_inspector_section(x, orbital_defense_button_rect(x, EARTH), EARTH)
 
 	queue_y := earth_queue_y()
 	queue_capacity := base_counts[EARTH] * MAX_BASES
@@ -2939,19 +2954,24 @@ draw_ghost_rosters :: proc(x: f32) {
 }
 
 // When all bases are built on Earth, the Command Base button disappears and
-// the production sections collapse up to SECTION_TOP to avoid an empty gap.
+// orbital defense collapses up to SECTION_TOP; the production sections flow
+// dynamically below orbital defense and any active construction progress bars.
 production_title_y :: proc() -> int {
-	if selected_planet == EARTH && !base_button_visible() { return SECTION_TOP }
+	if selected_planet == EARTH {
+		return int(earth_orbital_defense_bottom_y() + 10)
+	}
 	return PROD_TITLE_Y
 }
 
 production_first_y :: proc() -> int {
-	return production_title_y() + (PROD_FIRST_Y - PROD_TITLE_Y)
+	return production_title_y() + 23
 }
 
 production_orders_y :: proc() -> int {
 	base_y := ORDERS_BASE_Y
-	if selected_planet == EARTH && !base_button_visible() { base_y -= BASE_COLLAPSE_Y }
+	if selected_planet == EARTH {
+		base_y = production_title_y() + 94
+	}
 	return base_y + max(base_counts[selected_planet] - 1, 0) * PROD_PITCH
 }
 
@@ -2995,9 +3015,9 @@ unit_tile_y :: proc(kind: Unit_Type) -> int {
 	// orbital defense sections (flowing with active progress bars); on Earth they flow below the build queue.
 	y := ROSTER_BASE_Y
 	if selected_planet == EARTH {
-		extra_dy := UPGRADE_DY
+		extra_dy := 0
 		if base_counts[EARTH] >= MAX_BASES {
-			extra_dy += UPGRADE_DY
+			extra_dy = UPGRADE_DY
 		}
 		y = production_orders_y() + ROSTER_BELOW_QUEUE + extra_dy + (base_counts[selected_planet] - 1) * GRID_PITCH
 	} else if selected_planet != ENEMY_HOME && planet_liberated(selected_planet) {
