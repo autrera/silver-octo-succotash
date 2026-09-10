@@ -8,6 +8,7 @@ import "core:fmt"
 import "core:strings"
 import "core:strconv"
 import "core:path/filepath"
+import "core:time"
 import rl "vendor:raylib"
 
 SCREEN_PANEL_WIDTH :: 330
@@ -322,6 +323,10 @@ camera_target := rl.Vector3{10, 0, 2}
 CAMERA_START_Y :: 200.0 - 185.0 * 0.60
 inspector_drag_start: rl.Vector2
 inspector_drag_active: bool
+DOUBLE_CLICK_TIME :: 0.35 // seconds: maximum time interval between clicks to register a double-click
+last_unit_click_time: time.Tick
+last_unit_clicked_index := -1
+last_unit_clicked_planet := -1
 
 // Enemy occupation: per-sector base HP. Every planet except Earth starts
 // with an enemy command base; a planet is liberated once its base is
@@ -542,6 +547,9 @@ reset_world :: proc() {
 	in_start_menu = false
 	hud_save_notification_timer = 0
 	save_feedback_timer = 0
+	last_unit_clicked_index = -1
+	last_unit_clicked_planet = -1
+	last_unit_click_time = {}
 	rl.SetRandomSeed(7)
 }
 
@@ -675,6 +683,7 @@ update_input :: proc() {
 	panel_x := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
 	if rl.IsMouseButtonPressed(.LEFT) {
 		if rl.CheckCollisionPointRec(mouse, controls_button_rect()) {
+			last_unit_clicked_index = -1
 			open_controls_overlay()
 			return
 		}
@@ -684,6 +693,7 @@ update_input :: proc() {
 			inspector_drag_start = mouse
 			inspector_drag_active = true
 		} else {
+			last_unit_clicked_index = -1
 			if planet := pick_planet(mouse); planet >= 0 {
 				selected_planet = planet
 			} else if hq_picked(mouse) {
@@ -732,6 +742,7 @@ select_earth :: proc() {
 		center_camera_on_earth()
 	} else {
 		selected_planet = EARTH
+		last_unit_clicked_index = -1
 	}
 }
 
@@ -753,10 +764,12 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 	// Base construction and unit production exist only on Earth.
 	if selected_planet == EARTH {
 		if base_button_visible() && rl.CheckCollisionPointRec(mouse, {panel_x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, BASE_BTN_H}) {
+			last_unit_clicked_index = -1
 			start_base_construction()
 			return
 		}
 		if rl.CheckCollisionPointRec(mouse, orbital_defense_button_rect(panel_x, EARTH)) {
+			last_unit_clicked_index = -1
 			if can_build_orbital_defense(EARTH) {
 				start_orbital_defense_construction(EARTH)
 			}
@@ -764,24 +777,29 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 		}
 		orders_y := f32(production_orders_y())
 		if rl.CheckCollisionPointRec(mouse, {panel_x + PANEL_PAD_X, orders_y, BUILD_BTN_W, BUILD_BTN_H}) {
+			last_unit_clicked_index = -1
 			queue_unit(.MINING)
 			return
 		}
 		if rl.CheckCollisionPointRec(mouse, {panel_x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, orders_y, BUILD_BTN_W, BUILD_BTN_H}) {
+			last_unit_clicked_index = -1
 			queue_unit(.COMBAT)
 			return
 		}
 		if base_counts[EARTH] >= MAX_BASES {
 			if rl.CheckCollisionPointRec(mouse, queue_5_miner_button_rect(panel_x)) {
+				last_unit_clicked_index = -1
 				queue_5_miners()
 				return
 			}
 			if rl.CheckCollisionPointRec(mouse, queue_5_combat_button_rect(panel_x)) {
+				last_unit_clicked_index = -1
 				queue_5_combat()
 				return
 			}
 		}
 		if rl.CheckCollisionPointRec(mouse, drone_speed_button_rect(panel_x)) {
+			last_unit_clicked_index = -1
 			if drone_speed_level < DRONE_SPEED_UPGRADE_MAX {
 				purchase_drone_speed_upgrade()
 			}
@@ -790,16 +808,19 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 		// Clicking an occupied build-queue slot cancels that unit (refund included).
 		for slot := 0; slot < queued_count(EARTH); slot += 1 {
 			if rl.CheckCollisionPointRec(mouse, queue_slot_rect(panel_x, slot)) {
+				last_unit_clicked_index = -1
 				cancel_queued_at(EARTH, slot)
 				return
 			}
 		}
 	} else if selected_planet >= 0 && selected_planet < PLANET_COUNT && selected_planet != ENEMY_HOME {
 		if can_build_refinery(selected_planet) && rl.CheckCollisionPointRec(mouse, refinery_button_rect(panel_x)) {
+			last_unit_clicked_index = -1
 			start_refinery_construction(selected_planet)
 			return
 		}
 		if rl.CheckCollisionPointRec(mouse, orbital_defense_button_rect(panel_x, selected_planet)) {
+			last_unit_clicked_index = -1
 			if can_build_orbital_defense(selected_planet) {
 				start_orbital_defense_construction(selected_planet)
 			}
@@ -807,6 +828,7 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 		}
 	}
 	if click_unit_tiles(mouse, panel_x, .MINING) || click_unit_tiles(mouse, panel_x, .COMBAT) { return }
+	last_unit_clicked_index = -1
 	if !ctrl_down() { clear_selection() }
 }
 
@@ -823,6 +845,7 @@ handle_inspector_release :: proc(mouse: rl.Vector2, panel_x: f32) {
 // Every unit tile intersecting the drag rectangle is selected on release.
 // Plain drag replaces the selection, Shift adds to it, Ctrl toggles each tile.
 box_select :: proc(mouse: rl.Vector2, panel_x: f32) {
+	last_unit_clicked_index = -1
 	// Ghost tiles are a frozen snapshot, not live units: nothing to select.
 	if ghost_view() { return }
 	rect := rect_between(inspector_drag_start, mouse)
@@ -853,14 +876,46 @@ shift_down :: proc() -> bool {
 	return rl.IsKeyDown(.LEFT_SHIFT) || rl.IsKeyDown(.RIGHT_SHIFT)
 }
 
+// Clicking a unit tile selects that unit; holding Ctrl toggles it.
+// Double-clicking a unit tile selects all units of that type on the planet;
+// holding Ctrl keeps other selected units and adds all units of that type.
 click_unit_tiles :: proc(mouse: rl.Vector2, panel_x: f32, kind: Unit_Type) -> bool {
 	if ghost_view() { return false }
 	ordinal := 0
 	y := unit_tile_y(kind)
+	now := time.tick_now()
 	for i := 0; i < unit_count; i += 1 {
 		if !unit_in_roster(i, kind) { continue }
 		if rl.CheckCollisionPointRec(mouse, unit_tile_rect(panel_x, y, ordinal)) {
-			if !ctrl_down() { clear_selection(); selected_units[i] = true } else { selected_units[i] = !selected_units[i] }
+			is_double_click := false
+			if last_unit_clicked_index == i && last_unit_clicked_planet == selected_planet {
+				elapsed := time.duration_seconds(time.tick_diff(last_unit_click_time, now))
+				if elapsed >= 0 && elapsed <= DOUBLE_CLICK_TIME {
+					is_double_click = true
+				}
+			}
+
+			if is_double_click {
+				last_unit_clicked_index = -1
+				if !ctrl_down() {
+					clear_selection()
+				}
+				for j := 0; j < unit_count; j += 1 {
+					if unit_in_roster(j, kind) {
+						selected_units[j] = true
+					}
+				}
+			} else {
+				last_unit_clicked_index = i
+				last_unit_clicked_planet = selected_planet
+				last_unit_click_time = now
+				if !ctrl_down() {
+					clear_selection()
+					selected_units[i] = true
+				} else {
+					selected_units[i] = !selected_units[i]
+				}
+			}
 			return true
 		}
 		ordinal += 1
@@ -2011,6 +2066,11 @@ sector_in_combat :: proc(s: int) -> bool {
 // Shift-left removal keeps unit indices stable, so is_effective_miner ranks and
 // selection flags stay consistent for the survivors.
 remove_unit_at :: proc(index: int) {
+	if last_unit_clicked_index == index {
+		last_unit_clicked_index = -1
+	} else if last_unit_clicked_index > index {
+		last_unit_clicked_index -= 1
+	}
 	for i := index; i < unit_count - 1; i += 1 {
 		units[i] = units[i + 1]
 		selected_units[i] = selected_units[i + 1]

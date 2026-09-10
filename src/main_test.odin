@@ -3,6 +3,7 @@ package main
 import "core:math"
 import "core:os"
 import "core:testing"
+import "core:time"
 import rl "vendor:raylib"
 
 // reset_world lives in main.odin now: the victory-restart path shares it
@@ -4115,5 +4116,110 @@ orbital_defense_launches_laser_blast_at_close_range :: proc(t: ^testing.T) {
 	testing.expect(t, !orbital_defense_blasts[0].active, "reset_world clears all active blasts")
 }
 
+@(test)
+double_click_unit_in_inspector_selects_all_units_of_same_type_in_planet :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
 
+	// Add 4 miners and 3 fighters to Earth, and 2 miners to Mars
+	for _ in 0..<4 { add_miner(EARTH) }
+	for _ in 0..<3 { add_guarding_fighter(EARTH, false) }
+	for _ in 0..<2 { add_miner(MARS) }
 
+	panel_x: f32 = 0
+	miner_tile := unit_tile_rect(panel_x, unit_tile_y(.MINING), 0)
+	click_pos := rl.Vector2{miner_tile.x + 2, miner_tile.y + 2}
+
+	// 1. First click selects only the clicked unit
+	handle_inspector_click(click_pos, panel_x)
+	testing.expect(t, selection_count() == 1, "single click selects 1 unit")
+	testing.expect(t, selected_units[0], "first miner is selected")
+
+	// 2. Second click on the same unit within DOUBLE_CLICK_TIME selects all miners on Earth
+	handle_inspector_click(click_pos, panel_x)
+	testing.expect(t, selection_count() == 4, "double click selects all 4 miners on Earth")
+	for i in 0..<4 {
+		testing.expect(t, selected_units[i], "Earth miner is selected")
+	}
+	// Fighters on Earth must NOT be selected
+	for i in 4..<7 {
+		testing.expect(t, !selected_units[i], "Earth combat fighter is not selected")
+	}
+	// Miners on Mars must NOT be selected
+	for i in 7..<9 {
+		testing.expect(t, !selected_units[i], "Mars miner is not selected")
+	}
+
+	// 3. Third click on the same unit acts as a new single click (not another double click)
+	handle_inspector_click(click_pos, panel_x)
+	testing.expect(t, selection_count() == 1, "triple click starts a fresh single-click selection")
+	testing.expect(t, selected_units[0], "only miner 0 selected on 3rd click")
+
+	// 4. Double clicking a combat fighter selects all combat fighters on Earth
+	fighter_tile := unit_tile_rect(panel_x, unit_tile_y(.COMBAT), 0)
+	fighter_click_pos := rl.Vector2{fighter_tile.x + 2, fighter_tile.y + 2}
+
+	handle_inspector_click(fighter_click_pos, panel_x)
+	testing.expect(t, selection_count() == 1, "first click on fighter selects 1 fighter")
+	testing.expect(t, selected_units[4], "fighter at index 4 is selected")
+
+	handle_inspector_click(fighter_click_pos, panel_x)
+	testing.expect(t, selection_count() == 3, "double click selects all 3 combat fighters on Earth")
+	for i in 4..<7 {
+		testing.expect(t, selected_units[i], "Earth combat fighter is selected")
+	}
+	for i in 0..<4 {
+		testing.expect(t, !selected_units[i], "Earth miners are not selected")
+	}
+
+	// 5. Outpost planet: double clicking on Mars selects all units of that type on Mars
+	selected_planet = MARS
+	mars_tile := unit_tile_rect(panel_x, unit_tile_y(.MINING), 0)
+	mars_click := rl.Vector2{mars_tile.x + 2, mars_tile.y + 2}
+
+	handle_inspector_click(mars_click, panel_x)
+	testing.expect(t, selection_count() == 1, "first click on Mars miner selects 1 miner")
+	handle_inspector_click(mars_click, panel_x)
+	testing.expect(t, selection_count() == 2, "double click selects all 2 miners on Mars")
+	testing.expect(t, selected_units[7] && selected_units[8], "both Mars miners selected")
+	for i in 0..<7 {
+		testing.expect(t, !selected_units[i], "Earth units are not selected")
+	}
+}
+
+@(test)
+double_click_unit_inspector_timing_and_cancellation :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+
+	for _ in 0..<3 { add_miner(EARTH) }
+
+	panel_x: f32 = 0
+	tile0 := unit_tile_rect(panel_x, unit_tile_y(.MINING), 0)
+	pos0 := rl.Vector2{tile0.x + 2, tile0.y + 2}
+
+	tile1 := unit_tile_rect(panel_x, unit_tile_y(.MINING), 1)
+	pos1 := rl.Vector2{tile1.x + 2, tile1.y + 2}
+
+	// Clicking unit 0 then unit 1 does NOT trigger double click (different units)
+	handle_inspector_click(pos0, panel_x)
+	testing.expect(t, selection_count() == 1 && selected_units[0], "unit 0 selected")
+	handle_inspector_click(pos1, panel_x)
+	testing.expect(t, selection_count() == 1 && selected_units[1], "unit 1 selected on separate click, not double click")
+
+	// Clicking unit 1 after DOUBLE_CLICK_TIME has passed does NOT trigger double click
+	last_unit_click_time = time.tick_add(time.tick_now(), -1 * time.Second)
+	handle_inspector_click(pos1, panel_x)
+	testing.expect(t, selection_count() == 1 && selected_units[1], "expired interval remains single click")
+
+	// Stationed player fighters at ENEMY_HOME: double click selects all stationed fighters
+	selected_planet = ENEMY_HOME
+	for _ in 0..<3 { add_guarding_fighter(ENEMY_HOME, false) }
+	hq_tile := unit_tile_rect(panel_x, unit_tile_y(.COMBAT), 0)
+	hq_click := rl.Vector2{hq_tile.x + 2, hq_tile.y + 2}
+
+	handle_inspector_click(hq_click, panel_x)
+	testing.expect(t, selection_count() == 1, "single click on HQ fighter selects 1")
+	handle_inspector_click(hq_click, panel_x)
+	testing.expect(t, selection_count() == 3, "double click on HQ fighter selects all 3 stationed fighters")
+}
