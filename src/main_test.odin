@@ -4221,8 +4221,8 @@ orbital_defense_rotates_smoothly_to_target_and_continues_spin_after_firing :: pr
 	az_idle, _ := orbital_defense_aim(EARTH)
 	testing.expect(t, abs(az_idle - 0.4) < 0.01, "idle scan advances steadily")
 
-	// 2. Incoming enemy detected at +Z axis (azimuth ~ 1.57 rad)
-	enemy_pos := rl.Vector3{0, 5, 20}
+	// 2. Incoming enemy detected at +Z axis within targeting range (azimuth ~ 1.57 rad)
+	enemy_pos := rl.Vector3{0, 4, 7}
 	units[unit_count] = Unit{
 		kind = .COMBAT,
 		state = .TRANSIT,
@@ -4514,4 +4514,155 @@ orbital_defense_shortcut_uses_dedicated_o_key_and_triggers_correctly :: proc(t: 
 	testing.expect(t, minerals == 0, "1000 minerals spent")
 }
 
+@(test)
+orbital_defense_wave_kills_reset_after_10_second_inactivity_timer :: proc(t: ^testing.T) {
+	reset_world()
+	defer reset_world()
+
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_hp[EARTH] = 100
+
+	// 1. Minor wave: 5 enemy transit fighters arrive at Earth
+	target_pos := sector_pos(EARTH)
+	for i in 0..<5 {
+		units[unit_count] = Unit{
+			kind = .COMBAT,
+			state = .TRANSIT,
+			position = target_pos + rl.Vector3{0, 4.0, 3.0 + f32(i) * 0.2},
+			home_planet = VENUS,
+			affiliation = VENUS,
+			target_planet = EARTH,
+			enemy = true,
+		}
+		unit_count += 1
+	}
+
+	// 2. Distant HQ wave: 15 enemy transit fighters far away at Enemy HQ (distance ~44)
+	for i in 0..<15 {
+		units[unit_count] = Unit{
+			kind = .COMBAT,
+			state = .TRANSIT,
+			position = ENEMY_HQ_POSITION + rl.Vector3{f32(i) * 0.1, 0, 0},
+			home_planet = NEPTUNE,
+			affiliation = EARTH,
+			target_planet = EARTH,
+			enemy = true,
+		}
+		unit_count += 1
+	}
+
+	// Initial check: 20 fighters in transit to Earth
+	testing.expect(t, transit_fighters_at(EARTH, true) == 20, "20 total enemy fighters in transit")
+
+	// Update defense: destroys the 5 fighters in the minor wave
+	for _ in 0..<10 {
+		update_orbital_defenses(0.05)
+	}
+
+	testing.expect(t, orbital_defense_wave_kills[EARTH] == 5, "orbital defense destroyed 5 fighters from minor wave")
+	testing.expect(t, transit_fighters_at(EARTH, true) == 15, "15 fighters remain in transit from distant HQ")
+	testing.expect(t, orbital_defense_reset_timer[EARTH] > 9.0, "reset timer was primed to 10 seconds")
+
+	// If only 4 seconds pass (attacks closer together), the timer has not expired
+	for _ in 0..<40 {
+		update_orbital_defenses(0.1)
+	}
+	testing.expect(t, orbital_defense_wave_kills[EARTH] == 5, "kill count does not reset when less than 10 seconds pass")
+	testing.expect(t, orbital_defense_reset_timer[EARTH] > 0, "reset timer is still counting down")
+
+	// Advance 6.5 more seconds (total > 10s of inactivity without any kills)
+	for _ in 0..<65 {
+		update_orbital_defenses(0.1)
+	}
+	testing.expect(t, orbital_defense_reset_timer[EARTH] == 0, "reset timer expired after 10 seconds")
+	testing.expect(t, orbital_defense_wave_kills[EARTH] == 0, "wave kill count reset to 0 after 10s inactivity")
+
+	// Now move the 15 HQ wave fighters into engagement range of Earth
+	for i in 0..<unit_count {
+		if units[i].enemy && units[i].target_planet == EARTH {
+			units[i].position = target_pos + rl.Vector3{0, 4.0, 3.0}
+		}
+	}
+
+	// Update defenses: Level 1 defense can now destroy its full capacity of 10 fighters from this new wave
+	for _ in 0..<20 {
+		update_orbital_defenses(0.05)
+	}
+	testing.expect(t, orbital_defense_wave_kills[EARTH] == 10, "orbital defense destroyed full 10 fighters from HQ wave")
+	testing.expect(t, transit_fighters_at(EARTH, true) == 5, "5 surviving fighters from 15-fighter HQ wave continue to orbit")
+}
+
+@(test)
+orbital_defense_does_not_target_orbiting_enemy_units :: proc(t: ^testing.T) {
+	reset_world()
+	defer reset_world()
+
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_hp[EARTH] = 100
+
+	// Enemy combat fighter is in orbit at Earth (.GUARDING state) within engagement distance
+	target_pos := sector_pos(EARTH)
+	units[unit_count] = Unit{
+		kind = .COMBAT,
+		state = .GUARDING,
+		position = target_pos + rl.Vector3{0, 4.0, 2.0}, // Distance from Earth is well within engage_dist (6.8)
+		home_planet = NEPTUNE,
+		affiliation = EARTH,
+		target_planet = EARTH,
+		enemy = true,
+	}
+	unit_count += 1
+
+	// 1. Aiming ignores orbiting units
+	enemy, has_enemy := closest_approaching_enemy(EARTH)
+	testing.expect(t, !has_enemy, "aiming ignores enemy units that are already orbiting in .GUARDING state")
+	testing.expect(t, enemy == nil, "no approaching enemy returned")
+
+	// 2. Firing ignores orbiting units
+	update_orbital_defenses(0.1)
+	testing.expect(t, unit_count == 1, "orbiting enemy unit is not destroyed")
+	testing.expect(t, orbital_defense_wave_kills[EARTH] == 0, "no wave kills registered against orbiting unit")
+}
+
+@(test)
+orbital_defense_targeting_range_is_reduced_to_planet_vicinity :: proc(t: ^testing.T) {
+	reset_world()
+	defer reset_world()
+
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_hp[EARTH] = 100
+
+	target_pos := sector_pos(EARTH)
+
+	// 1. Enemy far away at Enemy HQ (distance ~44.1)
+	units[unit_count] = Unit{
+		kind = .COMBAT,
+		state = .TRANSIT,
+		position = ENEMY_HQ_POSITION,
+		home_planet = NEPTUNE,
+		affiliation = EARTH,
+		target_planet = EARTH,
+		enemy = true,
+	}
+	unit_count += 1
+
+	_, has_far := closest_approaching_enemy(EARTH)
+	testing.expect(t, !has_far, "orbital defense ignores enemies far away at enemy HQ")
+
+	// 2. Enemy at intermediate distance (distance 15.0, beyond 9.0)
+	units[0].position = target_pos + rl.Vector3{15.0, 0, 0}
+	_, has_mid := closest_approaching_enemy(EARTH)
+	testing.expect(t, !has_mid, "orbital defense ignores enemies at distance 15.0")
+
+	// 3. Enemy enters reduced targeting range (distance 8.0 <= 9.0)
+	units[0].position = target_pos + rl.Vector3{8.0, 0, 0}
+	target_unit, has_close := closest_approaching_enemy(EARTH)
+	testing.expect(t, has_close, "orbital defense acquires target lock within reduced range")
+	testing.expect(t, target_unit != nil, "target unit reference returned")
+
+	// Turret smoothly tracks the close target
+	update_orbital_defenses(0.2)
+	az, _ := orbital_defense_aim(EARTH)
+	testing.expect(t, abs(az) < 0.2, "turret aims toward target along +X axis")
+}
 

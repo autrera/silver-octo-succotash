@@ -299,6 +299,8 @@ ORBITAL_DEFENSE_TRACK_SPEED :: 3.8
 ORBITAL_DEFENSE_ELEV_SPEED :: 2.4
 ORBITAL_DEFENSE_IDLE_ELEV :: 38.0 * rl.DEG2RAD
 ORBITAL_DEFENSE_PARK_ELEV :: 16.0 * rl.DEG2RAD
+ORBITAL_DEFENSE_TARGET_RANGE :: 6.0
+ORBITAL_DEFENSE_WAVE_RESET_DELAY :: 10.0
 orbital_defense_level: [PLANET_COUNT]int
 orbital_defense_building: [PLANET_COUNT]bool
 orbital_defense_progress: [PLANET_COUNT]f32
@@ -306,6 +308,7 @@ orbital_defense_hp: [PLANET_COUNT]int
 orbital_defense_angle: [PLANET_COUNT]f32
 orbital_defense_elevation: [PLANET_COUNT]f32
 orbital_defense_wave_kills: [PLANET_COUNT]int
+orbital_defense_reset_timer: [PLANET_COUNT]f32
 orbital_defense_fire_timer: [PLANET_COUNT]f32
 
 Orbital_Defense_Blast :: struct {
@@ -532,6 +535,7 @@ reset_world :: proc() {
 		orbital_defense_elevation[p] = ORBITAL_DEFENSE_IDLE_ELEV
 	}
 	orbital_defense_wave_kills = {}
+	orbital_defense_reset_timer = {}
 	orbital_defense_fire_timer = {}
 	orbital_defense_blasts = {}
 	minerals = 350
@@ -1069,14 +1073,16 @@ orbital_defense_pos :: proc(planet: int) -> rl.Vector3 {
 
 closest_approaching_enemy :: proc(planet: int) -> (^Unit, bool) {
 	target_pos := sector_pos(planet)
+	max_range := sector_radius(planet) + ORBITAL_DEFENSE_TARGET_RANGE
 	closest_idx := -1
 	closest_dist: f32 = 1e9
 
 	for i in 0..<unit_count {
 		u := &units[i]
+		// Strictly target approaching combat fighters in transit; never target units that have already reached orbit (.GUARDING)
 		if !u.enemy || u.kind != .COMBAT || u.state != .TRANSIT || u.target_planet != planet { continue }
 		d := distance(u.position, target_pos)
-		if d < closest_dist {
+		if d <= max_range && d < closest_dist {
 			closest_dist = d
 			closest_idx = i
 		}
@@ -1359,6 +1365,8 @@ destroy_orbital_defense :: proc(planet: int) {
 	orbital_defense_progress[planet] = 0
 	orbital_defense_angle[planet] = 0
 	orbital_defense_elevation[planet] = ORBITAL_DEFENSE_IDLE_ELEV
+	orbital_defense_wave_kills[planet] = 0
+	orbital_defense_reset_timer[planet] = 0
 	for i := unit_count - 1; i >= 0; i -= 1 {
 		u := &units[i]
 		if u.kind == .MINING && !u.enemy && u.target_planet == planet && u.state != .TRANSIT {
@@ -1456,8 +1464,15 @@ update_orbital_defenses :: proc(dt: f32) {
 		if orbital_defense_fire_timer[p] > 0 {
 			orbital_defense_fire_timer[p] = max(orbital_defense_fire_timer[p] - dt, 0)
 		}
+		if orbital_defense_reset_timer[p] > 0 {
+			orbital_defense_reset_timer[p] = max(orbital_defense_reset_timer[p] - dt, 0)
+			if orbital_defense_reset_timer[p] == 0 {
+				orbital_defense_wave_kills[p] = 0
+			}
+		}
 		if transit_fighters_at(p, true) == 0 {
 			orbital_defense_wave_kills[p] = 0
+			orbital_defense_reset_timer[p] = 0
 		} else if orbital_defense_level[p] > 0 && !orbital_defense_building[p] {
 			max_kills := orbital_defense_level[p] * ORBITAL_DEFENSE_KILLS_PER_LEVEL
 			if orbital_defense_wave_kills[p] < max_kills {
@@ -1468,11 +1483,13 @@ update_orbital_defenses :: proc(dt: f32) {
 
 				for i := unit_count - 1; i >= 0; i -= 1 {
 					u := &units[i]
+					// Strictly target approaching combat fighters in transit; never target units that have already reached orbit (.GUARDING)
 					if !u.enemy || u.kind != .COMBAT || u.state != .TRANSIT || u.target_planet != p { continue }
 					d := distance(u.position, target_pos)
 					if d <= engage_dist {
 						if orbital_defense_fire_timer[p] <= 0 || d <= arrival_dist {
 							orbital_defense_wave_kills[p] += 1
+							orbital_defense_reset_timer[p] = ORBITAL_DEFENSE_WAVE_RESET_DELAY
 							orbital_defense_fire_timer[p] = 0.06
 							muzzle_pos := orbital_defense_muzzle_pos_toward(p, u.position)
 							spawn_orbital_defense_blast(p, muzzle_pos, u.position, 0.35)
