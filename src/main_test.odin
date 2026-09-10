@@ -3999,58 +3999,64 @@ earth_orbital_defense_button_and_production_have_no_ui_collisions :: proc(t: ^te
 	base_btn := rl.Rectangle{panel_x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, BASE_BTN_H}
 	def_btn := orbital_defense_button_rect(panel_x, EARTH)
 
-	// 1. Idle state: tight, consistent spacing below base button and above production matrix
-	testing.expect(t, def_btn.y == 136, "idle orbital defense button sits at 136")
+	// 1. Header to bases spacing: ample breathing room
+	header_bottom: f32 = 16 + 38
+	base_pips_top := f32(BASES_Y - 1)
+	testing.expect(t, base_pips_top - header_bottom == 21, "ample 21px vertical spacing between header box and base pips")
+	testing.expect(t, f32(SECTION_TOP) - (base_pips_top + SLOT_SIZE) == 15, "consistent 15px gap between base pips and base button")
+
+	// 2. Idle state: tight, consistent spacing below base button and above production matrix
+	testing.expect(t, def_btn.y == 152, "idle orbital defense button sits at 152")
 	testing.expect(t, def_btn.y - (base_btn.y + base_btn.height) == 8, "consistent 8px gap between base button and orbital defense button")
 	testing.expect(t, !rl.CheckCollisionRecs(base_btn, def_btn), "base button and orbital defense button do not overlap")
 	prod_y := f32(production_title_y())
-	testing.expect(t, prod_y == 182, "production matrix title at 182")
+	testing.expect(t, prod_y == 198, "production matrix title at 198")
 	testing.expect(t, prod_y - (def_btn.y + def_btn.height) == 10, "consistent 10px gap between orbital defense and production matrix")
 
-	// 2. Dynamic shift when base is constructing
+	// 3. Dynamic shift when base is constructing
 	base_build_planet = EARTH
 	def_btn_base := orbital_defense_button_rect(panel_x, EARTH)
-	testing.expect(t, def_btn_base.y == 148, "defense button dynamically shifts down by 12px when base is constructing")
+	testing.expect(t, def_btn_base.y == 164, "defense button dynamically shifts down by 12px when base is constructing")
 	base_bar_bottom := base_btn.y + base_btn.height + 4 + BAR_H
 	testing.expect(t, def_btn_base.y - base_bar_bottom == 8, "consistent 8px gap below base progress bar")
 	prod_y_base := f32(production_title_y())
-	testing.expect(t, prod_y_base == 194, "production title dynamically shifts down by 12px for base progress bar")
+	testing.expect(t, prod_y_base == 210, "production title dynamically shifts down by 12px for base progress bar")
 	testing.expect(t, prod_y_base - (def_btn_base.y + def_btn_base.height) == 10, "consistent 10px gap below defense button when base constructing")
 	base_build_planet = -1
 
-	// 3. Dynamic shift when orbital defense is constructing
+	// 4. Dynamic shift when orbital defense is constructing
 	orbital_defense_building[EARTH] = true
 	def_btn_def := orbital_defense_button_rect(panel_x, EARTH)
-	testing.expect(t, def_btn_def.y == 136, "defense button sits at 136 when base idle")
+	testing.expect(t, def_btn_def.y == 152, "defense button sits at 152 when base idle")
 	def_bar_bottom := def_btn_def.y + def_btn_def.height + 4 + BAR_H
 	prod_y_def := f32(production_title_y())
-	testing.expect(t, prod_y_def == 194, "production title dynamically shifts down by 12px for defense progress bar")
+	testing.expect(t, prod_y_def == 210, "production title dynamically shifts down by 12px for defense progress bar")
 	testing.expect(t, prod_y_def - def_bar_bottom == 10, "consistent 10px gap below defense progress bar")
 
-	// 4. Dynamic shift when both are constructing
+	// 5. Dynamic shift when both are constructing
 	base_build_planet = EARTH
 	def_btn_both := orbital_defense_button_rect(panel_x, EARTH)
-	testing.expect(t, def_btn_both.y == 148, "defense button at 148 when base constructing")
+	testing.expect(t, def_btn_both.y == 164, "defense button at 164 when base constructing")
 	def_bar_both := def_btn_both.y + def_btn_both.height + 4 + BAR_H
 	prod_y_both := f32(production_title_y())
-	testing.expect(t, prod_y_both == 206, "production title dynamically shifts down by 24px when both constructing")
+	testing.expect(t, prod_y_both == 222, "production title dynamically shifts down by 24px when both constructing")
 	testing.expect(t, prod_y_both - def_bar_both == 10, "consistent 10px gap below defense progress bar when both constructing")
 	base_build_planet = -1
 	orbital_defense_building[EARTH] = false
 
-	// 5. Cap state (5 bases on Earth): base button disappears, defense collapses up to SECTION_TOP
+	// 6. Cap state (5 bases on Earth): base button disappears, defense collapses up to SECTION_TOP
 	base_counts[EARTH] = MAX_BASES
 	def_btn_cap := orbital_defense_button_rect(panel_x, EARTH)
-	testing.expect(t, def_btn_cap.y == SECTION_TOP, "defense button collapses up to SECTION_TOP (92) when all bases built")
+	testing.expect(t, def_btn_cap.y == SECTION_TOP, "defense button collapses up to SECTION_TOP (108) when all bases built")
 	prod_y_cap := f32(production_title_y())
-	testing.expect(t, prod_y_cap == 138, "production title collapses up to 138")
+	testing.expect(t, prod_y_cap == 154, "production title collapses up to 154")
 	testing.expect(t, prod_y_cap - (def_btn_cap.y + def_btn_cap.height) == 10, "consistent 10px gap below collapsed defense button")
 
-	// 6. Fleet Requisition and Queue spacing
+	// 7. Fleet Requisition and Queue spacing
 	speed_rect := drone_speed_button_rect(panel_x)
 	testing.expect(t, f32(earth_queue_y()) - (speed_rect.y + speed_rect.height) == 24, "consistent 24px gap between speed upgrade and queue buffer")
 
-	// 7. Click handling
+	// 8. Click handling
 	reset_world()
 	selected_planet = EARTH
 	minerals = 1000

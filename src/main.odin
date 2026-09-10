@@ -187,19 +187,19 @@ GRID_PITCH :: 24
 PROD_PITCH :: 34
 PANEL_SUB_Y :: 60
 OUTPOST_CARD_Y :: PANEL_SUB_Y
-BASES_Y :: 60
-SECTION_TOP :: 92
+BASES_Y :: 76
+SECTION_TOP :: 108
 CARD_H :: 54
 CARD_LINE_1 :: OUTPOST_CARD_Y + 14
 CARD_LINE_2 :: OUTPOST_CARD_Y + 33
 REFINERY_BTN_Y :: 122
 ORBITAL_DEFENSE_BTN_Y :: 166
 OUTPOST_LIBERATED_ROSTER_Y :: 235
-BASE_PROGRESS_Y :: 132
-PROD_TITLE_Y :: 182
-PROD_FIRST_Y :: 205
+BASE_PROGRESS_Y :: 148
+PROD_TITLE_Y :: 198
+PROD_FIRST_Y :: 221
 PROD_BAR_DY :: 16
-ORDERS_BASE_Y :: 276
+ORDERS_BASE_Y :: 292
 BASE_COLLAPSE_Y :: BASE_BTN_H + 8
 UPGRADE_DY :: 48
 UPGRADE_H :: 36
@@ -2627,10 +2627,12 @@ draw_inspector :: proc() {
 		}
 	}
 
-	// Connecting circuit bus line down from Header Card to next section
-	circuit_x := x + PANEL_PAD_X + 18
-	rl.DrawLineV({circuit_x, header_box.y + header_box.height}, {circuit_x, header_box.y + header_box.height + 12}, rl.Fade(SCIFI_CYAN, 0.45))
-	rl.DrawCircleV({circuit_x, header_box.y + header_box.height + 12}, 2.0, SCIFI_MINT)
+	// Connecting circuit bus line down from Header Card to next section (outposts/HQ status card)
+	if selected_planet != EARTH {
+		circuit_x := x + PANEL_PAD_X + 18
+		rl.DrawLineV({circuit_x, header_box.y + header_box.height}, {circuit_x, header_box.y + header_box.height + 12}, rl.Fade(SCIFI_CYAN, 0.45))
+		rl.DrawCircleV({circuit_x, header_box.y + header_box.height + 12}, 2.0, SCIFI_MINT)
+	}
 
 	if selected_planet == EARTH {
 		draw_earth_inspector(x)
