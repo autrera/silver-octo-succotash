@@ -3731,7 +3731,6 @@ minor_wave_attacks_all_liberated_planets_from_closest_unliberated :: proc(t: ^te
 	found_mercury_venus := false
 	found_neptune_mars := false
 	for i in 0..<count {
-		testing.expect(t, closest_liberated_planet_to(sources[i]) == targets[i], "each attacker targets its closest liberated planet")
 		if targets[i] == EARTH && sources[i] == URANUS { found_uranus_earth = true }
 		if targets[i] == VENUS && sources[i] == MERCURY { found_mercury_venus = true }
 		if targets[i] == MARS && sources[i] == NEPTUNE { found_neptune_mars = true }
@@ -3739,6 +3738,27 @@ minor_wave_attacks_all_liberated_planets_from_closest_unliberated :: proc(t: ^te
 	testing.expect(t, found_uranus_earth, "Uranus attacks Earth")
 	testing.expect(t, found_mercury_venus, "Mercury attacks Venus")
 	testing.expect(t, found_neptune_mars, "Neptune attacks Mars")
+
+	// Case 4: Earth, Venus, Mars, and Uranus are liberated (4 liberated vs 4 unliberated).
+	// Mercury -> Venus (dist 19.25), Neptune -> Mars (dist 22.56),
+	// Saturn -> Earth (dist 30.95), Jupiter -> Uranus (dist 45.73).
+	enemy_base_hp[URANUS] = 0
+	sources, targets, count = collect_minor_wave_attacks()
+	testing.expect(t, count == 4, "4 attack pairs when Earth, Venus, Mars, and Uranus are liberated")
+	found_saturn_earth := false
+	found_jupiter_uranus := false
+	found_mercury_venus = false
+	found_neptune_mars = false
+	for i in 0..<count {
+		if targets[i] == VENUS && sources[i] == MERCURY { found_mercury_venus = true }
+		if targets[i] == MARS && sources[i] == NEPTUNE { found_neptune_mars = true }
+		if targets[i] == EARTH && sources[i] == SATURN { found_saturn_earth = true }
+		if targets[i] == URANUS && sources[i] == JUPITER { found_jupiter_uranus = true }
+	}
+	testing.expect(t, found_mercury_venus, "Mercury attacks Venus")
+	testing.expect(t, found_neptune_mars, "Neptune attacks Mars")
+	testing.expect(t, found_saturn_earth, "Saturn attacks Earth")
+	testing.expect(t, found_jupiter_uranus, "Jupiter attacks Uranus")
 }
 
 @(test)
@@ -3822,21 +3842,75 @@ minor_wave_unliberated_planets_never_attack_multiple_targets :: proc(t: ^testing
 
 	for combo in combinations {
 		reset_world()
+		liberated_count := 0
 		for p in combo {
-			if p >= 0 { enemy_base_hp[p] = 0 }
+			if p >= 0 {
+				enemy_base_hp[p] = 0
+				liberated_count += 1
+			}
 		}
+		unliberated_count := PLANET_COUNT - liberated_count
+		expected_count := min(liberated_count, unliberated_count)
 
 		sources, targets, count := collect_minor_wave_attacks()
-		// Verify source uniqueness
+		testing.expect(t, count == expected_count, "count matches min(liberated, unliberated)")
+
+		// Verify source uniqueness and target uniqueness
 		for i in 0..<count {
 			for j := i + 1; j < count; j += 1 {
 				testing.expect(t, sources[i] != sources[j], "each unliberated planet attacks at most one liberated planet")
 				testing.expect(t, targets[i] != targets[j], "each liberated planet is targeted at most once")
 			}
-			// Verify each attacker attacks its closest liberated planet
-			testing.expect(t, closest_liberated_planet_to(sources[i]) == targets[i], "attacker attacks its closest liberated planet")
 		}
 	}
+}
+
+@(test)
+minor_wave_four_liberated_planets_launch_four_waves_jupiter_attacks_uranus_saturn_attacks_earth :: proc(t: ^testing.T) {
+	reset_world()
+	// Liberate Venus, Uranus, and Mars (Earth starts liberated -> 4 liberated, 4 unliberated)
+	enemy_base_hp[VENUS] = 0
+	enemy_base_hp[URANUS] = 0
+	enemy_base_hp[MARS] = 0
+
+	// 72.0s: 3s before launch, warning triggers on all 4 targets and all 4 sources
+	minor_wave_timer = 72.0
+	testing.expect(t, planet_is_minor_wave_target(EARTH), "Earth is minor wave target")
+	testing.expect(t, planet_is_minor_wave_target(VENUS), "Venus is minor wave target")
+	testing.expect(t, planet_is_minor_wave_target(URANUS), "Uranus is minor wave target")
+	testing.expect(t, planet_is_minor_wave_target(MARS), "Mars is minor wave target")
+
+	testing.expect(t, planet_is_minor_wave_source(SATURN), "Saturn is minor wave source")
+	testing.expect(t, planet_is_minor_wave_source(MERCURY), "Mercury is minor wave source")
+	testing.expect(t, planet_is_minor_wave_source(JUPITER), "Jupiter is minor wave source")
+	testing.expect(t, planet_is_minor_wave_source(NEPTUNE), "Neptune is minor wave source")
+
+	// Launch 4 concurrent minor waves (total 20 enemy combat drones)
+	before := unit_count
+	launch_minor_wave()
+	testing.expect(t, unit_count - before == 20, "20 total drones launched (5 per liberated planet)")
+
+	earth_from_saturn := 0
+	venus_from_mercury := 0
+	uranus_from_jupiter := 0
+	mars_from_neptune := 0
+
+	for i := before; i < unit_count; i += 1 {
+		u := &units[i]
+		testing.expect(t, u.enemy, "drone is enemy")
+		testing.expect(t, u.kind == .COMBAT, "drone is combat")
+		testing.expect(t, u.state == .TRANSIT, "drone is in transit")
+
+		if u.target_planet == EARTH && u.home_planet == SATURN { earth_from_saturn += 1 }
+		if u.target_planet == VENUS && u.home_planet == MERCURY { venus_from_mercury += 1 }
+		if u.target_planet == URANUS && u.home_planet == JUPITER { uranus_from_jupiter += 1 }
+		if u.target_planet == MARS && u.home_planet == NEPTUNE { mars_from_neptune += 1 }
+	}
+
+	testing.expect(t, earth_from_saturn == 5, "Saturn attacks Earth with 5 drones")
+	testing.expect(t, venus_from_mercury == 5, "Mercury attacks Venus with 5 drones")
+	testing.expect(t, uranus_from_jupiter == 5, "Jupiter attacks Uranus with 5 drones")
+	testing.expect(t, mars_from_neptune == 5, "Neptune attacks Mars with 5 drones")
 }
 
 // ---- Orbital Defense Tests -----------------------------------------------

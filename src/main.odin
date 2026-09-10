@@ -1820,33 +1820,55 @@ update_minor_wave :: proc(dt: f32) {
 }
 
 // Computes the minor wave attack pairs for all liberated planets.
-// For each liberated planet l, it finds the closest unliberated planet u whose
-// closest liberated planet is l. Each unliberated planet attacks at most one
-// liberated planet, its closest.
+// Pairs unliberated planets with liberated planets greedily by distance:
+// each liberated planet is attacked from the closest available unliberated planet,
+// and each unliberated planet attacks at most one liberated planet (its closest
+// available liberated planet).
 collect_minor_wave_attacks :: proc() -> (sources: [PLANET_COUNT]int, targets: [PLANET_COUNT]int, count: int) {
-	for l in 0..<PLANET_COUNT {
-		if !planet_liberated(l) { continue }
+	Pair :: struct {
+		u: int,
+		l: int,
+		d: f32,
+	}
 
-		best_u := -1
-		best_d: f32 = 1e9
+	pairs: [PLANET_COUNT * PLANET_COUNT]Pair
+	pair_count := 0
 
-		for u in 0..<PLANET_COUNT {
-			if planet_liberated(u) { continue }
-			if closest_liberated_planet_to(u) != l { continue }
-
+	for u in 0..<PLANET_COUNT {
+		if planet_liberated(u) { continue }
+		for l in 0..<PLANET_COUNT {
+			if !planet_liberated(l) { continue }
 			d := distance(planets[u].position, planets[l].position)
-			if best_u < 0 || d < best_d {
-				best_u = u
-				best_d = d
-			}
+			pairs[pair_count] = Pair{u = u, l = l, d = d}
+			pair_count += 1
 		}
+	}
 
-		if best_u >= 0 {
-			sources[count] = best_u
-			targets[count] = l
+	// Sort pairs ascending by distance (insertion sort on at most 16 pairs)
+	for i in 1..<pair_count {
+		key := pairs[i]
+		j := i - 1
+		for j >= 0 && pairs[j].d > key.d {
+			pairs[j + 1] = pairs[j]
+			j -= 1
+		}
+		pairs[j + 1] = key
+	}
+
+	used_u: [PLANET_COUNT]bool
+	used_l: [PLANET_COUNT]bool
+
+	for i in 0..<pair_count {
+		p := pairs[i]
+		if !used_u[p.u] && !used_l[p.l] {
+			used_u[p.u] = true
+			used_l[p.l] = true
+			sources[count] = p.u
+			targets[count] = p.l
 			count += 1
 		}
 	}
+
 	return
 }
 
