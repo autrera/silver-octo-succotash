@@ -361,6 +361,8 @@ laser_anim_time: f32
 // Planets flare up when drones are actively fighting there; enemy HQ maintains an
 // ominous background presence that surges to maximum intensity during an assault.
 combat_nebula_intensity: [SECTOR_COUNT]f32
+// Visual intensity of the yellow pulsating nebula aura on the attack source planet before minor wave.
+minor_wave_source_nebula_intensity: [SECTOR_COUNT]f32
 sector_combat_state: [SECTOR_COUNT]bool
 // Pre-allocated sector rendering spots for draw_world representation pass
 World_Sector_Spots :: struct {
@@ -529,6 +531,7 @@ reset_world :: proc() {
 	intel_recorded = {}
 	laser_anim_time = 0
 	combat_nebula_intensity = {}
+	minor_wave_source_nebula_intensity = {}
 	earth_industry_intensity = 0
 	drone_speed_level = 0
 	earth_rally = NO_RALLY
@@ -1556,6 +1559,25 @@ minor_wave_warning_planet :: proc() -> int {
 	source, found := closest_unliberated_planet_to_earth()
 	if !found { return -1 }
 	return closest_liberated_planet_to(source)
+}
+
+// Warning before minor wave: 3 seconds before launch, the attacking source planet
+// receives an ominous yellow aura at half battle intensity.
+minor_wave_warning_source_planet :: proc() -> int {
+	if minor_wave_timer < MINOR_WAVE_INTERVAL - 3.0 { return -1 }
+	source, found := closest_unliberated_planet_to_earth()
+	if !found { return -1 }
+	return source
+}
+
+minor_wave_source_warning_planet :: proc() -> int {
+	return minor_wave_warning_source_planet()
+}
+
+// A planet is the source of an impending minor wave within 3s of launching.
+planet_attack_source_warning :: proc(p: int) -> bool {
+	if p < 0 || p >= PLANET_COUNT { return false }
+	return minor_wave_warning_source_planet() == p
 }
 
 // A planet is under attack warning if an impending minor wave is within 3s
@@ -4358,14 +4380,15 @@ draw_starfield :: proc() {
 }
 
 // Red palpitating combat nebula in screen space behind planets with active combat
-// and behind the enemy HQ. Rendered before BeginMode3D so 3D textured planet
+// and behind the enemy HQ, plus yellow pulsating nebula aura behind the minor wave
+// attack source planet. Rendered before BeginMode3D so 3D textured planet
 // spheres and fortress models occlude the nebula core, creating an organic backlit
 // cosmic warzone atmosphere. Uses additive blending for luminous gas clouds.
 // Size scaled down by half for a tighter, more focused warzone halo.
 draw_combat_nebulae :: proc() {
 	has_any := false
 	for s in 0..<SECTOR_COUNT {
-		if combat_nebula_intensity[s] > 0.005 {
+		if combat_nebula_intensity[s] > 0.005 || minor_wave_source_nebula_intensity[s] > 0.005 {
 			has_any = true
 			break
 		}
@@ -4381,46 +4404,122 @@ draw_combat_nebulae :: proc() {
 	defer rl.EndBlendMode()
 
 	for s in 0..<SECTOR_COUNT {
-		intensity := combat_nebula_intensity[s]
-		if intensity <= 0.005 { continue }
+		if combat_nebula_intensity[s] > 0.005 {
+			draw_sector_nebula(s, combat_nebula_intensity[s], sector_combat_state[s], false, viewport_w, screen_h, cam_forward, cam_right)
+		}
+		if minor_wave_source_nebula_intensity[s] > 0.005 {
+			draw_sector_nebula(s, minor_wave_source_nebula_intensity[s], false, true, viewport_w, screen_h, cam_forward, cam_right)
+		}
+	}
+}
 
-		pos_3d := sector_pos(s)
-		cam_to_pos := pos_3d - camera.position
-		if rl.Vector3DotProduct(cam_to_pos, cam_forward) <= 0.1 { continue }
+draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, is_yellow: bool, viewport_w, screen_h: f32, cam_forward, cam_right: rl.Vector3) {
+	if intensity <= 0.005 { return }
 
-		screen_pos := rl.GetWorldToScreen(pos_3d, camera)
-		if screen_pos.x < -250 || screen_pos.x > viewport_w + 250 || screen_pos.y < -250 || screen_pos.y > screen_h + 250 {
-			continue
+	pos_3d := sector_pos(s)
+	cam_to_pos := pos_3d - camera.position
+	if rl.Vector3DotProduct(cam_to_pos, cam_forward) <= 0.1 { return }
+
+	screen_pos := rl.GetWorldToScreen(pos_3d, camera)
+	if screen_pos.x < -250 || screen_pos.x > viewport_w + 250 || screen_pos.y < -250 || screen_pos.y > screen_h + 250 {
+		return
+	}
+
+	rad := sector_radius(s)
+	limb_3d := pos_3d + cam_right * rad
+	limb_screen := rl.GetWorldToScreen(limb_3d, camera)
+	base_r := max(rl.Vector2Distance(screen_pos, limb_screen), 14.0)
+
+	// Palpitating rhythm: organic multi-frequency heartbeat pulse
+	// Combines fundamental throb with secondary harmonic for an authentic heart-palpitation cadence
+	t := laser_anim_time
+	pulse_speed: f32 = in_combat ? 3.8 : 2.4
+	pulse1 := math.sin(t * pulse_speed + f32(s) * 1.8)
+	pulse2 := math.sin(t * (pulse_speed * 2.0) + f32(s) * 2.5 + 0.45)
+	palpitation := 0.85 + 0.28 * pulse1 + 0.16 * pulse2
+	radius_pulse := 1.0 + 0.14 * math.sin(t * (pulse_speed * 0.7) + f32(s))
+
+	effective_intensity := clamp(intensity * palpitation, 0.0, 1.6)
+
+	// 1. Grand Outer Ambient Nebula Shroud (deep cosmic space haze)
+	// Scaled down by half for a cleaner, tighter atmospheric halo
+	grand_r := max(base_r * 5.5, 120.0) * radius_pulse
+	grand_alpha := u8(clamp(75.0 * effective_intensity, 0, 255))
+
+	secondary_grand_pos := rl.Vector2{
+		screen_pos.x + math.cos(t * 0.3 + f32(s)) * (base_r * 1.4),
+		screen_pos.y + math.sin(t * 0.25 + f32(s)) * (base_r * 1.0),
+	}
+	secondary_r := max(base_r * 4.75, 100.0) * radius_pulse
+	secondary_alpha := u8(clamp(60.0 * effective_intensity, 0, 255))
+
+	if is_yellow {
+		rl.DrawCircleGradient(screen_pos, grand_r, rl.Color{170, 150, 15, grand_alpha}, rl.Color{0, 0, 0, 0})
+		rl.DrawCircleGradient(secondary_grand_pos, secondary_r, rl.Color{195, 170, 20, secondary_alpha}, rl.Color{0, 0, 0, 0})
+
+		// 2. Multi-tiered Asymmetric Billowing Gas Clouds (12 organic lobes across 3 tiers)
+		// Tier 1: Outer billowing wisps (4 lobes)
+		for i in 0..<4 {
+			fi := f32(i)
+			ang := fi * (math.PI * 0.5) + math.sin(t * 0.35 + fi * 1.7 + f32(s)) * 0.45 + f32(s) * 0.8
+			dist := max(base_r * (1.9 + 0.3 * math.sin(t * 0.6 + fi * 2.2 + f32(s))), 35.0)
+			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.82}
+			r := max(base_r * (1.9 + 0.25 * math.cos(t * 1.0 + fi * 1.5)) * radius_pulse, 32.5)
+			alpha := u8(clamp(65.0 * effective_intensity, 0, 255))
+			rl.DrawCircleGradient(center, r, rl.Color{205, 185, 20, alpha}, rl.Color{0, 0, 0, 0})
 		}
 
-		rad := sector_radius(s)
-		limb_3d := pos_3d + cam_right * rad
-		limb_screen := rl.GetWorldToScreen(limb_3d, camera)
-		base_r := max(rl.Vector2Distance(screen_pos, limb_screen), 14.0)
+		// Tier 2: Mid-range turbulent cloud banks (5 lobes)
+		for i in 0..<5 {
+			fi := f32(i)
+			ang := fi * (2.0 * math.PI / 5.0) + math.sin(t * 0.45 + fi * 1.5 + f32(s)) * 0.38 + f32(s) * 1.3
+			dist := max(base_r * (1.15 + 0.225 * math.sin(t * 0.75 + fi * 1.9 + f32(s))), 22.5)
+			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.84}
+			r := max(base_r * (1.5 + 0.225 * math.cos(t * 1.2 + fi * 1.8)) * radius_pulse, 25.0)
+			alpha := u8(clamp(90.0 * effective_intensity, 0, 255))
+			r_val := u8(clamp(245.0 + 10.0 * math.sin(fi * 2.0), 0, 255))
+			g_val := u8(clamp(215.0 + 25.0 * math.cos(fi * 1.6), 0, 255))
+			b_val := u8(clamp(25.0 + 15.0 * math.sin(fi * 3.0), 0, 255))
+			rl.DrawCircleGradient(center, r, rl.Color{r_val, g_val, b_val, alpha}, rl.Color{0, 0, 0, 0})
+		}
 
-		// Palpitating rhythm: organic multi-frequency heartbeat pulse
-		// Combines fundamental throb with secondary harmonic for an authentic heart-palpitation cadence
-		t := laser_anim_time
-		pulse_speed: f32 = sector_combat_state[s] ? 3.8 : 2.4
-		pulse1 := math.sin(t * pulse_speed + f32(s) * 1.8)
-		pulse2 := math.sin(t * (pulse_speed * 2.0) + f32(s) * 2.5 + 0.45)
-		palpitation := 0.85 + 0.28 * pulse1 + 0.16 * pulse2
-		radius_pulse := 1.0 + 0.14 * math.sin(t * (pulse_speed * 0.7) + f32(s))
+		// Tier 3: Dense inner plasma clouds (3 lobes)
+		for i in 0..<3 {
+			fi := f32(i)
+			ang := fi * (2.0 * math.PI / 3.0) + math.sin(t * 0.5 + fi * 2.1 + f32(s)) * 0.3 + f32(s) * 0.4
+			dist := max(base_r * (0.65 + 0.15 * math.sin(t * 0.9 + fi * 2.5)), 12.5)
+			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.86}
+			r := max(base_r * (1.2 + 0.175 * math.cos(t * 1.3 + fi * 2.0)) * radius_pulse, 20.0)
+			alpha := u8(clamp(110.0 * effective_intensity, 0, 255))
+			rl.DrawCircleGradient(center, r, rl.Color{255, 225, 30, alpha}, rl.Color{0, 0, 0, 0})
+		}
 
-		effective_intensity := clamp(intensity * palpitation, 0.0, 1.6)
+		// 3. Hot Inner Corona & Shockwave Disc (backlighting the body silhouette)
+		corona_r := max(base_r * 1.4, 22.5) * radius_pulse
+		corona_alpha := u8(clamp(135.0 * effective_intensity, 0, 255))
+		rl.DrawCircleGradient(screen_pos, corona_r, rl.Color{255, 230, 30, corona_alpha}, rl.Color{0, 0, 0, 0})
 
-		// 1. Grand Outer Ambient Nebula Shroud (deep cosmic space haze)
-		// Scaled down by half for a cleaner, tighter atmospheric halo
-		grand_r := max(base_r * 5.5, 120.0) * radius_pulse
-		grand_alpha := u8(clamp(75.0 * effective_intensity, 0, 255))
+		// Scorching inner core ring right behind planet edge
+		inner_core_r := max(base_r * 1.2, 16.0) * (0.95 + 0.1 * palpitation)
+		inner_alpha := u8(clamp(115.0 * effective_intensity, 0, 255))
+		rl.DrawCircleGradient(screen_pos, inner_core_r, rl.Color{255, 245, 90, inner_alpha}, rl.Color{0, 0, 0, 0})
+
+		// 4. Ionization Tendrils / Plasma Streamers (fine drifting filaments)
+		for k in 0..<8 {
+			fk := f32(k)
+			spark_angle := fk * 0.785 + t * 0.55 + f32(s) * 1.4
+			spark_dist := max(base_r * (1.4 + 0.25 * math.sin(t * 1.4 + fk * 2.2)), 22.5)
+			spark_pos := rl.Vector2{
+				screen_pos.x + math.cos(spark_angle) * spark_dist,
+				screen_pos.y + math.sin(spark_angle) * spark_dist * 0.88,
+			}
+			spark_r := max(base_r * (0.7 + 0.175 * math.cos(t * 2.1 + fk)), 12.5)
+			spark_alpha := u8(clamp(50.0 * effective_intensity, 0, 255))
+			rl.DrawCircleGradient(spark_pos, spark_r, rl.Color{255, 235, 50, spark_alpha}, rl.Color{0, 0, 0, 0})
+		}
+	} else {
 		rl.DrawCircleGradient(screen_pos, grand_r, rl.Color{160, 12, 35, grand_alpha}, rl.Color{0, 0, 0, 0})
-
-		secondary_grand_pos := rl.Vector2{
-			screen_pos.x + math.cos(t * 0.3 + f32(s)) * (base_r * 1.4),
-			screen_pos.y + math.sin(t * 0.25 + f32(s)) * (base_r * 1.0),
-		}
-		secondary_r := max(base_r * 4.75, 100.0) * radius_pulse
-		rl.DrawCircleGradient(secondary_grand_pos, secondary_r, rl.Color{190, 20, 50, u8(clamp(60.0 * effective_intensity, 0, 255))}, rl.Color{0, 0, 0, 0})
+		rl.DrawCircleGradient(secondary_grand_pos, secondary_r, rl.Color{190, 20, 50, secondary_alpha}, rl.Color{0, 0, 0, 0})
 
 		// 2. Multi-tiered Asymmetric Billowing Gas Clouds (12 organic lobes across 3 tiers)
 		// Tier 1: Outer billowing wisps (4 lobes)
@@ -4825,7 +4924,10 @@ step_simulation :: proc(dt: f32) {
 // graceful fade-out on victory, and warning red glow at half battle intensity
 // starting 3 seconds before launch and persisting through enemy transit until
 // the battle begins (transitioning smoothly from warning glare to battle glare).
+// In addition, the source planet of an impending minor wave receives a yellow
+// aura at half battle intensity starting 3 seconds before launch.
 update_combat_nebula_intensity :: proc(dt: f32) {
+	src_warning_planet := minor_wave_warning_source_planet()
 	for s in 0..<SECTOR_COUNT {
 		in_combat := sector_in_combat(s)
 		sector_combat_state[s] = in_combat
@@ -4843,6 +4945,11 @@ update_combat_nebula_intensity :: proc(dt: f32) {
 		}
 		rate: f32 = (in_combat || is_warning) ? 3.5 : 1.2
 		combat_nebula_intensity[s] += (target - combat_nebula_intensity[s]) * clamp(dt * rate, 0.0, 1.0)
+
+		is_src_warning := (s == src_warning_planet)
+		src_target: f32 = is_src_warning ? 0.5 : 0.0
+		src_rate: f32 = is_src_warning ? 3.5 : 1.2
+		minor_wave_source_nebula_intensity[s] += (src_target - minor_wave_source_nebula_intensity[s]) * clamp(dt * src_rate, 0.0, 1.0)
 	}
 }
 

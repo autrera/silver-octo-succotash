@@ -2907,6 +2907,7 @@ combat_nebula_intensity_transitions_and_hq_behavior :: proc(t: ^testing.T) {
 	reset_world()
 	for s in 0..<SECTOR_COUNT {
 		testing.expect(t, combat_nebula_intensity[s] == 0.0, "reset_world zeroes combat_nebula_intensity")
+		testing.expect(t, minor_wave_source_nebula_intensity[s] == 0.0, "reset_world zeroes minor_wave_source_nebula_intensity")
 	}
 }
 
@@ -3527,6 +3528,58 @@ minor_wave_target_planet_receives_warning_glow_three_seconds_prior :: proc(t: ^t
 	enemy_base_hp[VENUS] = 0
 	target = minor_wave_warning_planet()
 	testing.expect(t, target == EARTH, "Earth targeted by Uranus")
+}
+
+@(test)
+minor_wave_source_planet_receives_yellow_aura_three_seconds_prior :: proc(t: ^testing.T) {
+	reset_world()
+	// At game start, Venus is closest unliberated to Earth, and Earth is the only liberated planet.
+	// Therefore Venus will attack Earth.
+	testing.expect(t, minor_wave_warning_source_planet() == -1, "no source warning before 72s")
+	testing.expect(t, !planet_attack_source_warning(VENUS), "Venus not warning before 72s")
+
+	// Set minor wave timer to 71.9s (3.1s before attack) - still no warning
+	minor_wave_timer = 71.9
+	testing.expect(t, minor_wave_warning_source_planet() == -1, "no source warning at 71.9s")
+	update_combat_nebula_intensity(0.1)
+	testing.expect(t, minor_wave_source_nebula_intensity[VENUS] < 0.01, "source nebula stays cold at 71.9s")
+
+	// Advance to 72.0s (exactly 3s before 75s attack) - warning triggers on source Venus
+	minor_wave_timer = 72.0
+	source := minor_wave_warning_source_planet()
+	testing.expect(t, source == VENUS, "Venus is source of attack 3s before launch")
+	testing.expect(t, minor_wave_source_warning_planet() == VENUS, "source warning alias matches")
+	testing.expect(t, planet_attack_source_warning(VENUS), "Venus has source warning at 72s")
+
+	// Step combat nebula intensity: drives towards 0.5 (half battle intensity)
+	for _ in 0..<20 {
+		update_combat_nebula_intensity(0.1)
+	}
+	testing.expect(t, abs(minor_wave_source_nebula_intensity[VENUS] - 0.5) < 0.05, "source planet gets yellow aura at half battle intensity (~0.5)")
+	testing.expect(t, minor_wave_source_nebula_intensity[EARTH] < 0.01, "target planet does not get yellow source aura")
+
+	// If Venus is liberated, next unliberated is Uranus
+	enemy_base_hp[VENUS] = 0
+	source = minor_wave_warning_source_planet()
+	testing.expect(t, source == URANUS, "Uranus is source of attack when Venus liberated")
+
+	// When wave launches at 75s, minor_wave_timer resets to 0, source warning clears, and yellow aura fades out
+	enemy_base_hp[VENUS] = GARRISON_BASE_HP[VENUS]
+	minor_wave_timer = 72.0
+	for _ in 0..<20 {
+		update_combat_nebula_intensity(0.1)
+	}
+	testing.expect(t, abs(minor_wave_source_nebula_intensity[VENUS] - 0.5) < 0.05, "Venus yellow aura active before launch")
+
+	launch_minor_wave()
+	testing.expect(t, minor_wave_timer == 0, "timer resets on launch")
+	testing.expect(t, minor_wave_warning_source_planet() == -1, "no source warning after launch")
+	testing.expect(t, !planet_attack_source_warning(VENUS), "Venus no longer has source warning after launch")
+
+	for _ in 0..<40 {
+		update_combat_nebula_intensity(0.1)
+	}
+	testing.expect(t, minor_wave_source_nebula_intensity[VENUS] < 0.05, "yellow aura gracefully fades out after launch")
 }
 
 @(test)
