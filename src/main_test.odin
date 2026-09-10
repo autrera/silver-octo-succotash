@@ -3935,6 +3935,62 @@ inspector_clicks_handle_orbital_defense :: proc(t: ^testing.T) {
 }
 
 @(test)
+outpost_orbital_defense_button_and_roster_have_no_ui_collisions :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = MARS
+	enemy_base_hp[MARS] = 0 // Liberated outpost
+	panel_x: f32 = 800.0
+
+	ref_btn := refinery_button_rect(panel_x)
+	def_btn := orbital_defense_button_rect(panel_x, MARS)
+
+	// 1. Idle state: tight, consistent spacing
+	testing.expect(t, def_btn.y == 166, "idle orbital defense button sits at 166")
+	testing.expect(t, def_btn.y - (ref_btn.y + ref_btn.height) == 8, "consistent 8px gap between refinery and defense buttons")
+	mining_header_y := f32(unit_tile_y(.MINING) - 23)
+	testing.expect(t, mining_header_y - (def_btn.y + def_btn.height) == 10, "consistent 10px gap between defense button and mining header")
+	testing.expect(t, unit_tile_y(.MINING) == 235, "idle mining tiles at 235")
+	testing.expect(t, !rl.CheckCollisionRecs(ref_btn, def_btn), "refinery and orbital defense buttons do not overlap")
+
+	// 2. Dynamic shift when refinery is building
+	refinery_building[MARS] = true
+	def_btn_ref := orbital_defense_button_rect(panel_x, MARS)
+	testing.expect(t, def_btn_ref.y == 178, "defense button dynamically shifts down by 12px when refinery is building")
+	ref_bar_bottom := ref_btn.y + ref_btn.height + 4 + BAR_H
+	testing.expect(t, def_btn_ref.y - ref_bar_bottom == 8, "consistent 8px gap below refinery progress bar")
+	mining_header_ref := f32(unit_tile_y(.MINING) - 23)
+	testing.expect(t, mining_header_ref - (def_btn_ref.y + def_btn_ref.height) == 10, "consistent 10px gap below shifted defense button")
+	testing.expect(t, unit_tile_y(.MINING) == 247, "mining tiles dynamically shift down by 12px for refinery progress bar")
+	refinery_building[MARS] = false
+
+	// 3. Dynamic shift when orbital defense is building
+	orbital_defense_building[MARS] = true
+	def_btn_def := orbital_defense_button_rect(panel_x, MARS)
+	testing.expect(t, def_btn_def.y == 166, "defense button sits at 166 when refinery idle")
+	def_bar_bottom := def_btn_def.y + def_btn_def.height + 4 + BAR_H
+	mining_header_def := f32(unit_tile_y(.MINING) - 23)
+	testing.expect(t, mining_header_def - def_bar_bottom == 10, "consistent 10px gap below defense progress bar")
+	testing.expect(t, unit_tile_y(.MINING) == 247, "mining tiles dynamically shift down by 12px for defense progress bar")
+
+	// 4. Dynamic shift when both are building
+	refinery_building[MARS] = true
+	def_btn_both := orbital_defense_button_rect(panel_x, MARS)
+	testing.expect(t, def_btn_both.y == 178, "defense button sits at 178 when refinery building")
+	def_bar_both := def_btn_both.y + def_btn_both.height + 4 + BAR_H
+	mining_header_both := f32(unit_tile_y(.MINING) - 23)
+	testing.expect(t, mining_header_both - def_bar_both == 10, "consistent 10px gap below defense progress bar when both building")
+	testing.expect(t, unit_tile_y(.MINING) == 259, "mining tiles dynamically shift down by 24px when both building")
+	refinery_building[MARS] = false
+	orbital_defense_building[MARS] = false
+
+	// 5. Click accuracy on the orbital defense button
+	minerals = 1000
+	for _ in 0..<10 { add_miner(MARS) }
+	handle_inspector_click({def_btn.x + 10, def_btn.y + 10}, panel_x)
+	testing.expect(t, orbital_defense_building[MARS], "clicking orbital defense button initiates construction")
+}
+
+@(test)
 orbital_defense_launches_laser_blast_at_close_range :: proc(t: ^testing.T) {
 	reset_world()
 	orbital_defense_level[EARTH] = 1

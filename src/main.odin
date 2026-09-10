@@ -193,8 +193,8 @@ CARD_H :: 54
 CARD_LINE_1 :: OUTPOST_CARD_Y + 14
 CARD_LINE_2 :: OUTPOST_CARD_Y + 33
 REFINERY_BTN_Y :: 122
-ORBITAL_DEFENSE_BTN_Y :: 164
-OUTPOST_LIBERATED_ROSTER_Y :: 210
+ORBITAL_DEFENSE_BTN_Y :: 166
+OUTPOST_LIBERATED_ROSTER_Y :: 235
 BASE_PROGRESS_Y :: 134
 PROD_TITLE_Y :: 166
 PROD_FIRST_Y :: 189
@@ -1154,6 +1154,26 @@ destroy_orbital_defense :: proc(planet: int) {
 	}
 }
 
+outpost_orbital_defense_y :: proc(planet: int) -> f32 {
+	y: f32 = ORBITAL_DEFENSE_BTN_Y
+	if planet >= 0 && planet < PLANET_COUNT && refinery_building[planet] {
+		y += 4 + BAR_H
+	}
+	return y
+}
+
+outpost_orbital_defense_bottom_y :: proc(planet: int) -> f32 {
+	y := outpost_orbital_defense_y(planet) + BASE_BTN_H
+	if planet >= 0 && planet < PLANET_COUNT && orbital_defense_building[planet] {
+		y += 4 + BAR_H
+	}
+	return y
+}
+
+outpost_liberated_roster_y :: proc(planet: int) -> int {
+	return int(outpost_orbital_defense_bottom_y(planet) + 10 + 23)
+}
+
 orbital_defense_button_rect :: proc(panel_x: f32, planet: int) -> rl.Rectangle {
 	if planet == EARTH {
 		dy := UPGRADE_DY * 2
@@ -1162,7 +1182,7 @@ orbital_defense_button_rect :: proc(panel_x: f32, planet: int) -> rl.Rectangle {
 		}
 		return rl.Rectangle{panel_x + PANEL_PAD_X, f32(production_orders_y() + dy), PANEL_CONTENT_W, UPGRADE_H}
 	} else {
-		return rl.Rectangle{panel_x + PANEL_PAD_X, ORBITAL_DEFENSE_BTN_Y, PANEL_CONTENT_W, BASE_BTN_H}
+		return rl.Rectangle{panel_x + PANEL_PAD_X, outpost_orbital_defense_y(planet), PANEL_CONTENT_W, BASE_BTN_H}
 	}
 }
 
@@ -2971,8 +2991,8 @@ roster_count :: proc(kind: Unit_Type) -> int {
 // rects and click hitboxes alike, so they can never drift apart.
 unit_tile_y :: proc(kind: Unit_Type) -> int {
 	mining_rows := (view_count(.MINING, false) + TILES_PER_ROW - 1) / TILES_PER_ROW
-	// Outpost inspectors have no base/production/queue sections, so rosters
-	// sit at a fixed height; on Earth they flow below the build queue.
+	// Outpost inspectors dynamically position rosters below the refinery and
+	// orbital defense sections (flowing with active progress bars); on Earth they flow below the build queue.
 	y := ROSTER_BASE_Y
 	if selected_planet == EARTH {
 		extra_dy := UPGRADE_DY
@@ -2981,7 +3001,7 @@ unit_tile_y :: proc(kind: Unit_Type) -> int {
 		}
 		y = production_orders_y() + ROSTER_BELOW_QUEUE + extra_dy + (base_counts[selected_planet] - 1) * GRID_PITCH
 	} else if selected_planet != ENEMY_HOME && planet_liberated(selected_planet) {
-		y = OUTPOST_LIBERATED_ROSTER_Y
+		y = outpost_liberated_roster_y(selected_planet)
 	}
 	if kind == .COMBAT { y += SECTION_PAD_Y + mining_rows * (TILE_SIZE + TILE_GAP) }
 	return y
