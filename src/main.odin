@@ -664,13 +664,9 @@ update_input :: proc() {
 			start_refinery_construction(selected_planet)
 		}
 	}
-	// [D] builds or upgrades orbital defense on the selected planet.
-	if rl.IsKeyPressed(.D) {
-		if selected_planet >= 0 && selected_planet < PLANET_COUNT && selected_planet != ENEMY_HOME {
-			if can_build_orbital_defense(selected_planet) {
-				start_orbital_defense_construction(selected_planet)
-			}
-		}
+	// [O] builds or upgrades orbital defense on the selected planet.
+	if orbital_defense_key_pressed() {
+		trigger_selected_orbital_defense()
 	}
 	// Spacebar is a shortcut to select Earth in the inspector;
 	// pressing it again when Earth is already selected centers the camera at Earth.
@@ -765,6 +761,20 @@ squad_key_pressed :: proc() -> int {
 
 clear_selection :: proc() {
 	for i := 0; i < MAX_UNITS; i += 1 { selected_units[i] = false }
+}
+
+orbital_defense_key_pressed :: proc() -> bool {
+	return rl.IsKeyPressed(.O)
+}
+
+trigger_selected_orbital_defense :: proc() -> bool {
+	if selected_planet >= 0 && selected_planet < PLANET_COUNT && selected_planet != ENEMY_HOME {
+		if can_build_orbital_defense(selected_planet) {
+			start_orbital_defense_construction(selected_planet)
+			return true
+		}
+	}
+	return false
 }
 
 handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
@@ -1426,10 +1436,10 @@ draw_orbital_defense_inspector_section :: proc(x: f32, btn: rl.Rectangle, p: int
 		draw_progress({btn.x, btn.y + btn.height + 4, PANEL_CONTENT_W, BAR_H}, orbital_defense_progress[p] / ORBITAL_DEFENSE_BUILD_TIME, SCIFI_CYAN)
 	} else if orbital_defense_level[p] == 0 {
 		can_build := can_build_orbital_defense(p)
-		draw_button(btn, "[D] ORBITAL DEFENSE (1000)", SCIFI_PANEL_SOLID, can_build)
+		draw_button(btn, "[O] ORBITAL DEFENSE (1000)", SCIFI_PANEL_SOLID, can_build)
 	} else if orbital_defense_level[p] < ORBITAL_DEFENSE_MAX_LEVEL {
 		can_upgrade := can_build_orbital_defense(p)
-		draw_button(btn, rl.TextFormat("[D] DEF LVL %d (HP %d) +1 (1000)", orbital_defense_level[p], orbital_defense_hp[p]), SCIFI_PANEL_SOLID, can_upgrade)
+		draw_button(btn, rl.TextFormat("[O] DEF LVL %d (HP %d) +1 (1000)", orbital_defense_level[p], orbital_defense_hp[p]), SCIFI_PANEL_SOLID, can_upgrade)
 	} else {
 		draw_chamfered_panel(btn, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
 		draw_corner_brackets(btn, 2, 6, SCIFI_MINT)
@@ -5847,6 +5857,8 @@ draw_controls_overlay :: proc() {
 	draw_control_row(col1_x, cy1, "R-CLICK EARTH", "Set or clear Earth rally flag")
 	cy1 += 18
 	draw_control_row(col1_x, cy1, "B / CLICK", "Build Refinery on outpost")
+	cy1 += 18
+	draw_control_row(col1_x, cy1, "O / CLICK", "Build / Upgrade Orbital Defense")
 
 	// Column 2: Requisition, Simulation & Sensors
 	cy2 := box.y + 84

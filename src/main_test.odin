@@ -4447,3 +4447,71 @@ orbital_defense_pos_is_on_planet_surface_at_north_pole :: proc(t: ^testing.T) {
 	}
 }
 
+@(test)
+enemy_wave_camera_pan_does_not_trigger_orbital_defense_upgrade :: proc(t: ^testing.T) {
+	reset_world()
+	defer reset_world()
+
+	// Setup Earth with an active Level 1 orbital defense
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_hp[EARTH] = 100
+	orbital_defense_building[EARTH] = false
+	orbital_defense_progress[EARTH] = 0
+
+	// Player has 10 miners at Earth and 1000 minerals (meets all upgrade criteria)
+	minerals = 1000
+	for _ in 0..<10 { add_miner(EARTH) }
+	selected_planet = EARTH
+
+	testing.expect(t, can_build_orbital_defense(EARTH), "Earth qualifies for upgrade")
+
+	// Two liberated worlds arm the attack wave; Earth is closest to HQ
+	enemy_base_hp[MERCURY] = 0
+	add_miner(MERCURY)
+
+	// Enemy wave launches from enemy HQ toward Earth
+	spawn_enemy_wave()
+	testing.expect(t, unit_count > 10, "enemy wave units spawned")
+
+	// User pans camera right toward enemy HQ (previously bound to D, conflicting with D shortcut)
+	camera_target.x += 15.0 * 0.1 // Pan right toward HQ
+
+	// Simulation step runs camera and input updates
+	update_camera(0.016)
+	update_input()
+
+	// Orbital defense must NOT trigger upgrade automatically
+	testing.expect(t, !orbital_defense_building[EARTH], "orbital defense must not start upgrade on camera pan")
+	testing.expect(t, minerals == 1000, "minerals must not be deducted by camera movement")
+	testing.expect(t, orbital_defense_level[EARTH] == 1, "orbital defense remains at level 1")
+
+	// Orbital defense remains fully operational and intercepts incoming wave
+	update_orbital_defenses(0.05)
+	testing.expect(t, !orbital_defense_building[EARTH], "defense remains active during combat")
+}
+
+@(test)
+orbital_defense_shortcut_uses_dedicated_o_key_and_triggers_correctly :: proc(t: ^testing.T) {
+	reset_world()
+	defer reset_world()
+
+	testing.expect(t, !orbital_defense_key_pressed(), "headless test has no key events")
+
+	// 1. Ineligible planet: ENEMY_HOME cannot build orbital defense
+	selected_planet = ENEMY_HOME
+	testing.expect(t, !trigger_selected_orbital_defense(), "cannot build orbital defense on enemy home")
+
+	// 2. Insufficient minerals
+	selected_planet = EARTH
+	minerals = 500
+	for _ in 0..<10 { add_miner(EARTH) }
+	testing.expect(t, !trigger_selected_orbital_defense(), "cannot trigger defense build without 1000 minerals")
+
+	// 3. Sufficient minerals and crew triggers build successfully
+	minerals = 1000
+	testing.expect(t, trigger_selected_orbital_defense(), "triggers build successfully when qualified")
+	testing.expect(t, orbital_defense_building[EARTH], "orbital defense is now building")
+	testing.expect(t, minerals == 0, "1000 minerals spent")
+}
+
+
