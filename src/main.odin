@@ -294,11 +294,17 @@ ORBITAL_DEFENSE_BUILD_TIME :: 60.0
 ORBITAL_DEFENSE_CONSTRUCT_MINERS :: 10
 ORBITAL_DEFENSE_HP_PER_LEVEL :: 100
 ORBITAL_DEFENSE_KILLS_PER_LEVEL :: 10
+ORBITAL_DEFENSE_SCAN_SPEED :: 0.8
+ORBITAL_DEFENSE_TRACK_SPEED :: 3.8
+ORBITAL_DEFENSE_ELEV_SPEED :: 2.4
+ORBITAL_DEFENSE_IDLE_ELEV :: 38.0 * rl.DEG2RAD
+ORBITAL_DEFENSE_PARK_ELEV :: 16.0 * rl.DEG2RAD
 orbital_defense_level: [PLANET_COUNT]int
 orbital_defense_building: [PLANET_COUNT]bool
 orbital_defense_progress: [PLANET_COUNT]f32
 orbital_defense_hp: [PLANET_COUNT]int
 orbital_defense_angle: [PLANET_COUNT]f32
+orbital_defense_elevation: [PLANET_COUNT]f32
 orbital_defense_wave_kills: [PLANET_COUNT]int
 orbital_defense_fire_timer: [PLANET_COUNT]f32
 
@@ -522,6 +528,9 @@ reset_world :: proc() {
 	orbital_defense_progress = {}
 	orbital_defense_hp = {}
 	orbital_defense_angle = {}
+	for p in 0..<PLANET_COUNT {
+		orbital_defense_elevation[p] = ORBITAL_DEFENSE_IDLE_ELEV
+	}
 	orbital_defense_wave_kills = {}
 	orbital_defense_fire_timer = {}
 	orbital_defense_blasts = {}
@@ -1048,6 +1057,148 @@ orbital_defense_pos :: proc(planet: int) -> rl.Vector3 {
 	}
 }
 
+closest_approaching_enemy :: proc(planet: int) -> (^Unit, bool) {
+	target_pos := sector_pos(planet)
+	closest_idx := -1
+	closest_dist: f32 = 1e9
+
+	for i in 0..<unit_count {
+		u := &units[i]
+		if !u.enemy || u.kind != .COMBAT || u.state != .TRANSIT || u.target_planet != planet { continue }
+		d := distance(u.position, target_pos)
+		if d < closest_dist {
+			closest_dist = d
+			closest_idx = i
+		}
+	}
+
+	if closest_idx >= 0 {
+		return &units[closest_idx], true
+	}
+	return nil, false
+}
+
+orbital_defense_aim_toward :: proc(planet_idx: int, target: rl.Vector3) -> (azimuth: f32, elev: f32) {
+	planet := planets[planet_idx]
+	s: f32 = 0.84 + clamp(planet.radius * 0.07, 0.11, 0.32)
+	pole := rl.Vector3{planet.position.x, planet.position.y + planet.radius, planet.position.z}
+	pivot := pole + rl.Vector3{0, 0.58 * s, 0}
+	diff := target - pivot
+	horiz_d := math.sqrt(diff.x * diff.x + diff.z * diff.z)
+	azimuth = math.atan2(diff.z, diff.x)
+	raw_elev := horiz_d > 0.001 ? math.atan2(diff.y, horiz_d) : (math.PI * 0.25)
+	elev = clamp(raw_elev, 8.0 * rl.DEG2RAD, 85.0 * rl.DEG2RAD)
+	return
+}
+
+orbital_defense_muzzle_pos_toward :: proc(planet_idx: int, target: rl.Vector3) -> rl.Vector3 {
+	planet := planets[planet_idx]
+	s: f32 = 0.84 + clamp(planet.radius * 0.07, 0.11, 0.32)
+	pole := rl.Vector3{planet.position.x, planet.position.y + planet.radius, planet.position.z}
+	azimuth, elev := orbital_defense_aim_toward(planet_idx, target)
+	cos_az := math.cos(azimuth)
+	sin_az := math.sin(azimuth)
+	up := rl.Vector3{0, 1, 0}
+	fwd := rl.Vector3{cos_az, 0, sin_az}
+	cos_el := math.cos(elev)
+	sin_el := math.sin(elev)
+	barrel_dir := fwd * cos_el + up * sin_el
+	pivot := pole + up * (0.58 * s) + fwd * (0.03 * s)
+	return pivot + barrel_dir * (1.97 * s)
+}
+
+shortest_angle_diff :: proc(target, current: f32) -> f32 {
+	diff := target - current
+	for diff < -math.PI { diff += 2 * math.PI }
+	for diff >  math.PI { diff -= 2 * math.PI }
+	return diff
+}
+
+advance_orbital_defense_aim :: proc(planet_idx: int, dt: f32) {
+	if planet_idx < 0 || planet_idx >= PLANET_COUNT { return }
+	if orbital_defense_level[planet_idx] <= 0 { return }
+
+	// If upgrading, hold azimuth and park elevation in maintenance cradle (16 deg)
+	if orbital_defense_building[planet_idx] {
+		target_el: f32 = ORBITAL_DEFENSE_PARK_ELEV
+		el_diff := target_el - orbital_defense_elevation[planet_idx]
+		max_el := ORBITAL_DEFENSE_ELEV_SPEED * dt
+		if abs(el_diff) <= max_el {
+			orbital_defense_elevation[planet_idx] = target_el
+		} else {
+			orbital_defense_elevation[planet_idx] += math.sign(el_diff) * max_el
+		}
+		return
+	}
+
+	enemy, has_enemy := closest_approaching_enemy(planet_idx)
+	if has_enemy {
+		// Active tracking: smoothly rotate azimuth and pitch elevation toward enemy
+		target_az, target_el := orbital_defense_aim_toward(planet_idx, enemy.position)
+
+		az_diff := shortest_angle_diff(target_az, orbital_defense_angle[planet_idx])
+		max_az := ORBITAL_DEFENSE_TRACK_SPEED * dt
+		if abs(az_diff) <= max_az {
+			orbital_defense_angle[planet_idx] = target_az
+		} else {
+			orbital_defense_angle[planet_idx] += math.sign(az_diff) * max_az
+		}
+
+		el_diff := target_el - orbital_defense_elevation[planet_idx]
+		max_el := ORBITAL_DEFENSE_ELEV_SPEED * dt
+		if abs(el_diff) <= max_el {
+			orbital_defense_elevation[planet_idx] = target_el
+		} else {
+			orbital_defense_elevation[planet_idx] += math.sign(el_diff) * max_el
+		}
+	} else {
+		// Idle scan: continue rotating forward from current azimuth without warping back
+		orbital_defense_angle[planet_idx] += ORBITAL_DEFENSE_SCAN_SPEED * dt
+
+		// Smoothly return elevation to idle resting angle
+		target_el: f32 = ORBITAL_DEFENSE_IDLE_ELEV
+		el_diff := target_el - orbital_defense_elevation[planet_idx]
+		max_el := ORBITAL_DEFENSE_ELEV_SPEED * dt
+		if abs(el_diff) <= max_el {
+			orbital_defense_elevation[planet_idx] = target_el
+		} else {
+			orbital_defense_elevation[planet_idx] += math.sign(el_diff) * max_el
+		}
+	}
+
+	// Normalize azimuth to [-PI, PI)
+	for orbital_defense_angle[planet_idx] < -math.PI {
+		orbital_defense_angle[planet_idx] += 2 * math.PI
+	}
+	for orbital_defense_angle[planet_idx] >= math.PI {
+		orbital_defense_angle[planet_idx] -= 2 * math.PI
+	}
+}
+
+orbital_defense_aim :: proc(planet_idx: int) -> (azimuth: f32, elev: f32) {
+	if planet_idx < 0 || planet_idx >= PLANET_COUNT { return 0, 0 }
+	if orbital_defense_building[planet_idx] {
+		return orbital_defense_angle[planet_idx], ORBITAL_DEFENSE_PARK_ELEV
+	}
+	return orbital_defense_angle[planet_idx], orbital_defense_elevation[planet_idx]
+}
+
+orbital_defense_muzzle_pos :: proc(planet_idx: int) -> rl.Vector3 {
+	planet := planets[planet_idx]
+	s: f32 = 0.84 + clamp(planet.radius * 0.07, 0.11, 0.32)
+	pole := rl.Vector3{planet.position.x, planet.position.y + planet.radius, planet.position.z}
+	azimuth, elev := orbital_defense_aim(planet_idx)
+	cos_az := math.cos(azimuth)
+	sin_az := math.sin(azimuth)
+	up := rl.Vector3{0, 1, 0}
+	fwd := rl.Vector3{cos_az, 0, sin_az}
+	cos_el := math.cos(elev)
+	sin_el := math.sin(elev)
+	barrel_dir := fwd * cos_el + up * sin_el
+	pivot := pole + up * (0.58 * s) + fwd * (0.03 * s)
+	return pivot + barrel_dir * (1.97 * s)
+}
+
 
 spawn_orbital_defense_blast :: proc(planet: int, from, to: rl.Vector3, duration: f32 = 0.35) {
 	oldest_idx := 0
@@ -1169,6 +1320,7 @@ start_orbital_defense_construction :: proc(planet: int) {
 	minerals -= ORBITAL_DEFENSE_COST
 	orbital_defense_building[planet] = true
 	orbital_defense_progress[planet] = 0
+	orbital_defense_elevation[planet] = ORBITAL_DEFENSE_PARK_ELEV
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.kind == .MINING && !u.enemy && u.state != .CONSTRUCTING {
@@ -1195,6 +1347,8 @@ destroy_orbital_defense :: proc(planet: int) {
 	orbital_defense_hp[planet] = 0
 	orbital_defense_building[planet] = false
 	orbital_defense_progress[planet] = 0
+	orbital_defense_angle[planet] = 0
+	orbital_defense_elevation[planet] = ORBITAL_DEFENSE_IDLE_ELEV
 	for i := unit_count - 1; i >= 0; i -= 1 {
 		u := &units[i]
 		if u.kind == .MINING && !u.enemy && u.target_planet == planet && u.state != .TRANSIT {
@@ -1263,8 +1417,11 @@ draw_orbital_defense_inspector_section :: proc(x: f32, btn: rl.Rectangle, p: int
 			rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", constructing_miners(p), ORBITAL_DEFENSE_CONSTRUCT_MINERS), i32(btn.x + CARD_INSET), i32(btn.y + 12), 11, SCIFI_CYAN)
 		} else {
 			remaining := ORBITAL_DEFENSE_BUILD_TIME - orbital_defense_progress[p]
-			action := orbital_defense_level[p] == 0 ? "BUILDING DEFENSE" : rl.TextFormat("UPGRADE LVL %d", orbital_defense_level[p] + 1)
-			rl.DrawText(rl.TextFormat("%s  %3.1fs", action, remaining), i32(btn.x + CARD_INSET), i32(btn.y + 11), 12, SCIFI_CYAN)
+			if orbital_defense_level[p] == 0 {
+				rl.DrawText(rl.TextFormat("BUILDING DEFENSE  %3.1fs", remaining), i32(btn.x + CARD_INSET), i32(btn.y + 11), 12, SCIFI_CYAN)
+			} else {
+				rl.DrawText(rl.TextFormat("UPGRADE LVL %d (DISABLED)  %3.1fs", orbital_defense_level[p] + 1, remaining), i32(btn.x + CARD_INSET), i32(btn.y + 11), 12, SCIFI_CYAN)
+			}
 		}
 		draw_progress({btn.x, btn.y + btn.height + 4, PANEL_CONTENT_W, BAR_H}, orbital_defense_progress[p] / ORBITAL_DEFENSE_BUILD_TIME, SCIFI_CYAN)
 	} else if orbital_defense_level[p] == 0 {
@@ -1284,14 +1441,14 @@ update_orbital_defenses :: proc(dt: f32) {
 	update_orbital_defense_blasts(dt)
 	for p in 0..<PLANET_COUNT {
 		if orbital_defense_level[p] > 0 {
-			orbital_defense_angle[p] += dt * 0.8
+			advance_orbital_defense_aim(p, dt)
 		}
 		if orbital_defense_fire_timer[p] > 0 {
 			orbital_defense_fire_timer[p] = max(orbital_defense_fire_timer[p] - dt, 0)
 		}
 		if transit_fighters_at(p, true) == 0 {
 			orbital_defense_wave_kills[p] = 0
-		} else if orbital_defense_level[p] > 0 {
+		} else if orbital_defense_level[p] > 0 && !orbital_defense_building[p] {
 			max_kills := orbital_defense_level[p] * ORBITAL_DEFENSE_KILLS_PER_LEVEL
 			if orbital_defense_wave_kills[p] < max_kills {
 				target_pos := sector_pos(p)
@@ -1307,8 +1464,8 @@ update_orbital_defenses :: proc(dt: f32) {
 						if orbital_defense_fire_timer[p] <= 0 || d <= arrival_dist {
 							orbital_defense_wave_kills[p] += 1
 							orbital_defense_fire_timer[p] = 0.06
-							def_pos := orbital_defense_pos(p)
-							spawn_orbital_defense_blast(p, def_pos, u.position, 0.35)
+							muzzle_pos := orbital_defense_muzzle_pos_toward(p, u.position)
+							spawn_orbital_defense_blast(p, muzzle_pos, u.position, 0.35)
 							remove_unit_at(i)
 							if orbital_defense_wave_kills[p] >= max_kills { break }
 						}
@@ -1512,6 +1669,7 @@ update_production :: proc(dt: f32) {
 				orbital_defense_building[p] = false
 				orbital_defense_level[p] += 1
 				orbital_defense_hp[p] = orbital_defense_max_hp(p)
+				orbital_defense_elevation[p] = ORBITAL_DEFENSE_IDLE_ELEV
 				resume_constructing_miners(p)
 			}
 		}
@@ -2344,6 +2502,39 @@ draw_oriented_box :: proc(
 	draw_quad_3d(p1, p2, p6, p5, col)
 }
 
+// Pulsating red emergency hazard lights (ambulance-style alternating dual strobes)
+// used for orbital defenses undergoing construction or upgrade refits.
+draw_ambulance_hazard_lights :: proc(p_left, p_right: rl.Vector3, s: f32) {
+	// Alternating high-cadence strobe pulse (ambulance emergency light bar effect)
+	t := laser_anim_time * 12.0
+	phase := math.sin(t)
+	pulse_l := clamp((phase - 0.1) * 2.2, 0.0, 1.0)
+	pulse_r := clamp((-phase - 0.1) * 2.2, 0.0, 1.0)
+
+	// Crossbar bracket connecting the lights
+	rl.DrawCylinderEx(p_left, p_right, 0.016 * s, 0.016 * s, 6, rl.Color{45, 48, 55, 255})
+
+	// Left red strobe
+	rl.DrawCylinderEx(p_left - {0, 0.05 * s, 0}, p_left, 0.026 * s, 0.024 * s, 6, rl.Color{35, 38, 44, 255})
+	if pulse_l > 0.05 {
+		rl.DrawSphere(p_left, 0.038 * s, rl.Color{255, 245, 245, 255})
+		rl.DrawSphereEx(p_left, 0.09 * s * pulse_l + 0.02 * s, 8, 8, rl.Color{255, 30, 35, u8(230 * pulse_l)})
+		rl.DrawSphereEx(p_left, 0.18 * s * pulse_l + 0.03 * s, 6, 6, rl.Color{255, 10, 15, u8(95 * pulse_l)})
+	} else {
+		rl.DrawSphere(p_left, 0.032 * s, rl.Color{110, 20, 25, 255})
+	}
+
+	// Right red strobe
+	rl.DrawCylinderEx(p_right - {0, 0.05 * s, 0}, p_right, 0.026 * s, 0.024 * s, 6, rl.Color{35, 38, 44, 255})
+	if pulse_r > 0.05 {
+		rl.DrawSphere(p_right, 0.038 * s, rl.Color{255, 245, 245, 255})
+		rl.DrawSphereEx(p_right, 0.09 * s * pulse_r + 0.02 * s, 8, 8, rl.Color{255, 30, 35, u8(230 * pulse_r)})
+		rl.DrawSphereEx(p_right, 0.18 * s * pulse_r + 0.03 * s, 6, 6, rl.Color{255, 10, 15, u8(95 * pulse_r)})
+	} else {
+		rl.DrawSphere(p_right, 0.032 * s, rl.Color{110, 20, 25, 255})
+	}
+}
+
 // Cyberpunk space version of a sand-colored Flak 88 battery mounted on the
 // planet surface at the north pole.
 draw_cyberpunk_flak88 :: proc(planet_idx: int) {
@@ -2352,12 +2543,14 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 	pole := rl.Vector3{planet.position.x, planet.position.y + planet.radius, planet.position.z}
 	lit := has_vision(planet_idx)
 	level := orbital_defense_level[planet_idx]
+	is_upgrading := orbital_defense_building[planet_idx]
 
 	// Scale subtly with planet radius for consistent planetary presence
 	s: f32 = 0.84 + clamp(planet.radius * 0.07, 0.11, 0.32)
 
-	// Azimuth tracks planet spin plus tactical scanning sweep
-	azimuth := planet_spin[planet_idx] + orbital_defense_angle[planet_idx] * 0.35
+	// Azimuth and elevation dynamically track approaching enemies when active,
+	// or scan gracefully when idle, or park in maintenance cradle when upgrading.
+	azimuth, elev := orbital_defense_aim(planet_idx)
 	cos_az := math.cos(azimuth)
 	sin_az := math.sin(azimuth)
 
@@ -2365,9 +2558,6 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 	fwd := rl.Vector3{cos_az, 0, sin_az}
 	right := rl.Vector3{-sin_az, 0, cos_az}
 
-	// High-angle anti-orbital elevation with gentle breathing motion
-	elev_deg: f32 = 38.0 + 3.0 * math.sin(laser_anim_time * 1.5 + f32(planet_idx))
-	elev := elev_deg * rl.DEG2RAD
 	cos_el := math.cos(elev)
 	sin_el := math.sin(elev)
 
@@ -2395,6 +2585,10 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 		cyan_glow = rl.Color{0, 120, 130, 200}
 		mint_core = rl.Color{70, 130, 120, 200}
 		amber_lens = rl.Color{120, 70, 30, 200}
+	} else if is_upgrading {
+		// Powered-down coils and dark energy conduits while disabled during upgrade
+		cyan_glow = rl.Color{55, 50, 45, 255}
+		mint_core = rl.Color{80, 70, 60, 255}
 	}
 
 	// 1. Kreuzlafette: Central base collar & 4 cruciform outrigger legs on surface
@@ -2405,7 +2599,7 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 	rl.DrawCylinderEx(base_m, base_t, 0.40 * s, 0.36 * s, 12, sand_dark)
 
 	for d_idx in 0..<4 {
-		leg_ang := azimuth + f32(d_idx) * (math.PI / 2.0)
+		leg_ang := planet_spin[planet_idx] + f32(d_idx) * (math.PI / 2.0)
 		ldir := rl.Vector3{math.cos(leg_ang), 0, math.sin(leg_ang)}
 		l_start := pole + up * (0.08 * s) + ldir * (0.30 * s)
 		l_end   := pole + up * (0.05 * s) + ldir * (0.80 * s)
@@ -2414,7 +2608,7 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 		rl.DrawCylinderEx(l_start, l_end, 0.085 * s, 0.060 * s, 6, sand_base)
 		rl.DrawCylinderEx(l_start, l_start + ldir * (0.10 * s), 0.095 * s, 0.090 * s, 6, gunmetal)
 
-		// Cyan conduit line along the top spine of each leg
+		// Conduit line along the top spine of each leg
 		c_s := l_start + up * (0.065 * s)
 		c_e := l_end + up * (0.045 * s)
 		rl.DrawLine3D(c_s, c_e, cyan_glow)
@@ -2491,6 +2685,13 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 	rl.DrawCylinderEx(mast_b, mast_t, 0.016 * s, 0.007 * s, 4, steel_bright)
 	beacon_pulse := 0.75 + 0.25 * math.sin(laser_anim_time * 8.0 + f32(planet_idx))
 	rl.DrawSphere(mast_t, 0.022 * s, rl.Fade(cyan_glow, beacon_pulse))
+
+	// If upgrading: Pulsating Red Ambulance Lights on top of the shield!
+	if is_upgrading {
+		light_l := sh_center - right * (0.16 * s) + up * (0.26 * s)
+		light_r := sh_center + right * (0.16 * s) + up * (0.26 * s)
+		draw_ambulance_hazard_lights(light_l, light_r, s)
+	}
 
 	// 5. Gun Cradle & Breech Mechanism
 	pivot := pole + up * (0.58 * s) + fwd * (0.03 * s)
@@ -2607,6 +2808,13 @@ draw_cyberpunk_flak88_construction_site :: proc(planet_idx: int) {
 		pad_t := pole + up * (0.07 * s) + ldir * (0.75 * s)
 		rl.DrawCylinderEx(pad_b, pad_t, 0.13 * s, 0.11 * s, 8, gunmetal)
 	}
+
+	// Staging pylons with alternating ambulance pulsating hazard lights
+	st_l := pole + up * (0.65 * s) - rl.Vector3{0.35 * s, 0, 0}
+	st_r := pole + up * (0.65 * s) + rl.Vector3{0.35 * s, 0, 0}
+	rl.DrawCylinderEx(pole - rl.Vector3{0.35 * s, 0, 0}, st_l, 0.02 * s, 0.015 * s, 6, gunmetal)
+	rl.DrawCylinderEx(pole + rl.Vector3{0.35 * s, 0, 0}, st_r, 0.02 * s, 0.015 * s, 6, gunmetal)
+	draw_ambulance_hazard_lights(st_l, st_r, s)
 
 	rl.DrawCylinderEx(pole + up * (0.02 * s), pole + up * (0.03 * s), 0.38 * s, 0.38 * s, 16, cyan_glow)
 	rl.DrawCylinderEx(pole + up * (0.18 * s), pole + up * (0.19 * s), 0.34 * s, 0.34 * s, 16, cyan_glow)

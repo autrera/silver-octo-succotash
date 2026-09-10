@@ -4097,12 +4097,12 @@ orbital_defense_launches_laser_blast_at_close_range :: proc(t: ^testing.T) {
 	units[0].position = fighter_target
 
 	update_orbital_defenses(0.05)
-	def_pos := orbital_defense_pos(EARTH)
+	muzzle_pos := orbital_defense_muzzle_pos_toward(EARTH, fighter_target)
 
 	testing.expect(t, unit_count == 0, "fighter at r + 3.5 is intercepted and destroyed")
 	testing.expect(t, orbital_defense_blasts[0].active, "orbital defense blast launched")
 	testing.expect(t, orbital_defense_blasts[0].planet == EARTH, "blast recorded for Earth")
-	testing.expect(t, distance(orbital_defense_blasts[0].from, def_pos) < 0.001, "blast launched from orbital defense station")
+	testing.expect(t, distance(orbital_defense_blasts[0].from, muzzle_pos) < 0.001, "blast launched from orbital defense gun muzzle tip")
 	testing.expect(t, distance(orbital_defense_blasts[0].to, fighter_target) < 0.001, "blast directed at destroyed fighter position")
 
 	// Advancing simulation past blast duration deactivates the blast
@@ -4110,10 +4110,154 @@ orbital_defense_launches_laser_blast_at_close_range :: proc(t: ^testing.T) {
 	testing.expect(t, !orbital_defense_blasts[0].active, "blast expires after duration")
 
 	// Reset world cleans up all blasts
-	spawn_orbital_defense_blast(EARTH, def_pos, fighter_target, 0.35)
+	spawn_orbital_defense_blast(EARTH, muzzle_pos, fighter_target, 0.35)
 	testing.expect(t, orbital_defense_blasts[0].active, "active blast present")
 	reset_world()
 	testing.expect(t, !orbital_defense_blasts[0].active, "reset_world clears all active blasts")
+}
+
+@(test)
+orbital_defense_upgrade_disables_firing_until_complete :: proc(t: ^testing.T) {
+	reset_world()
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_hp[EARTH] = 100
+	minerals = 1000
+
+	// Provide 10 miners on Earth for construction crew
+	for _ in 0..<10 { add_miner(EARTH) }
+
+	// Begin upgrade to Level 2
+	testing.expect(t, can_build_orbital_defense(EARTH), "can initiate upgrade")
+	start_orbital_defense_construction(EARTH)
+	testing.expect(t, orbital_defense_building[EARTH], "orbital defense upgrade is in progress")
+	testing.expect(t, constructing_miners(EARTH) == 10, "10 miners assigned to construction crew on Earth")
+
+	// While upgrading, the gun is parked in maintenance position (16 degrees elevation)
+	_, elev := orbital_defense_aim(EARTH)
+	testing.expect(t, abs(elev - (16.0 * rl.DEG2RAD)) < 0.001, "gun elevation parked at 16 degrees during upgrade")
+
+	// Spawn an enemy fighter in transit targeting Earth within engagement range (distance 6.4 <= 6.8)
+	target_pos := sector_pos(EARTH)
+	enemy_pos := target_pos + rl.Vector3{0, 5.0, 4.0}
+	units[unit_count] = Unit{
+		kind = .COMBAT,
+		state = .TRANSIT,
+		position = enemy_pos,
+		home_planet = VENUS,
+		affiliation = VENUS,
+		target_planet = EARTH,
+		enemy = true,
+		progress = 0.8,
+	}
+	unit_count += 1
+	initial_unit_count := unit_count
+
+	// Update defenses: since defense is disabled during upgrade, it must NOT fire or destroy the fighter
+	update_orbital_defenses(0.05)
+	testing.expect(t, unit_count == initial_unit_count, "inbound fighter is NOT destroyed while defense is upgrading")
+	testing.expect(t, !orbital_defense_blasts[0].active, "no blast fired while defense is upgrading")
+
+	// Complete the upgrade
+	update_production(ORBITAL_DEFENSE_BUILD_TIME)
+	testing.expect(t, !orbital_defense_building[EARTH], "upgrade is now complete")
+	testing.expect(t, orbital_defense_level[EARTH] == 2, "defense reached Level 2")
+
+	// Gun is now operational and aims at incoming hostiles
+	_, aim_el := orbital_defense_aim(EARTH)
+	testing.expect(t, aim_el > (16.0 * rl.DEG2RAD), "gun is elevated out of maintenance cradle")
+
+	// Defenses should now engage and destroy the incoming fighter from the muzzle tip
+	update_orbital_defenses(0.05)
+	testing.expect(t, unit_count == initial_unit_count - 1, "inbound fighter intercepted and destroyed after upgrade finishes")
+	testing.expect(t, orbital_defense_blasts[0].active, "blast fired after upgrade completes")
+	expected_muzzle := orbital_defense_muzzle_pos_toward(EARTH, enemy_pos)
+	testing.expect(t, distance(orbital_defense_blasts[0].from, expected_muzzle) < 0.001, "blast launched from gun muzzle tip")
+}
+
+@(test)
+orbital_defense_aim_tracks_approaching_enemy_and_clamps_elevation :: proc(t: ^testing.T) {
+	reset_world()
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_hp[EARTH] = 100
+
+	// Without enemy, aim is idle scan
+	az_idle, el_idle := orbital_defense_aim(EARTH)
+	testing.expect(t, el_idle > 0.4 && el_idle < 0.8, "idle elevation scans around anti-orbital angle")
+
+	// Position an approaching enemy directly along +X axis at {10, 5, 0}
+	units[unit_count] = Unit{
+		kind = .COMBAT,
+		state = .TRANSIT,
+		position = {10, 5, 0},
+		home_planet = VENUS,
+		affiliation = VENUS,
+		target_planet = EARTH,
+		enemy = true,
+		progress = 0.5,
+	}
+	unit_count += 1
+
+	az, el := orbital_defense_aim(EARTH)
+	// Azimuth along +X should be near 0 (atan2(0, 10))
+	testing.expect(t, abs(az) < 0.01, "aim azimuth tracks toward enemy along +X")
+	testing.expect(t, el >= 8.0 * rl.DEG2RAD && el <= 85.0 * rl.DEG2RAD, "aim elevation clamped in valid range")
+
+	// Muzzle position along +X must have positive X greater than Earth radius
+	muzzle := orbital_defense_muzzle_pos(EARTH)
+	testing.expect(t, muzzle.x > 0.5, "muzzle tip extends forward along aim vector")
+	testing.expect(t, muzzle.y > planets[EARTH].radius, "muzzle tip is above planetary surface")
+}
+
+@(test)
+orbital_defense_rotates_smoothly_to_target_and_continues_spin_after_firing :: proc(t: ^testing.T) {
+	reset_world()
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_hp[EARTH] = 100
+	orbital_defense_angle[EARTH] = 0
+	orbital_defense_elevation[EARTH] = ORBITAL_DEFENSE_IDLE_ELEV
+
+	// 1. Idle scan advances continuously
+	update_orbital_defenses(0.5)
+	az_idle, _ := orbital_defense_aim(EARTH)
+	testing.expect(t, abs(az_idle - 0.4) < 0.01, "idle scan advances steadily")
+
+	// 2. Incoming enemy detected at +Z axis (azimuth ~ 1.57 rad)
+	enemy_pos := rl.Vector3{0, 5, 20}
+	units[unit_count] = Unit{
+		kind = .COMBAT,
+		state = .TRANSIT,
+		position = enemy_pos,
+		home_planet = VENUS,
+		affiliation = VENUS,
+		target_planet = EARTH,
+		enemy = true,
+		progress = 0.2,
+	}
+	unit_count += 1
+
+	target_az, target_el := orbital_defense_aim_toward(EARTH, enemy_pos)
+
+	// Small step (0.1s): turret rotates towards target without warping instantly
+	update_orbital_defenses(0.1)
+	az_turning, _ := orbital_defense_aim(EARTH)
+	testing.expect(t, az_turning > az_idle + 0.1, "turret has begun rotating towards enemy")
+	testing.expect(t, az_turning < target_az - 0.2, "turret does not warp instantly to target angle")
+
+	// Larger step (0.5s): turret completes traversal and locks onto incoming target
+	update_orbital_defenses(0.5)
+	az_locked, el_locked := orbital_defense_aim(EARTH)
+	testing.expect(t, abs(shortest_angle_diff(target_az, az_locked)) < 0.01, "turret smoothly locks onto incoming target azimuth")
+	testing.expect(t, abs(el_locked - target_el) < 0.01, "turret adjusts elevation to match target")
+
+	// 3. Enemy is eliminated (destroyed)
+	unit_count = 0
+	az_at_kill := az_locked
+
+	// Turret resumes scanning forward directly from its firing position
+	update_orbital_defenses(0.5)
+	az_after, _ := orbital_defense_aim(EARTH)
+	expected_after := az_at_kill + ORBITAL_DEFENSE_SCAN_SPEED * 0.5
+	testing.expect(t, abs(az_after - expected_after) < 0.01, "turret continues scan forward from firing position without snapping back")
 }
 
 @(test)
