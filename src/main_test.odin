@@ -3945,10 +3945,15 @@ orbital_defense_build_requirements :: proc(t: ^testing.T) {
 	testing.expect(t, !can_build_orbital_defense(MARS), "cannot build defense without 1000 minerals")
 	minerals = 1000
 
-	// Lacks miners: remove 1 miner -> only 9 miners
+	// Outposts can queue defense before or with refinery, even with fewer than 10 miners
 	remove_unit_at(unit_count - 1)
 	testing.expect(t, player_miners_count(MARS) == 9, "9 miners assigned")
-	testing.expect(t, !can_build_orbital_defense(MARS), "cannot build defense with fewer than 10 miners")
+	testing.expect(t, can_build_orbital_defense(MARS), "can build defense before refinery and queue with fewer than 10 miners")
+
+	// Can build defense concurrently while refinery is building
+	refinery_building[MARS] = true
+	testing.expect(t, can_build_orbital_defense(MARS), "can build defense at the same time as refinery")
+	refinery_building[MARS] = false
 
 	// Earth starts liberated, needs 10 miners and 1000 minerals
 	for i in 0..<10 { add_miner(EARTH) }
@@ -4000,6 +4005,228 @@ orbital_defense_upgrades_up_to_level_10 :: proc(t: ^testing.T) {
 	minerals = 2000
 	testing.expect(t, orbital_defense_level[VENUS] == 10, "at max level 10")
 	testing.expect(t, !can_build_orbital_defense(VENUS), "cannot upgrade past level 10")
+}
+
+@(test)
+orbital_defense_can_build_before_refinery :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[MARS] = 0 // Liberate Mars
+	selected_planet = MARS
+	testing.expect(t, !refinery_built[MARS], "refinery not built")
+	testing.expect(t, !refinery_building[MARS], "refinery not building")
+
+	// Can start orbital defense before refinery with 1000 minerals even with 0 miners
+	minerals = 1000
+	testing.expect(t, can_build_orbital_defense(MARS), "can build orbital defense before refinery")
+	start_orbital_defense_construction(MARS)
+	testing.expect(t, orbital_defense_building[MARS], "defense building queued")
+	testing.expect(t, minerals == 0, "1000 minerals deducted")
+	testing.expect(t, constructing_miners(MARS) == 0, "no miners yet")
+
+	// Build progress frozen with no crew
+	update_production(10.0)
+	testing.expect(t, orbital_defense_progress[MARS] == 0, "no progress without crew")
+
+	// Add 10 miners to Mars
+	for i in 0..<10 { add_miner(MARS) }
+	// Start simulation: miners auto-join construction
+	for i in 0..<unit_count {
+		units[i].state = .IDLE
+		update_miner(&units[i], i, 0.1)
+	}
+	testing.expect(t, constructing_miners(MARS) == 10, "10 miners auto-joined defense construction")
+
+	// Advance 60s to complete defense
+	update_production(ORBITAL_DEFENSE_BUILD_TIME)
+	testing.expect(t, !orbital_defense_building[MARS], "defense completed")
+	testing.expect(t, orbital_defense_level[MARS] == 1, "defense reached level 1")
+	testing.expect(t, orbital_defense_hp[MARS] == 100, "defense has 100 HP")
+
+	// Without a refinery, miners enter IDLE (cannot mine without refinery)
+	for i in 0..<unit_count {
+		testing.expect(t, units[i].state == .IDLE, "miners enter IDLE when completed without refinery")
+	}
+
+	// Subsequently building refinery pulls the IDLE miners
+	minerals = 500
+	start_refinery_construction(MARS)
+	testing.expect(t, refinery_building[MARS], "refinery starts building")
+	testing.expect(t, constructing_miners(MARS) == 10, "idle miners joined refinery construction")
+
+	// Advance 60s to complete refinery
+	update_production(REFINERY_BUILD_TIME)
+	testing.expect(t, refinery_built[MARS], "refinery completed")
+	for i in 0..<unit_count {
+		testing.expect(t, units[i].state == .MINING, "miners resume mining once refinery is built")
+	}
+}
+
+@(test)
+orbital_defense_and_refinery_concurrent_construction :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[VENUS] = 0 // Liberate Venus
+	selected_planet = VENUS
+	minerals = 1500 // 1000 for defense + 350 for Venus refinery (Venus cap 35 * 10 = 350)
+
+	// Start refinery first
+	start_refinery_construction(VENUS)
+	testing.expect(t, refinery_building[VENUS], "refinery is building")
+
+	// Start orbital defense at the same time
+	testing.expect(t, can_build_orbital_defense(VENUS), "can build defense while refinery is building")
+	start_orbital_defense_construction(VENUS)
+	testing.expect(t, orbital_defense_building[VENUS], "orbital defense is building concurrently")
+	testing.expect(t, minerals == 1500 - 350 - 1000, "both costs deducted")
+
+	// Assemble 20 miners (10 for refinery, 10 for orbital defense)
+	for i in 0..<20 { add_miner(VENUS) }
+	for i in 0..<unit_count {
+		units[i].state = .IDLE
+		update_miner(&units[i], i, 0.1)
+	}
+	testing.expect(t, refinery_constructing_miners(VENUS) == 10, "10 miners assigned to refinery")
+	testing.expect(t, orbital_defense_constructing_miners(VENUS) == 10, "10 miners assigned to defense")
+	testing.expect(t, constructing_miners(VENUS) == 20, "20 miners assemble in total")
+
+	// Advance 30s: both progress concurrently
+	update_production(30.0)
+	testing.expect(t, abs(refinery_progress[VENUS] - 30.0) < 0.01, "refinery progress 30s")
+	testing.expect(t, abs(orbital_defense_progress[VENUS] - 30.0) < 0.01, "defense progress 30s")
+
+	// Advance another 30s: both complete at 60s
+	update_production(30.0)
+	testing.expect(t, !refinery_building[VENUS] && refinery_built[VENUS], "refinery built")
+	testing.expect(t, !orbital_defense_building[VENUS] && orbital_defense_level[VENUS] == 1, "defense built")
+	for i in 0..<unit_count {
+		testing.expect(t, units[i].state == .MINING, "all miners resume mining when both complete")
+	}
+}
+
+@(test)
+queued_both_with_ten_miners_builds_sequentially_without_double_counting :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[MARS] = 0 // Liberate Mars
+	selected_planet = MARS
+	minerals = 1500 // 500 for Mars refinery + 1000 for defense
+
+	// Start refinery first, then orbital defense
+	start_refinery_construction(MARS)
+	start_orbital_defense_construction(MARS)
+	testing.expect(t, refinery_building[MARS], "refinery is building")
+	testing.expect(t, orbital_defense_building[MARS], "defense is queued")
+
+	// Send only 10 miners to the planet
+	for i in 0..<10 { add_miner(MARS) }
+	for i in 0..<unit_count {
+		units[i].state = .IDLE
+		update_miner(&units[i], i, 0.1)
+	}
+
+	// 10 miners must ONLY join the first queued project (refinery); defense must have 0
+	testing.expect(t, refinery_constructing_miners(MARS) == 10, "10 miners assigned to refinery")
+	testing.expect(t, orbital_defense_constructing_miners(MARS) == 0, "defense has 0 crew, waiting for miners")
+	testing.expect(t, constructing_miners(MARS) == 10, "total constructing miners is 10")
+
+	// Advance 30s: only refinery advances; defense progress is frozen
+	update_production(30.0)
+	testing.expect(t, abs(refinery_progress[MARS] - 30.0) < 0.01, "refinery progressed 30s")
+	testing.expect(t, orbital_defense_progress[MARS] == 0, "defense made 0 progress without crew")
+
+	// Advance 30s: refinery completes at 60s total
+	update_production(30.0)
+	testing.expect(t, refinery_built[MARS], "refinery completed first")
+	testing.expect(t, !refinery_building[MARS], "refinery no longer building")
+
+	// The 10 miners automatically transfer to the orbital defense!
+	testing.expect(t, orbital_defense_constructing_miners(MARS) == 10, "10 miners transferred to defense")
+	testing.expect(t, orbital_defense_building[MARS], "defense is now actively building")
+
+	// Advance 60s: orbital defense completes
+	update_production(60.0)
+	testing.expect(t, !orbital_defense_building[MARS], "defense completed")
+	testing.expect(t, orbital_defense_level[MARS] == 1, "defense reached level 1")
+
+	// All 10 miners now resume mining
+	for i in 0..<unit_count {
+		testing.expect(t, units[i].state == .MINING, "all miners resume mining after all projects complete")
+	}
+}
+
+@(test)
+staggered_concurrent_construction_preserves_crew :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[MARS] = 0
+	selected_planet = MARS
+	minerals = 2000
+
+	// Start refinery first
+	start_refinery_construction(MARS)
+	for i in 0..<10 { add_miner(MARS) }
+	for i in 0..<unit_count {
+		units[i].state = .IDLE
+		update_miner(&units[i], i, 0.1)
+	}
+	testing.expect(t, refinery_constructing_miners(MARS) == 10, "10 miners constructing refinery")
+
+	// Advance refinery 30s
+	update_production(30.0)
+	testing.expect(t, abs(refinery_progress[MARS] - 30.0) < 0.01, "refinery at 30s")
+
+	// Now start orbital defense 30s later (with only 10 miners on planet)
+	start_orbital_defense_construction(MARS)
+	testing.expect(t, orbital_defense_building[MARS], "defense building")
+	testing.expect(t, orbital_defense_progress[MARS] == 0, "defense starts at 0s")
+	testing.expect(t, orbital_defense_constructing_miners(MARS) == 0, "defense has 0 crew while refinery has the crew")
+
+	// Advance 30s: refinery completes (60s total), defense stayed at 0s because refinery had crew
+	update_production(30.0)
+	testing.expect(t, refinery_built[MARS], "refinery completed first")
+	testing.expect(t, !refinery_building[MARS], "refinery no longer building")
+	testing.expect(t, orbital_defense_building[MARS], "defense still building")
+	testing.expect(t, orbital_defense_constructing_miners(MARS) == 10, "crew transfers to orbital defense")
+
+	// Advance 60s: orbital defense completes
+	update_production(60.0)
+	testing.expect(t, !orbital_defense_building[MARS], "defense completed")
+	testing.expect(t, orbital_defense_level[MARS] == 1, "defense reached level 1")
+
+	// Now both are done: crew resumes mining
+	for i in 0..<unit_count {
+		testing.expect(t, units[i].state == .MINING, "crew resumes mining after all construction finishes")
+	}
+}
+
+@(test)
+inspector_clicks_and_shortcut_build_concurrent_orbital_defense :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = MARS
+	enemy_base_hp[MARS] = 0
+	minerals = 2000
+	panel_x: f32 = 800.0
+
+	// Start refinery via click
+	ref_btn := refinery_button_rect(panel_x)
+	handle_inspector_click({ref_btn.x + 5, ref_btn.y + 5}, panel_x)
+	testing.expect(t, refinery_building[MARS], "refinery starts building via click")
+
+	// Orbital defense button is shifted down for the progress bar
+	def_btn := orbital_defense_button_rect(panel_x, MARS)
+	testing.expect(t, can_build_orbital_defense(MARS), "defense is buildable while refinery is building")
+
+	// Click orbital defense button while refinery is building
+	handle_inspector_click({def_btn.x + 5, def_btn.y + 5}, panel_x)
+	testing.expect(t, orbital_defense_building[MARS], "defense starts building via click concurrently with refinery")
+
+	// Reset and test keyboard shortcut [O] while refinery is building
+	reset_world()
+	selected_planet = MARS
+	enemy_base_hp[MARS] = 0
+	minerals = 2000
+	start_refinery_construction(MARS)
+	testing.expect(t, refinery_building[MARS], "refinery is building")
+	triggered := trigger_selected_orbital_defense()
+	testing.expect(t, triggered, "trigger_selected_orbital_defense succeeds while refinery is building")
+	testing.expect(t, orbital_defense_building[MARS], "defense building triggered via O shortcut")
 }
 
 @(test)

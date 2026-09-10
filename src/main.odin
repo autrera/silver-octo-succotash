@@ -116,6 +116,7 @@ LASER_BOLT_LEN :: 0.65
 
 Unit_Type :: enum {MINING, COMBAT}
 Unit_State :: enum {IDLE, TRANSIT, MINING, RETURNING, DEPOSITING, GUARDING, CONSTRUCTING}
+Build_Target :: enum {NONE, BASE, REFINERY, ORBITAL_DEFENSE}
 
 Planet :: struct {
 	name: cstring,
@@ -234,6 +235,7 @@ Unit :: struct {
 	// Control-group assignment: 0 = none, 1..9 = squad number. Living on the
 	// unit itself keeps squads pruned as units are destroyed and shifted.
 	squad: int,
+	build_target: Build_Target,
 }
 
 planets := [PLANET_COUNT]Planet{
@@ -310,6 +312,10 @@ orbital_defense_elevation: [PLANET_COUNT]f32
 orbital_defense_wave_kills: [PLANET_COUNT]int
 orbital_defense_reset_timer: [PLANET_COUNT]f32
 orbital_defense_fire_timer: [PLANET_COUNT]f32
+construction_seq_counter := 0
+refinery_build_order: [PLANET_COUNT]int
+orbital_defense_build_order: [PLANET_COUNT]int
+base_build_order: [PLANET_COUNT]int
 
 Orbital_Defense_Blast :: struct {
 	active: bool,
@@ -538,6 +544,10 @@ reset_world :: proc() {
 	orbital_defense_reset_timer = {}
 	orbital_defense_fire_timer = {}
 	orbital_defense_blasts = {}
+	construction_seq_counter = 0
+	refinery_build_order = {}
+	orbital_defense_build_order = {}
+	base_build_order = {}
 	minerals = 350
 	enemy_wave_timer = 0
 	wave_started = false
@@ -964,6 +974,8 @@ start_base_construction :: proc() {
 	minerals -= BASE_COST
 	base_build_planet = selected_planet
 	base_build_progress = 0
+	construction_seq_counter += 1
+	base_build_order[EARTH] = construction_seq_counter
 }
 
 // Refinery cost: amount of drones required to mine the planet times 10.
@@ -996,11 +1008,14 @@ start_refinery_construction :: proc(planet: int) {
 	minerals -= refinery_cost(planet)
 	refinery_building[planet] = true
 	refinery_progress[planet] = 0
+	construction_seq_counter += 1
+	refinery_build_order[planet] = construction_seq_counter
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.kind == .MINING && !u.enemy && u.target_planet == planet && (u.state == .IDLE || u.state == .MINING) {
-			if constructing_miners(planet) < REFINERY_CONSTRUCT_MINERS {
+			if refinery_constructing_miners(planet) < REFINERY_CONSTRUCT_MINERS {
 				u.state = .CONSTRUCTING
+				u.build_target = .REFINERY
 				u.progress = 0
 			}
 		}
@@ -1021,6 +1036,83 @@ constructing_miners :: proc(p: int) -> int {
 		if u.kind == .MINING && !u.enemy && u.state == .CONSTRUCTING && u.target_planet == p { count += 1 }
 	}
 	return count
+}
+
+refinery_constructing_miners :: proc(p: int) -> int {
+	count := 0
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .MINING && !u.enemy && u.state == .CONSTRUCTING && u.target_planet == p {
+			if u.build_target == .REFINERY || (u.build_target == .NONE && !orbital_defense_building[p] && base_build_planet != p) {
+				count += 1
+			}
+		}
+	}
+	return count
+}
+
+orbital_defense_constructing_miners :: proc(p: int) -> int {
+	count := 0
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .MINING && !u.enemy && u.state == .CONSTRUCTING && u.target_planet == p {
+			if u.build_target == .ORBITAL_DEFENSE || (u.build_target == .NONE && !refinery_building[p] && base_build_planet != p) {
+				count += 1
+			}
+		}
+	}
+	return count
+}
+
+base_constructing_miners :: proc(p: int) -> int {
+	count := 0
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .MINING && !u.enemy && u.state == .CONSTRUCTING && u.target_planet == p {
+			if u.build_target == .BASE || (u.build_target == .NONE && !refinery_building[p] && !orbital_defense_building[p]) {
+				count += 1
+			}
+		}
+	}
+	return count
+}
+
+planet_next_needed_build_target :: proc(p: int) -> Build_Target {
+	if p < 0 || p >= PLANET_COUNT { return .NONE }
+
+	if p == EARTH {
+		needs_base := (base_build_planet == EARTH) && base_constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS
+		needs_defense := orbital_defense_building[EARTH] && orbital_defense_constructing_miners(EARTH) < ORBITAL_DEFENSE_CONSTRUCT_MINERS
+
+		if needs_base && needs_defense {
+			if base_build_order[EARTH] <= orbital_defense_build_order[EARTH] {
+				return .BASE
+			} else {
+				return .ORBITAL_DEFENSE
+			}
+		} else if needs_base {
+			return .BASE
+		} else if needs_defense {
+			return .ORBITAL_DEFENSE
+		}
+		return .NONE
+	}
+
+	needs_refinery := refinery_building[p] && refinery_constructing_miners(p) < REFINERY_CONSTRUCT_MINERS
+	needs_defense := orbital_defense_building[p] && orbital_defense_constructing_miners(p) < ORBITAL_DEFENSE_CONSTRUCT_MINERS
+
+	if needs_refinery && needs_defense {
+		if refinery_build_order[p] <= orbital_defense_build_order[p] {
+			return .REFINERY
+		} else {
+			return .ORBITAL_DEFENSE
+		}
+	} else if needs_refinery {
+		return .REFINERY
+	} else if needs_defense {
+		return .ORBITAL_DEFENSE
+	}
+	return .NONE
 }
 
 // True while any player miner not already on the build crew is assigned to
@@ -1045,13 +1137,29 @@ constructing_miners_at :: proc(p: int) -> int {
 	return count
 }
 
-// Pull available Earth mining drones into the build site until n are assigned.
-resume_constructing_miners :: proc(p: int) {
+// Resume constructing miners after a structure completes.
+// If another structure on the planet still needs crew, miners transition to that project.
+// When all construction completes, miners resume .MINING if the planet has an
+// operational refinery (or Earth), otherwise they hold in .IDLE in orbit.
+resume_constructing_miners :: proc(p: int, finished: Build_Target = .NONE) {
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
-		if u.kind == .MINING && u.state == .CONSTRUCTING && u.target_planet == p {
-			u.state = .MINING
-			u.progress = 0
+		if u.kind == .MINING && !u.enemy && u.state == .CONSTRUCTING && u.target_planet == p {
+			if finished == .NONE || u.build_target == finished || u.build_target == .NONE {
+				next_target := planet_next_needed_build_target(p)
+				if next_target != .NONE {
+					u.build_target = next_target
+					u.progress = 0
+				} else {
+					u.build_target = .NONE
+					u.progress = 0
+					if planet_can_mine(p) {
+						u.state = .MINING
+					} else {
+						u.state = .IDLE
+					}
+				}
+			}
 		}
 	}
 }
@@ -1326,9 +1434,11 @@ can_build_orbital_defense :: proc(planet: int) -> bool {
 	if orbital_defense_building[planet] { return false }
 	if orbital_defense_level[planet] >= ORBITAL_DEFENSE_MAX_LEVEL { return false }
 	if minerals < ORBITAL_DEFENSE_COST { return false }
-	if refinery_building[planet] { return false }
-	if planet == EARTH && base_build_planet == EARTH { return false }
-	return player_miners_count(planet) >= ORBITAL_DEFENSE_CONSTRUCT_MINERS
+	if planet == EARTH {
+		if base_build_planet == EARTH { return false }
+		return player_miners_count(EARTH) >= ORBITAL_DEFENSE_CONSTRUCT_MINERS
+	}
+	return true
 }
 
 start_orbital_defense_construction :: proc(planet: int) {
@@ -1337,6 +1447,8 @@ start_orbital_defense_construction :: proc(planet: int) {
 	orbital_defense_building[planet] = true
 	orbital_defense_progress[planet] = 0
 	orbital_defense_elevation[planet] = ORBITAL_DEFENSE_PARK_ELEV
+	construction_seq_counter += 1
+	orbital_defense_build_order[planet] = construction_seq_counter
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.kind == .MINING && !u.enemy && u.state != .CONSTRUCTING {
@@ -1347,8 +1459,9 @@ start_orbital_defense_construction :: proc(planet: int) {
 				is_match = (u.target_planet == planet) && (u.state == .MINING || u.state == .IDLE)
 			}
 			if is_match {
-				if constructing_miners(planet) < ORBITAL_DEFENSE_CONSTRUCT_MINERS {
+				if orbital_defense_constructing_miners(planet) < ORBITAL_DEFENSE_CONSTRUCT_MINERS {
 					u.state = .CONSTRUCTING
+					u.build_target = .ORBITAL_DEFENSE
 					u.progress = 0
 					u.target_planet = planet
 					u.affiliation = planet
@@ -1431,8 +1544,8 @@ draw_orbital_defense_inspector_section :: proc(x: f32, btn: rl.Rectangle, p: int
 	if orbital_defense_building[p] {
 		draw_chamfered_panel(btn, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
 		draw_corner_brackets(btn, 2, 6, SCIFI_CYAN)
-		if constructing_miners(p) < ORBITAL_DEFENSE_CONSTRUCT_MINERS {
-			rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", constructing_miners(p), ORBITAL_DEFENSE_CONSTRUCT_MINERS), i32(btn.x + CARD_INSET), i32(btn.y + 12), 11, SCIFI_CYAN)
+		if orbital_defense_constructing_miners(p) < ORBITAL_DEFENSE_CONSTRUCT_MINERS {
+			rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", orbital_defense_constructing_miners(p), ORBITAL_DEFENSE_CONSTRUCT_MINERS), i32(btn.x + CARD_INSET), i32(btn.y + 12), 11, SCIFI_CYAN)
 		} else {
 			remaining := ORBITAL_DEFENSE_BUILD_TIME - orbital_defense_progress[p]
 			if orbital_defense_level[p] == 0 {
@@ -1659,15 +1772,15 @@ cancel_last_queued :: proc() -> bool {
 update_production :: proc(dt: f32) {
 	if base_build_planet >= 0 {
 		// The build clock only runs with a full crew; deposits auto-fill it.
-		if constructing_miners(base_build_planet) >= BASE_CONSTRUCT_MINERS {
+		if base_constructing_miners(base_build_planet) >= BASE_CONSTRUCT_MINERS {
 			base_build_progress += dt
 		}
 		if base_build_progress >= BASE_CONSTRUCT_TIME {
 			p := base_build_planet
 			base_counts[p] += 1
-			resume_constructing_miners(p)
 			base_build_planet = -1
 			base_build_progress = 0
+			resume_constructing_miners(p, .BASE)
 			// The new base's production line picks up waiting queue items at
 			// once, without a new unit being queued.
 			fill_production_lines(p)
@@ -1675,20 +1788,20 @@ update_production :: proc(dt: f32) {
 	}
 	for p in 0..<PLANET_COUNT {
 		if refinery_building[p] {
-			if constructing_miners(p) >= REFINERY_CONSTRUCT_MINERS {
+			if refinery_constructing_miners(p) >= REFINERY_CONSTRUCT_MINERS {
 				refinery_progress[p] += dt
 			}
 			if refinery_progress[p] >= REFINERY_BUILD_TIME {
 				refinery_progress[p] = 0
 				refinery_building[p] = false
 				refinery_built[p] = true
-				resume_constructing_miners(p)
+				resume_constructing_miners(p, .REFINERY)
 			}
 		}
 	}
 	for p in 0..<PLANET_COUNT {
 		if orbital_defense_building[p] {
-			if constructing_miners(p) >= ORBITAL_DEFENSE_CONSTRUCT_MINERS {
+			if orbital_defense_constructing_miners(p) >= ORBITAL_DEFENSE_CONSTRUCT_MINERS {
 				orbital_defense_progress[p] += dt
 			}
 			if orbital_defense_progress[p] >= ORBITAL_DEFENSE_BUILD_TIME {
@@ -1697,7 +1810,7 @@ update_production :: proc(dt: f32) {
 				orbital_defense_level[p] += 1
 				orbital_defense_hp[p] = orbital_defense_max_hp(p)
 				orbital_defense_elevation[p] = ORBITAL_DEFENSE_IDLE_ELEV
-				resume_constructing_miners(p)
+				resume_constructing_miners(p, .ORBITAL_DEFENSE)
 			}
 		}
 	}
@@ -2363,6 +2476,7 @@ issue_group_order :: proc(planet: int) {
 		units[i].target_planet = planet
 		units[i].affiliation = planet
 		units[i].progress = 0
+		units[i].build_target = .NONE
 		if units[i].kind == .MINING {
 			units[i].state = .TRANSIT
 		} else {
@@ -2495,8 +2609,10 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 		travel(u, target, MINING_TRANSIT_SPEED * dt)
 		if distance(u.position, target) <= planets[u.target_planet].radius + 1.0 {
 			u.position = target
-			if !u.enemy && (refinery_building[u.target_planet] || orbital_defense_building[u.target_planet]) && constructing_miners(u.target_planet) < ORBITAL_DEFENSE_CONSTRUCT_MINERS {
+			target_project := planet_next_needed_build_target(u.target_planet)
+			if !u.enemy && target_project != .NONE {
 				u.state = .CONSTRUCTING
+				u.build_target = target_project
 				u.progress = 0
 			} else if planet_can_mine(u.target_planet) {
 				u.state = .MINING
@@ -2531,10 +2647,11 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 			// they join the build crew instead of transiting back out. Earth-
 			// assigned drones join first; a foreign-route miner only joins once
 			// no Earth-assigned miner remains available, so its route is starved last.
-			if ((base_build_planet == EARTH && constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS) ||
-			    (orbital_defense_building[EARTH] && constructing_miners(EARTH) < ORBITAL_DEFENSE_CONSTRUCT_MINERS)) && !u.enemy {
+			target_project := planet_next_needed_build_target(EARTH)
+			if target_project != .NONE && !u.enemy {
 				if u.target_planet == EARTH || u.affiliation == EARTH || !earth_assigned_miner_available() {
 					u.state = .CONSTRUCTING
+					u.build_target = target_project
 					u.target_planet = EARTH
 					u.affiliation = EARTH
 				}
@@ -2544,8 +2661,10 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 		// Held at an occupied or unrefined planet: join refinery or orbital defense construction if building and crew needed,
 		// or resume mining once it can be mined.
 		// Otherwise the hold time feeds the scout survival clock.
-		if !u.enemy && (refinery_building[u.target_planet] || orbital_defense_building[u.target_planet]) && constructing_miners(u.target_planet) < ORBITAL_DEFENSE_CONSTRUCT_MINERS {
+		target_project := planet_next_needed_build_target(u.target_planet)
+		if !u.enemy && target_project != .NONE {
 			u.state = .CONSTRUCTING
+			u.build_target = target_project
 			u.progress = 0
 		} else if planet_can_mine(u.target_planet) {
 			u.state = .MINING
@@ -3435,8 +3554,8 @@ draw_earth_inspector :: proc(x: f32) {
 		if base_build_planet == EARTH {
 			draw_chamfered_panel(base_button, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
 			draw_corner_brackets(base_button, 2, 6, SCIFI_CYAN)
-			if constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS {
-				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", constructing_miners(EARTH), BASE_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 12, 11, SCIFI_CYAN)
+			if base_constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS {
+				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", base_constructing_miners(EARTH), BASE_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 12, 11, SCIFI_CYAN)
 			} else {
 				rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), i32(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 11, 13, SCIFI_CYAN)
 			}
@@ -3577,8 +3696,8 @@ draw_outpost_inspector :: proc(x: f32) {
 		if refinery_building[selected_planet] {
 			draw_chamfered_panel(btn, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
 			draw_corner_brackets(btn, 2, 6, SCIFI_CYAN)
-			if constructing_miners(selected_planet) < REFINERY_CONSTRUCT_MINERS {
-				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", constructing_miners(selected_planet), REFINERY_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 12), 11, SCIFI_CYAN)
+			if refinery_constructing_miners(selected_planet) < REFINERY_CONSTRUCT_MINERS {
+				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", refinery_constructing_miners(selected_planet), REFINERY_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 12), 11, SCIFI_CYAN)
 			} else {
 				remaining := REFINERY_BUILD_TIME - refinery_progress[selected_planet]
 				rl.DrawText(rl.TextFormat("REFINERY  %3.1fs", remaining), i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 11), 13, SCIFI_CYAN)
@@ -6062,6 +6181,26 @@ parse_unit_state :: proc(s: string) -> (Unit_State, bool) {
 	}
 }
 
+build_target_to_string :: proc(b: Build_Target) -> string {
+	switch b {
+	case .NONE: return "NONE"
+	case .BASE: return "BASE"
+	case .REFINERY: return "REFINERY"
+	case .ORBITAL_DEFENSE: return "ORBITAL_DEFENSE"
+	}
+	return "NONE"
+}
+
+parse_build_target :: proc(s: string) -> (Build_Target, bool) {
+	switch s {
+	case "NONE": return .NONE, true
+	case "BASE": return .BASE, true
+	case "REFINERY": return .REFINERY, true
+	case "ORBITAL_DEFENSE": return .ORBITAL_DEFENSE, true
+	case: return .NONE, false
+	}
+}
+
 serialize_game_state :: proc(allocator := context.temp_allocator) -> string {
 	b: strings.Builder
 	strings.builder_init(&b, allocator)
@@ -6146,13 +6285,14 @@ serialize_game_state :: proc(allocator := context.temp_allocator) -> string {
 	fmt.sbprintf(&b, "UNITS %d\n", unit_count)
 	for i in 0..<unit_count {
 		u := units[i]
-		fmt.sbprintf(&b, "UNIT %s %s %.4f %.4f %.4f %d %d %d %d %.4f %.4f %d\n",
+		fmt.sbprintf(&b, "UNIT %s %s %.4f %.4f %.4f %d %d %d %d %.4f %.4f %d %s\n",
 			unit_type_to_string(u.kind),
 			unit_state_to_string(u.state),
 			u.position.x, u.position.y, u.position.z,
 			u.home_planet, u.affiliation, u.target_planet,
 			u.enemy ? 1 : 0,
-			u.progress, u.orbit_angle, u.squad)
+			u.progress, u.orbit_angle, u.squad,
+			build_target_to_string(u.build_target))
 	}
 
 	return strings.to_string(b)
@@ -6351,6 +6491,18 @@ deserialize_game_state :: proc(content: string) -> bool {
 				prog, _ := strconv.parse_f32(fields[10])
 				orbit, _ := strconv.parse_f32(fields[11])
 				squad, _ := strconv.parse_int(fields[12])
+				bt: Build_Target = .NONE
+				if len(fields) >= 14 {
+					bt, _ = parse_build_target(fields[13])
+				} else if state == .CONSTRUCTING && target >= 0 && target < PLANET_COUNT {
+					if refinery_building[target] {
+						bt = .REFINERY
+					} else if orbital_defense_building[target] {
+						bt = .ORBITAL_DEFENSE
+					} else if base_build_planet == target {
+						bt = .BASE
+					}
+				}
 				if unit_count < MAX_UNITS {
 					units[unit_count] = Unit{
 						kind = kind,
@@ -6363,6 +6515,7 @@ deserialize_game_state :: proc(content: string) -> bool {
 						progress = prog,
 						orbit_angle = orbit,
 						squad = squad,
+						build_target = bt,
 					}
 					unit_count += 1
 				}
