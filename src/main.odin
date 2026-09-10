@@ -6089,16 +6089,27 @@ draw_game_over_overlay :: proc() {
 
 // ---- Fog of war ----------------------------------------------------------
 
-// Dynamic, presence-based vision: a planet is visible while at least one
-// player unit is physically near it — stationed in orbit, mining, guarding or
-// passing within radius + 2.0. Earth is always lit. When the last player
-// fighting drone at a planet is destroyed in combat, vision lingers for
-// COMBAT_VISION_LINGER seconds before the planet falls back under fog.
+// True if the player has a structure on planet p (operational or under construction):
+// refinery, orbital defense, or command base.
+has_player_structure :: proc(p: int) -> bool {
+	if p < 0 || p >= PLANET_COUNT { return false }
+	if refinery_built[p] || refinery_building[p] { return true }
+	if orbital_defense_level[p] > 0 || orbital_defense_building[p] { return true }
+	if base_counts[p] > 0 || base_build_planet == p { return true }
+	return false
+}
+
+// Dynamic vision: a planet is visible while the player has a structure on it
+// (refinery, orbital defense, command base), or at least one player unit is
+// in or near the planet - stationed in orbit, mining, guarding, constructing,
+// idle on site, or passing within radius + 2.0. Earth is always lit. When the
+// last player fighting drone at a planet is destroyed in combat, vision lingers
+// for COMBAT_VISION_LINGER seconds before the planet falls back under fog.
 has_vision :: proc(p: int) -> bool {
 	if p < 0 || p >= SECTOR_COUNT { return false }
 	if p == EARTH { return true }
 	if combat_vision_timer[p] > 0 { return true }
-	if p < PLANET_COUNT && orbital_defense_level[p] > 0 { return true }
+	if has_player_structure(p) { return true }
 	r := sector_radius(p) + 2.0
 	r2 := r * r
 	sp := sector_pos(p)

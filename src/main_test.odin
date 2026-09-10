@@ -4223,3 +4223,64 @@ double_click_unit_inspector_timing_and_cancellation :: proc(t: ^testing.T) {
 	handle_inspector_click(hq_click, panel_x)
 	testing.expect(t, selection_count() == 3, "double click on HQ fighter selects all 3 stationed fighters")
 }
+
+@(test)
+structures_and_units_keep_planet_out_of_fog_of_war :: proc(t: ^testing.T) {
+	reset_world()
+
+	// 1. Initial state: Mars has no structures and no units -> in fog of war
+	testing.expect(t, !has_vision(MARS), "Mars starts dark with no structure or unit")
+	testing.expect(t, !has_player_structure(MARS), "Mars has no player structures")
+
+	// 2. Operational refinery keeps Mars out of fog of war even with zero units anywhere near it
+	refinery_built[MARS] = true
+	testing.expect(t, has_player_structure(MARS), "operational refinery is recognized as player structure")
+	testing.expect(t, has_vision(MARS), "operational refinery keeps Mars lit without any units")
+
+	// Even if miners are far away en route to Earth (e.g. at position {0, 0, 0} depositing), Mars stays lit
+	units[unit_count] = Unit{kind = .MINING, state = .RETURNING, position = planets[EARTH].position, home_planet = EARTH, affiliation = MARS, target_planet = MARS}
+	unit_count += 1
+	testing.expect(t, has_vision(MARS), "Mars stays lit while all miners are en route returning to Earth")
+	unit_count = 0
+	refinery_built[MARS] = false
+
+	// 3. Refinery under construction keeps planet out of fog of war
+	refinery_building[MARS] = true
+	testing.expect(t, has_player_structure(MARS), "refinery under construction is recognized as player structure")
+	testing.expect(t, has_vision(MARS), "refinery under construction keeps Mars lit")
+	refinery_building[MARS] = false
+
+	// 4. Orbital defense under construction or operational keeps planet out of fog of war
+	orbital_defense_building[MARS] = true
+	testing.expect(t, has_player_structure(MARS), "orbital defense building is recognized as player structure")
+	testing.expect(t, has_vision(MARS), "orbital defense building keeps Mars lit")
+	orbital_defense_building[MARS] = false
+
+	orbital_defense_level[MARS] = 1
+	testing.expect(t, has_player_structure(MARS), "active orbital defense is recognized as player structure")
+	testing.expect(t, has_vision(MARS), "active orbital defense keeps Mars lit")
+	orbital_defense_level[MARS] = 0
+
+	// 5. Command base keeps planet out of fog of war
+	base_counts[MARS] = 1
+	testing.expect(t, has_player_structure(MARS), "command base is recognized as player structure")
+	testing.expect(t, has_vision(MARS), "command base keeps Mars lit")
+	base_counts[MARS] = 0
+
+	base_build_planet = MARS
+	testing.expect(t, has_player_structure(MARS), "command base under construction is recognized as player structure")
+	testing.expect(t, has_vision(MARS), "command base under construction keeps Mars lit")
+	base_build_planet = -1
+
+	// 6. With all structures cleared, Mars returns to fog of war
+	testing.expect(t, !has_vision(MARS), "Mars falls back into fog of war with no structure and no units")
+
+	// 7. A unit arriving at Mars keeps it out of fog of war without any structures
+	add_guarding_fighter(MARS, false)
+	testing.expect(t, has_vision(MARS), "friendly guarding fighter in orbit keeps Mars lit")
+
+	// Unit departs Mars: falls back under fog of war
+	units[0].position = planets[EARTH].position
+	testing.expect(t, !has_vision(MARS), "Mars returns to fog when unit moves away and no structures exist")
+}
+
