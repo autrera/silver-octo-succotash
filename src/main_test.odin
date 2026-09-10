@@ -255,7 +255,7 @@ step_simulation_advances_wave_timer_and_spawns_on_schedule :: proc(t: ^testing.T
 	add_miner(EARTH)
 	add_miner(VENUS)
 	// Unpaused play drives the wave clock through step_simulation: first wave
-	// at 3:00, then every 3:00 — but only while 2+ worlds are mined.
+	// at 3:00, then every 3:00 - but only while 2+ worlds are mined.
 	enemy_wave_timer = 0
 	wave_started = false
 	before := unit_count
@@ -1705,8 +1705,8 @@ reset_world_restores_drone_speed_level :: proc(t: ^testing.T) {
 @(test)
 outer_planets_moved_closer_to_earth :: proc(t: ^testing.T) {
 	// Saturn/Uranus/Neptune shifted 80 units further left (X) so Earth sits
-	// almost mid-pack — three planets left (Mercury, Saturn, Venus), four
-	// right (Uranus, Mars, Neptune, Jupiter) — keeping 30 units of spacing
+	// almost mid-pack - three planets left (Mercury, Saturn, Venus), four
+	// right (Uranus, Mars, Neptune, Jupiter) - keeping 30 units of spacing
 	// between them (Jupiter's fixed x=50 bounds the right edge, so a 3/4
 	// split is as centered as the layout can get).
 	testing.expect(t, planets[SATURN].position.x == -25, "Saturn shifted to x=-25")
@@ -2149,7 +2149,7 @@ enemy_fighters_collapse_without_empty_mining_gap :: proc(t: ^testing.T) {
 }
 
 // Bug regression: dispatching miners to scout a planet (transit toward it,
-// pinned idle at an occupied world) must not register as mining — the invasion
+// pinned idle at an occupied world) must not register as mining - the invasion
 // watch fires only on actual mining activity.
 @(test)
 scouting_miners_do_not_trigger_invasion_watch :: proc(t: ^testing.T) {
@@ -3696,6 +3696,147 @@ warning_glow_persists_during_transit_and_transitions_to_battle_glare :: proc(t: 
 		update_combat_nebula_intensity(0.1)
 	}
 	testing.expect(t, combat_nebula_intensity[EARTH] < 0.05, "battle glare gracefully fades out")
+}
+
+@(test)
+minor_wave_attacks_all_liberated_planets_from_closest_unliberated :: proc(t: ^testing.T) {
+	reset_world()
+	// Case 1: Earth is the only liberated planet.
+	// Venus is the closest unliberated planet to Earth (dist 15.54).
+	sources, targets, count := collect_minor_wave_attacks()
+	testing.expect(t, count == 1, "1 attack pair when only Earth is liberated")
+	testing.expect(t, sources[0] == VENUS, "Venus attacks Earth")
+	testing.expect(t, targets[0] == EARTH, "Earth is the target")
+
+	// Case 2: Earth and Mars are liberated.
+	// Venus -> Earth (dist 15.54), Neptune -> Mars (dist 22.56).
+	enemy_base_hp[MARS] = 0
+	sources, targets, count = collect_minor_wave_attacks()
+	testing.expect(t, count == 2, "2 attack pairs when Earth and Mars are liberated")
+	pair_found_earth := false
+	pair_found_mars := false
+	for i in 0..<count {
+		if targets[i] == EARTH && sources[i] == VENUS { pair_found_earth = true }
+		if targets[i] == MARS && sources[i] == NEPTUNE { pair_found_mars = true }
+	}
+	testing.expect(t, pair_found_earth, "Venus attacks Earth")
+	testing.expect(t, pair_found_mars, "Neptune attacks Mars")
+
+	// Case 3: Earth, Venus, and Mars are liberated.
+	// Uranus -> Earth (dist 21.00), Mercury -> Venus (dist 19.25), Neptune -> Mars (dist 22.56).
+	enemy_base_hp[VENUS] = 0
+	sources, targets, count = collect_minor_wave_attacks()
+	testing.expect(t, count == 3, "3 attack pairs when Earth, Venus, and Mars are liberated")
+	found_uranus_earth := false
+	found_mercury_venus := false
+	found_neptune_mars := false
+	for i in 0..<count {
+		testing.expect(t, closest_liberated_planet_to(sources[i]) == targets[i], "each attacker targets its closest liberated planet")
+		if targets[i] == EARTH && sources[i] == URANUS { found_uranus_earth = true }
+		if targets[i] == VENUS && sources[i] == MERCURY { found_mercury_venus = true }
+		if targets[i] == MARS && sources[i] == NEPTUNE { found_neptune_mars = true }
+	}
+	testing.expect(t, found_uranus_earth, "Uranus attacks Earth")
+	testing.expect(t, found_mercury_venus, "Mercury attacks Venus")
+	testing.expect(t, found_neptune_mars, "Neptune attacks Mars")
+}
+
+@(test)
+minor_wave_concurrent_launch_and_multi_target_warnings :: proc(t: ^testing.T) {
+	reset_world()
+	// Liberate Mars so we have 2 liberated planets (Earth and Mars)
+	enemy_base_hp[MARS] = 0
+
+	// 71.9s: no warnings active yet
+	minor_wave_timer = 71.9
+	testing.expect(t, !planet_is_minor_wave_target(EARTH), "Earth not warning at 71.9s")
+	testing.expect(t, !planet_is_minor_wave_target(MARS), "Mars not warning at 71.9s")
+	testing.expect(t, !planet_is_minor_wave_source(VENUS), "Venus not source warning at 71.9s")
+	testing.expect(t, !planet_is_minor_wave_source(NEPTUNE), "Neptune not source warning at 71.9s")
+
+	// 72.0s: 3s before launch, warning triggers on all sources and targets
+	minor_wave_timer = 72.0
+	testing.expect(t, planet_is_minor_wave_target(EARTH), "Earth warning target at 72s")
+	testing.expect(t, planet_is_minor_wave_target(MARS), "Mars warning target at 72s")
+	testing.expect(t, planet_under_attack_warning(EARTH), "Earth under attack warning at 72s")
+	testing.expect(t, planet_under_attack_warning(MARS), "Mars under attack warning at 72s")
+
+	testing.expect(t, planet_is_minor_wave_source(VENUS), "Venus is source at 72s")
+	testing.expect(t, planet_is_minor_wave_source(NEPTUNE), "Neptune is source at 72s")
+	testing.expect(t, planet_attack_source_warning(VENUS), "Venus has source warning at 72s")
+	testing.expect(t, planet_attack_source_warning(NEPTUNE), "Neptune has source warning at 72s")
+
+	// Other planets should not be warning
+	testing.expect(t, !planet_under_attack_warning(JUPITER), "Jupiter not under attack warning")
+	testing.expect(t, !planet_attack_source_warning(JUPITER), "Jupiter not source warning")
+
+	// Step nebulae: targets ramp red glow, sources ramp yellow aura
+	for _ in 0..<20 {
+		update_combat_nebula_intensity(0.1)
+	}
+	testing.expect(t, abs(combat_nebula_intensity[EARTH] - 0.5) < 0.05, "Earth red glow at ~0.5")
+	testing.expect(t, abs(combat_nebula_intensity[MARS] - 0.5) < 0.05, "Mars red glow at ~0.5")
+	testing.expect(t, abs(minor_wave_source_nebula_intensity[VENUS] - 0.5) < 0.05, "Venus yellow aura at ~0.5")
+	testing.expect(t, abs(minor_wave_source_nebula_intensity[NEPTUNE] - 0.5) < 0.05, "Neptune yellow aura at ~0.5")
+
+	// Launch concurrent minor waves: 5 drones to Earth from Venus, 5 drones to Mars from Neptune
+	before := unit_count
+	launch_minor_wave()
+	testing.expect(t, unit_count - before == 10, "10 total drones launched (5 per liberated planet)")
+	testing.expect(t, minor_wave_timer == 0, "minor_wave_timer reset to 0")
+
+	// Verify drone assignments
+	earth_drones := 0
+	mars_drones := 0
+	for i := before; i < unit_count; i += 1 {
+		u := &units[i]
+		testing.expect(t, u.enemy, "drone is enemy")
+		testing.expect(t, u.kind == .COMBAT, "drone is combat")
+		testing.expect(t, u.state == .TRANSIT, "drone in transit")
+		if u.target_planet == EARTH {
+			testing.expect(t, u.home_planet == VENUS, "Earth drone from Venus")
+			earth_drones += 1
+		} else if u.target_planet == MARS {
+			testing.expect(t, u.home_planet == NEPTUNE, "Mars drone from Neptune")
+			mars_drones += 1
+		}
+	}
+	testing.expect(t, earth_drones == 5, "5 drones targeting Earth")
+	testing.expect(t, mars_drones == 5, "5 drones targeting Mars")
+
+	// Source warnings clear immediately upon launch
+	testing.expect(t, !planet_is_minor_wave_source(VENUS), "Venus source warning cleared")
+	testing.expect(t, !planet_is_minor_wave_source(NEPTUNE), "Neptune source warning cleared")
+}
+
+@(test)
+minor_wave_unliberated_planets_never_attack_multiple_targets :: proc(t: ^testing.T) {
+	reset_world()
+	// Liberate various combinations and verify source uniqueness and target uniqueness
+	combinations := [4][4]int{
+		{EARTH, -1, -1, -1},
+		{EARTH, VENUS, -1, -1},
+		{EARTH, MARS, -1, -1},
+		{EARTH, VENUS, MARS, URANUS},
+	}
+
+	for combo in combinations {
+		reset_world()
+		for p in combo {
+			if p >= 0 { enemy_base_hp[p] = 0 }
+		}
+
+		sources, targets, count := collect_minor_wave_attacks()
+		// Verify source uniqueness
+		for i in 0..<count {
+			for j := i + 1; j < count; j += 1 {
+				testing.expect(t, sources[i] != sources[j], "each unliberated planet attacks at most one liberated planet")
+				testing.expect(t, targets[i] != targets[j], "each liberated planet is targeted at most once")
+			}
+			// Verify each attacker attacks its closest liberated planet
+			testing.expect(t, closest_liberated_planet_to(sources[i]) == targets[i], "attacker attacks its closest liberated planet")
+		}
+	}
 }
 
 // ---- Orbital Defense Tests -----------------------------------------------

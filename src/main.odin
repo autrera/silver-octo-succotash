@@ -16,7 +16,7 @@ MAX_BASES :: 5
 // Standing garrisons number ~420 planetside plus the enemy HQ's 500
 // fighters, so the pool holds those plus a full late-game player fleet.
 MAX_UNITS :: 2560
-// The system in solar order: Earth — the player's only starter planet — sits
+// The system in solar order: Earth - the player's only starter planet - sits
 // at index 2, so every hardcoded 0/1/2 planet index is gone.
 PLANET_COUNT :: 8
 MERCURY :: 0
@@ -36,8 +36,8 @@ ENEMY_HOME :: PLANET_COUNT
 
 // The enemy HQ: a fortress at Neptune's ORIGINAL orbit {140, 5, 24} (before
 // the outer planets moved in), defended by 500 fighter drones with 500
-// structural HP. Every attack wave launches from here; destroying it — plus
-// liberating every planet — wins the game.
+// structural HP. Every attack wave launches from here; destroying it - plus
+// liberating every planet - wins the game.
 ENEMY_HQ_POSITION := rl.Vector3{140, 5, 24}
 ENEMY_HQ_RADIUS :: 2.6
 ENEMY_HQ_GARRISON :: 500
@@ -326,7 +326,7 @@ camera: rl.Camera3D
 // Framing: center of the planet extents (X -30..50, Z -20..24) after the
 // Earth-centered repositioning; pan/zoom covers the far-off enemy HQ.
 camera_target := rl.Vector3{10, 0, 2}
-// Startup altitude: 200 - 185*0.60 so zoom_percent() opens at exactly 60% —
+// Startup altitude: 200 - 185*0.60 so zoom_percent() opens at exactly 60% -
 // high enough to frame the whole Earth-centered system (X -30..50, Z -20..24)
 // beside the 330px inspector panel (all eight planets on screen at open).
 CAMERA_START_Y :: 200.0 - 185.0 * 0.60
@@ -1649,8 +1649,8 @@ cancel_queued_at :: proc(planet, index: int) -> bool {
 	return false
 }
 
-// ESC handler: cancels the most recently queued unit — the tail of pending,
-// else the newest active production line — with a full refund.
+// ESC handler: cancels the most recently queued unit - the tail of pending,
+// else the newest active production line - with a full refund.
 cancel_last_queued :: proc() -> bool {
 	if queued_count(EARTH) == 0 { return false }
 	return cancel_queued_at(EARTH, queued_count(EARTH) - 1)
@@ -1773,7 +1773,7 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 // then damage the enemy base by one per player fighter per tick until it falls.
 // Distinct planets currently being mined by the player: a planet counts only
 // while at least one non-enemy mining drone is actively MINING it (state
-// .MINING). Dispatched scouts or drones pinned in orbit don't count — invasion
+// .MINING). Dispatched scouts or drones pinned in orbit don't count - invasion
 // waves answer production, not travel.
 mined_planets :: proc(seen: ^[PLANET_COUNT]bool) -> int {
 	for p in 0..<PLANET_COUNT { seen[p] = false }
@@ -1808,9 +1808,10 @@ update_enemy_waves :: proc(dt: f32) {
 	for p in 0..<SECTOR_COUNT { update_planet_combat(dt, p) }
 }
 
-// Minor wave: every 60 seconds the closest unliberated planet to Earth launches
-// 5 combat drones against the closest liberated planet (not Earth unless Earth
-// is the closest). This attack runs independently of the 180s wave.
+// Minor wave: every 75 seconds, concurrent minor waves launch against liberated planets.
+// Every liberated planet is attacked from the closest not liberated planet.
+// Each not liberated planet only attacks one liberated planet, its closest.
+// These attacks run independently of the 180s wave.
 update_minor_wave :: proc(dt: f32) {
 	minor_wave_timer += dt
 	if minor_wave_timer >= MINOR_WAVE_INTERVAL {
@@ -1818,30 +1819,87 @@ update_minor_wave :: proc(dt: f32) {
 	}
 }
 
+// Computes the minor wave attack pairs for all liberated planets.
+// For each liberated planet l, it finds the closest unliberated planet u whose
+// closest liberated planet is l. Each unliberated planet attacks at most one
+// liberated planet, its closest.
+collect_minor_wave_attacks :: proc() -> (sources: [PLANET_COUNT]int, targets: [PLANET_COUNT]int, count: int) {
+	for l in 0..<PLANET_COUNT {
+		if !planet_liberated(l) { continue }
+
+		best_u := -1
+		best_d: f32 = 1e9
+
+		for u in 0..<PLANET_COUNT {
+			if planet_liberated(u) { continue }
+			if closest_liberated_planet_to(u) != l { continue }
+
+			d := distance(planets[u].position, planets[l].position)
+			if best_u < 0 || d < best_d {
+				best_u = u
+				best_d = d
+			}
+		}
+
+		if best_u >= 0 {
+			sources[count] = best_u
+			targets[count] = l
+			count += 1
+		}
+	}
+	return
+}
+
 launch_minor_wave :: proc() {
 	minor_wave_timer = 0
-	source, found := closest_unliberated_planet_to_earth()
-	if !found { return }
-	target := closest_liberated_planet_to(source)
-	spawn_minor_wave(source, target, MINOR_WAVE_SIZE)
+	sources, targets, count := collect_minor_wave_attacks()
+	for i in 0..<count {
+		spawn_minor_wave(sources[i], targets[i], MINOR_WAVE_SIZE)
+	}
 }
 
-// Warning before minor wave: 3 seconds before launch, the targeted planet
-// receives an ominous red glow at half battle intensity.
+// Warning before minor wave: 3 seconds before launch, targeted planets
+// receive an ominous red glow at half battle intensity.
+planet_is_minor_wave_target :: proc(p: int) -> bool {
+	if p < 0 || p >= PLANET_COUNT { return false }
+	if minor_wave_timer < MINOR_WAVE_INTERVAL - 3.0 { return false }
+	_, targets, count := collect_minor_wave_attacks()
+	for i in 0..<count {
+		if targets[i] == p { return true }
+	}
+	return false
+}
+
+// Warning before minor wave: 3 seconds before launch, attacking source planets
+// receive an ominous yellow aura at half battle intensity.
+planet_is_minor_wave_source :: proc(p: int) -> bool {
+	if p < 0 || p >= PLANET_COUNT { return false }
+	if minor_wave_timer < MINOR_WAVE_INTERVAL - 3.0 { return false }
+	sources, _, count := collect_minor_wave_attacks()
+	for i in 0..<count {
+		if sources[i] == p { return true }
+	}
+	return false
+}
+
 minor_wave_warning_planet :: proc() -> int {
 	if minor_wave_timer < MINOR_WAVE_INTERVAL - 3.0 { return -1 }
-	source, found := closest_unliberated_planet_to_earth()
-	if !found { return -1 }
-	return closest_liberated_planet_to(source)
+	sources, targets, count := collect_minor_wave_attacks()
+	if count == 0 { return -1 }
+	for i in 0..<count {
+		if targets[i] == EARTH { return EARTH }
+	}
+	return targets[0]
 }
 
-// Warning before minor wave: 3 seconds before launch, the attacking source planet
-// receives an ominous yellow aura at half battle intensity.
 minor_wave_warning_source_planet :: proc() -> int {
 	if minor_wave_timer < MINOR_WAVE_INTERVAL - 3.0 { return -1 }
-	source, found := closest_unliberated_planet_to_earth()
-	if !found { return -1 }
-	return source
+	sources, targets, count := collect_minor_wave_attacks()
+	if count == 0 { return -1 }
+	for i in 0..<count {
+		if targets[i] == EARTH { return sources[i] }
+	}
+	return sources[0]
 }
 
 minor_wave_source_warning_planet :: proc() -> int {
@@ -1851,7 +1909,7 @@ minor_wave_source_warning_planet :: proc() -> int {
 // A planet is the source of an impending minor wave within 3s of launching.
 planet_attack_source_warning :: proc(p: int) -> bool {
 	if p < 0 || p >= PLANET_COUNT { return false }
-	return minor_wave_warning_source_planet() == p
+	return planet_is_minor_wave_source(p)
 }
 
 // A planet is under attack warning if an impending minor wave is within 3s
@@ -1860,7 +1918,7 @@ planet_attack_source_warning :: proc(p: int) -> bool {
 // full battle glow once combat begins.
 planet_under_attack_warning :: proc(p: int) -> bool {
 	if p < 0 || p >= PLANET_COUNT { return false }
-	if minor_wave_warning_planet() == p { return true }
+	if planet_is_minor_wave_target(p) { return true }
 	return transit_fighters_at(p, true) > 0
 }
 
@@ -2064,19 +2122,19 @@ update_planet_combat :: proc(dt: f32, p: int) {
 
 // Attack wave size: (liberated planets - 1) * WAVE_FIGHTERS_PER_LIBERATED
 // fighters (3 liberated worlds send 30). Earth starts liberated, so the
-// result is 0 until a second world falls — the wave musters nothing.
+// result is 0 until a second world falls - the wave musters nothing.
 attack_wave_size :: proc() -> int {
 	return (liberated_planet_count() - 1) * WAVE_FIGHTERS_PER_LIBERATED
 }
 
-// Liberated worlds (planets only — the HQ sector is not a planet).
+// Liberated worlds (planets only - the HQ sector is not a planet).
 liberated_planet_count :: proc() -> int {
 	count := 0
 	for p in 0..<PLANET_COUNT { if planet_liberated(p) { count += 1 } }
 	return count
 }
 
-// The liberated planet closest to the enemy HQ — the wave's fixed target.
+// The liberated planet closest to the enemy HQ - the wave's fixed target.
 // Earth starts liberated, so there is always at least one candidate.
 closest_liberated_planet_to_hq :: proc() -> int {
 	best := EARTH
@@ -2127,7 +2185,7 @@ spawn_n_enemies_to :: proc(target: int, count: int) {
 	if enemy_hq_destroyed() { return }
 	spawn_count := min(count, MAX_UNITS - unit_count)
 	if spawn_count <= 0 { return }
-	// Every wave lifts off from the enemy HQ (the old Neptune orbit) — no
+	// Every wave lifts off from the enemy HQ (the old Neptune orbit) - no
 	// longer from Jupiter space.
 	for i in 0..<spawn_count {
 		angle := f32(i) * 1.26
@@ -2265,7 +2323,7 @@ remove_unit_at :: proc(index: int) {
 // Right-click on a planet is disambiguated by selection: with units selected
 // it is a move order (the Earth rally point is left untouched); with nothing
 // selected and Earth as the selected planet it (re)sets the Earth rally point
-// — right-clicking Earth itself clears the rally back to 0.
+// - right-clicking Earth itself clears the rally back to 0.
 handle_planet_right_click :: proc(planet: int) {
 	if selection_count() > 0 {
 		issue_group_order(planet)
@@ -2308,7 +2366,7 @@ update_units :: proc(dt: f32) {
 
 // Minerals delivered per mining cycle at a planet. The inner planets
 // (Mercury, Venus, Earth, Mars) pay the standard 10; the gas giants and
-// beyond pay 25 — the richer prize for pushing outward. (No Earth penalty.)
+// beyond pay 25 - the richer prize for pushing outward. (No Earth penalty.)
 mining_rate :: proc(planet: int) -> int {
 	if planet >= JUPITER { return 25 }
 	return 10
@@ -2924,7 +2982,7 @@ draw_world :: proc() {
 			draw_cyberpunk_flak88_construction_site(p)
 		}
 	}
-	// The enemy HQ fortress at Neptune's old orbit: layered battlestation —
+	// The enemy HQ fortress at Neptune's old orbit: layered battlestation -
 	// dark red hull (bright once scouted), a dead grey husk once destroyed.
 	hq_color := rl.Color{96, 34, 40, 255}
 	hq_trim := rl.Color{150, 55, 62, 255}
@@ -4206,7 +4264,7 @@ draw_fighter_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector
 
 // Visible laser fire during battles: short flying bolts from each shooter
 // toward its target (player fire neon cyan, enemy fire RED), mirroring the
-// update_planet_combat rules — dogfights, miner sweeps and base sieges.
+// update_planet_combat rules - dogfights, miner sweeps and base sieges.
 draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, ec: int, player_miner_spots, enemy_miner_spots: []rl.Vector3, pmc, emc: int) {
 	num_p := min(pc, rep_count(pc))
 	num_e := min(ec, rep_count(ec))
@@ -4260,7 +4318,7 @@ draw_laser_bolt :: proc(from, to: rl.Vector3, offset: f32, color: rl.Color) {
 // One rendered cube per up-to-10 units: ceil(count / 10).
 rep_count :: proc(count: int) -> int { return (count + 9) / 10 }
 
-// Fighting drones in transit to a planet, grouped by side — the unit side of
+// Fighting drones in transit to a planet, grouped by side - the unit side of
 // the transit representational rendering.
 transit_fighters_at :: proc(target_planet: int, enemy: bool) -> int {
 	count := 0
@@ -4271,7 +4329,7 @@ transit_fighters_at :: proc(target_planet: int, enemy: bool) -> int {
 	return count
 }
 
-// Mining drones in transit to a planet, grouped by side — the unit side of
+// Mining drones in transit to a planet, grouped by side - the unit side of
 // the transit representational rendering.
 transit_miners_at :: proc(target_planet: int, enemy: bool = false) -> int {
 	count := 0
@@ -5514,7 +5572,7 @@ advance_pause_selection :: proc(dir: int) {
 	pause_menu_selection = (pause_menu_selection + dir + PAUSE_MENU_OPTIONS) % PAUSE_MENU_OPTIONS
 }
 
-// ENTER/KP_ENTER on the focused option — the same actions the mouse path takes.
+// ENTER/KP_ENTER on the focused option - the same actions the mouse path takes.
 activate_pause_selection :: proc() {
 	switch pause_menu_selection {
 	case 0:
@@ -5586,7 +5644,6 @@ step_simulation :: proc(dt: f32) {
 // In addition, the source planet of an impending minor wave receives a yellow
 // aura at half battle intensity starting 3 seconds before launch.
 update_combat_nebula_intensity :: proc(dt: f32) {
-	src_warning_planet := minor_wave_warning_source_planet()
 	for s in 0..<SECTOR_COUNT {
 		in_combat := sector_in_combat(s)
 		sector_combat_state[s] = in_combat
@@ -5605,7 +5662,7 @@ update_combat_nebula_intensity :: proc(dt: f32) {
 		rate: f32 = (in_combat || is_warning) ? 3.5 : 1.2
 		combat_nebula_intensity[s] += (target - combat_nebula_intensity[s]) * clamp(dt * rate, 0.0, 1.0)
 
-		is_src_warning := (s == src_warning_planet)
+		is_src_warning := planet_attack_source_warning(s)
 		src_target: f32 = is_src_warning ? 0.5 : 0.0
 		src_rate: f32 = is_src_warning ? 3.5 : 1.2
 		minor_wave_source_nebula_intensity[s] += (src_target - minor_wave_source_nebula_intensity[s]) * clamp(dt * src_rate, 0.0, 1.0)
