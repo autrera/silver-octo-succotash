@@ -28,6 +28,29 @@ SATURN :: 5
 URANUS :: 6
 NEPTUNE :: 7
 
+// =========================================================================
+// Gameplay Configuration - Tweakable Setup, Costs & Waves
+// =========================================================================
+
+// ---- Starting Setup on Earth (Tweakable Globals) ------------------------
+// Starting units on Earth in a new game:
+STARTING_EARTH_MINERS := 5
+STARTING_EARTH_COMBAT := 0
+
+// Starting structures on Earth in a new game:
+STARTING_EARTH_BASES := 1
+STARTING_EARTH_ORBITAL_DEFENSE := 1
+STARTING_EARTH_REFINERY := true
+
+// ---- Unit Requisition Costs (Tweakable Constants) -----------------------
+MINER_COST :: 50
+COMBAT_COST :: 125
+
+// Batch requisition affordance unlocked at 5 command bases on Earth.
+BATCH_BUILD_COUNT :: 5
+BATCH_MINER_COST :: MINER_COST * BATCH_BUILD_COUNT
+BATCH_COMBAT_COST :: COMBAT_COST * BATCH_BUILD_COUNT
+
 // Sectors extend the planet list by one: sector ENEMY_HOME is the enemy HQ
 // fortress (not a planet), so the per-planet combat tables (timers, base
 // HP) cover it too and the combat procs work on it unchanged.
@@ -63,11 +86,10 @@ WAVE_MIN_MINING_PLANETS :: 2
 // wave only bites once a second world falls.
 WAVE_FIGHTERS_PER_LIBERATED :: 15
 
-// Minor attack waves: every 60s the closest unliberated planet to Earth launches
-// 5 combat drones against the closest liberated planet (not Earth unless Earth
-// is the closest). Independent of mined planets.
+// Minor attack waves: every 75s unliberated planets launch combat drones (10 per wave)
+// against liberated planets. Independent of mined planets.
 MINOR_WAVE_INTERVAL :: 75.0
-MINOR_WAVE_SIZE :: 5
+MINOR_WAVE_SIZE :: 10
 // Every planet except Earth opens occupied: garrison fighters, garrison
 // miners and enemy base HP all scale up with distance from Earth
 // (Venus 10/4/10 ... Neptune 95/22/60; indexed by sector, with the enemy HQ
@@ -85,10 +107,6 @@ BASE_COST :: 500
 DRONE_SPEED_UPGRADE_COST :: 5000
 DRONE_SPEED_UPGRADE_MAX :: 5
 DRONE_SPEED_UPGRADE_FACTOR :: 0.8
-// Batch requisition afforadance unlocked at 5 command bases on Earth.
-BATCH_BUILD_COUNT :: 5
-BATCH_MINER_COST :: 250
-BATCH_COMBAT_COST :: 625
 // A command base needs 5 mining drones present at the planet and takes one
 // full minute to build; those drones stop mining until it completes.
 BASE_CONSTRUCT_MINERS :: 5
@@ -422,6 +440,7 @@ main :: proc() {
 
 	rl.SetExitKey(.KEY_NULL) // ESC cancels the last queued build instead of closing the window; P/F10 pause.
 
+	reset_world()
 	initialize_game()
 	init_planet_visuals()
 	defer unload_planet_visuals()
@@ -478,13 +497,21 @@ main :: proc() {
 
 initialize_game :: proc() {
 	base_counts = {}
-	base_counts[EARTH] = 1
+	base_counts[EARTH] = STARTING_EARTH_BASES
+	refinery_built = {}
+	refinery_built[EARTH] = STARTING_EARTH_REFINERY
+	orbital_defense_level = {}
+	orbital_defense_level[EARTH] = STARTING_EARTH_ORBITAL_DEFENSE
+	orbital_defense_hp = {}
+	orbital_defense_hp[EARTH] = orbital_defense_max_hp(EARTH)
+	orbital_defense_elevation[EARTH] = ORBITAL_DEFENSE_IDLE_ELEV
 	enemy_base_hp = GARRISON_BASE_HP
 	unit_count = 0
-	units[unit_count] = Unit{kind = .MINING, state = .MINING, position = {3.8, 0.4, 0}, home_planet = EARTH, affiliation = EARTH, target_planet = EARTH}
-	unit_count += 1
-	for i in 0..<5 {
-		angle := f32(i) * (2 * math.PI / 5.0)
+	for _ in 0..<STARTING_EARTH_MINERS {
+		spawn_unit(.MINING, EARTH)
+	}
+	for i in 0..<STARTING_EARTH_COMBAT {
+		angle := f32(i) * (2 * math.PI / f32(max(1, STARTING_EARTH_COMBAT)))
 		pos := orbit_pos(planets[EARTH].position, planets[EARTH].radius, angle)
 		units[unit_count] = Unit{
 			kind = .COMBAT,
@@ -526,11 +553,11 @@ reset_world :: proc() {
 	}
 	enemy_base_hp = GARRISON_BASE_HP
 	base_counts = {}
-	base_counts[EARTH] = 1
+	base_counts[EARTH] = STARTING_EARTH_BASES
 	base_build_planet = -1
 	base_build_progress = 0
 	refinery_built = {}
-	refinery_built[EARTH] = true
+	refinery_built[EARTH] = STARTING_EARTH_REFINERY
 	refinery_building = {}
 	refinery_progress = {}
 	orbital_defense_level = {}
@@ -1695,8 +1722,8 @@ update_orbital_defenses :: proc(dt: f32) {
 }
 
 unit_cost :: proc(kind: Unit_Type) -> int {
-	if kind == .COMBAT { return 125 }
-	return 50
+	if kind == .COMBAT { return COMBAT_COST }
+	return MINER_COST
 }
 
 // Effective drone build time at the current upgrade level: every level
@@ -3721,12 +3748,12 @@ draw_earth_inspector :: proc(x: f32) {
 	queue_not_full := queued_count(EARTH) < base_counts[EARTH] * 5
 	can_build_miner := minerals >= unit_cost(.MINING) && queue_not_full
 	can_build_combat := minerals >= unit_cost(.COMBAT) && queue_not_full
-	draw_button({x + PANEL_PAD_X, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, "[M] MINER  (50)", SCIFI_PANEL_SOLID, can_build_miner)
-	draw_button({x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, "[C] COMBAT (125)", SCIFI_PANEL_SOLID, can_build_combat)
+	draw_button({x + PANEL_PAD_X, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, rl.TextFormat("[M] MINER  (%d)", MINER_COST), SCIFI_PANEL_SOLID, can_build_miner)
+	draw_button({x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, rl.TextFormat("[C] COMBAT (%d)", COMBAT_COST), SCIFI_PANEL_SOLID, can_build_combat)
 
 	if base_counts[EARTH] >= MAX_BASES {
-		draw_button(queue_5_miner_button_rect(x), "[N] +5 MINERS (250)", SCIFI_PANEL_SOLID, can_build_5_miners())
-		draw_button(queue_5_combat_button_rect(x), "[X] +5 COMBAT (625)", SCIFI_PANEL_SOLID, can_build_5_combat())
+		draw_button(queue_5_miner_button_rect(x), rl.TextFormat("[N] +5 MINERS (%d)", BATCH_MINER_COST), SCIFI_PANEL_SOLID, can_build_5_miners())
+		draw_button(queue_5_combat_button_rect(x), rl.TextFormat("[X] +5 COMBAT (%d)", BATCH_COMBAT_COST), SCIFI_PANEL_SOLID, can_build_5_combat())
 	}
 
 	if drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
@@ -6209,13 +6236,13 @@ draw_controls_overlay :: proc() {
 	cy2 := box.y + 84
 	rl.DrawText("EARTH BASE REQUISITION", c.int(col2_x), c.int(cy2), 13, SCIFI_AMBER)
 	cy2 += 20
-	draw_control_row(col2_x, cy2, "M / CLICK", "Build Mining Drone (50)")
+	draw_control_row(col2_x, cy2, "M / CLICK", rl.TextFormat("Build Mining Drone (%d)", MINER_COST))
 	cy2 += 18
-	draw_control_row(col2_x, cy2, "N", "Build +5 Miners (250)")
+	draw_control_row(col2_x, cy2, "N", rl.TextFormat("Build +5 Miners (%d)", BATCH_MINER_COST))
 	cy2 += 18
-	draw_control_row(col2_x, cy2, "C / CLICK", "Build Combat Fighter (125)")
+	draw_control_row(col2_x, cy2, "C / CLICK", rl.TextFormat("Build Combat Fighter (%d)", COMBAT_COST))
 	cy2 += 18
-	draw_control_row(col2_x, cy2, "X", "Build +5 Fighters (625)")
+	draw_control_row(col2_x, cy2, "X", rl.TextFormat("Build +5 Fighters (%d)", BATCH_COMBAT_COST))
 	cy2 += 18
 	draw_control_row(col2_x, cy2, "U / SPEED", "Upgrade Build Speed (5,000)")
 	cy2 += 18

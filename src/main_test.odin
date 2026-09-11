@@ -657,7 +657,10 @@ earth_starts_as_the_sole_player_planet :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, enemy_base_hp[EARTH] == 0 && planet_liberated(EARTH), "Earth starts with no enemy base")
 	players, enemies := planet_combatants(EARTH)
-	testing.expect(t, players == 5 && enemies == 0, "Earth holds the player's 5 starting combat drones")
+	testing.expect(t, players == STARTING_EARTH_COMBAT && enemies == 0, "Earth holds the player's starting combat drones (0)")
+	selected_planet = EARTH
+	testing.expect(t, roster_count(.MINING) == STARTING_EARTH_MINERS, "Earth holds the player's starting mining drones (5)")
+	testing.expect(t, orbital_defense_level[EARTH] == STARTING_EARTH_ORBITAL_DEFENSE, "Earth starts with orbital defense built (1)")
 	testing.expect(t, enemy_miner_count(EARTH) == 0, "no enemy mining drones on Earth")
 }
 
@@ -2290,7 +2293,10 @@ restart_game_restores_fresh_playable_state :: proc(t: ^testing.T) {
 	testing.expect(t, !defeated && !victory && !game_paused, "restart clears the overlays and pause")
 	testing.expect(t, base_counts[EARTH] == 1, "restart restores Earth's command base")
 	players, enemies := planet_combatants(EARTH)
-	testing.expect(t, players == 5 && enemies == 0, "restart respawns Earth's 5 starting fighter drones")
+	testing.expect(t, players == STARTING_EARTH_COMBAT && enemies == 0, "restart respawns Earth's starting fighter drones (0)")
+	selected_planet = EARTH
+	testing.expect(t, roster_count(.MINING) == STARTING_EARTH_MINERS, "restart restores Earth's starting mining drones (5)")
+	testing.expect(t, orbital_defense_level[EARTH] == STARTING_EARTH_ORBITAL_DEFENSE, "restart restores Earth's orbital defense (1)")
 	for p in 0..<PLANET_COUNT {
 		if p == EARTH { continue }
 		_, garrison := planet_combatants(p)
@@ -3344,12 +3350,12 @@ unrefined_planet_produces_no_mps_and_no_payout :: proc(t: ^testing.T) {
 }
 
 @(test)
-player_starts_with_five_combat_drones :: proc(t: ^testing.T) {
+player_starts_with_five_miners_zero_combat_and_orbital_defense :: proc(t: ^testing.T) {
 	reset_world()
 	initialize_game()
 
 	players, enemies := planet_combatants(EARTH)
-	testing.expect(t, players == 5, "player starts with 5 combat drones on Earth")
+	testing.expect(t, players == 0, "player starts with 0 combat drones on Earth")
 	testing.expect(t, enemies == 0, "no enemy combatants on Earth at game start")
 
 	combat_count := 0
@@ -3365,11 +3371,16 @@ player_starts_with_five_combat_drones :: proc(t: ^testing.T) {
 			} else if u.kind == .MINING {
 				miner_count += 1
 				testing.expect(t, u.state == .MINING, "starting miner is in mining state")
+				testing.expect(t, u.home_planet == EARTH, "starting miner home is Earth")
+				testing.expect(t, u.target_planet == EARTH, "starting miner target is Earth")
 			}
 		}
 	}
-	testing.expect(t, combat_count == 5, "exactly 5 player combat drones on Earth")
-	testing.expect(t, miner_count == 1, "exactly 1 player mining drone on Earth")
+	testing.expect(t, combat_count == STARTING_EARTH_COMBAT, "starts with 0 combat drones on Earth")
+	testing.expect(t, miner_count == STARTING_EARTH_MINERS, "starts with 5 mining drones on Earth")
+	testing.expect(t, orbital_defense_level[EARTH] == STARTING_EARTH_ORBITAL_DEFENSE, "starts with 1 orbital defense on Earth")
+	testing.expect(t, orbital_defense_hp[EARTH] == orbital_defense_max_hp(EARTH), "orbital defense starts at full HP")
+	testing.expect(t, base_counts[EARTH] == STARTING_EARTH_BASES, "starts with 1 base on Earth")
 }
 
 @(test)
@@ -3383,9 +3394,9 @@ minor_wave_timer_advances_and_launches_every_sixty_seconds :: proc(t: ^testing.T
 	testing.expect(t, unit_count == before, "no minor wave before 75 seconds")
 	testing.expect(t, minor_wave_timer >= 74.9, "minor wave timer accumulated")
 
-	// 0.2s more: crosses 75s -> launches 5 enemy combat drones
+	// 0.2s more: crosses 75s -> launches 10 enemy combat drones
 	update_minor_wave(0.2)
-	testing.expect(t, unit_count - before == 5, "minor wave launches 5 drones at 75s")
+	testing.expect(t, unit_count - before == MINOR_WAVE_SIZE, "minor wave launches 10 drones at 75s")
 	testing.expect(t, minor_wave_timer == 0, "minor wave timer resets to 0 after launch")
 
 	// Verify the launched drones
@@ -3402,7 +3413,7 @@ minor_wave_timer_advances_and_launches_every_sixty_seconds :: proc(t: ^testing.T
 	// Another 75s: launches second minor wave
 	before = unit_count
 	update_minor_wave(75.0)
-	testing.expect(t, unit_count - before == 5, "second minor wave launches after another 75s")
+	testing.expect(t, unit_count - before == MINOR_WAVE_SIZE, "second minor wave launches after another 75s")
 }
 
 @(test)
@@ -3458,14 +3469,14 @@ minor_wave_runs_independently_of_mined_planets :: proc(t: ^testing.T) {
 	before := unit_count
 	// 75s passes via update_minor_wave with 0 mined planets: minor wave still launches
 	update_minor_wave(75.0)
-	testing.expect(t, unit_count - before == 5, "minor wave launches even with 0 mined planets")
+	testing.expect(t, unit_count - before == MINOR_WAVE_SIZE, "minor wave launches even with 0 mined planets")
 
 	// Same check via update_enemy_waves with only 1 liberated planet (180s wave clock is frozen)
 	add_miner(EARTH)
 	testing.expect(t, mined_planet_count() == 1, "1 mined planet")
 	before = unit_count
 	update_enemy_waves(75.0)
-	testing.expect(t, unit_count - before == 5, "minor wave launches via update_enemy_waves with 1 mined planet")
+	testing.expect(t, unit_count - before == MINOR_WAVE_SIZE, "minor wave launches via update_enemy_waves with 1 mined planet")
 	testing.expect(t, enemy_wave_timer == 0, "180s wave timer remains frozen below 2 liberated planets")
 }
 
@@ -3588,13 +3599,13 @@ minor_wave_fighters_travel_together_in_formation :: proc(t: ^testing.T) {
 	reset_world()
 	// Launch minor wave from Venus to Earth
 	spawn_minor_wave(VENUS, EARTH, MINOR_WAVE_SIZE)
-	testing.expect(t, unit_count == 5, "spawned 5 minor wave drones")
+	testing.expect(t, unit_count == MINOR_WAVE_SIZE, "spawned minor wave drones")
 
 	target_pos := sector_pos(EARTH)
 	d0 := distance(units[0].position, target_pos)
 
-	// Verify all 5 drones are equidistant to the target planet (within tiny tolerance)
-	for i in 0..<5 {
+	// Verify all drones are equidistant to the target planet (within tiny tolerance)
+	for i in 0..<MINOR_WAVE_SIZE {
 		u := &units[i]
 		testing.expect(t, u.state == .TRANSIT, "unit in transit")
 		testing.expect(t, u.target_planet == EARTH, "unit targeting Earth")
@@ -3603,21 +3614,21 @@ minor_wave_fighters_travel_together_in_formation :: proc(t: ^testing.T) {
 	}
 
 	// Verify unique orbit angles for arrival distribution
-	for i in 0..<5 {
-		for j := i + 1; j < 5; j += 1 {
+	for i in 0..<MINOR_WAVE_SIZE {
+		for j := i + 1; j < MINOR_WAVE_SIZE; j += 1 {
 			testing.expect(t, abs(units[i].orbit_angle - units[j].orbit_angle) > 0.1, "each fighter has unique orbit angle")
 		}
 	}
 
 	// Advance them in flight by 2.0s
-	for i in 0..<5 {
+	for i in 0..<MINOR_WAVE_SIZE {
 		update_combat(&units[i], 2.0)
 	}
 
-	// All 5 are still in transit and remain at identical distance to target
+	// All are still in transit and remain at identical distance to target
 	d_mid := distance(units[0].position, target_pos)
 	testing.expect(t, d_mid < d0, "drones moved closer to target")
-	for i in 0..<5 {
+	for i in 0..<MINOR_WAVE_SIZE {
 		testing.expect(t, units[i].state == .TRANSIT, "drones still in transit")
 		di := distance(units[i].position, target_pos)
 		testing.expect(t, abs(di - d_mid) < 0.001, "drones remain synchronized at same distance in flight")
@@ -3625,13 +3636,13 @@ minor_wave_fighters_travel_together_in_formation :: proc(t: ^testing.T) {
 
 	// Advance until they arrive at Earth: they should all arrive on the exact same frame
 	for units[0].state == .TRANSIT {
-		for i in 0..<5 {
+		for i in 0..<MINOR_WAVE_SIZE {
 			update_combat(&units[i], 0.1)
 		}
 	}
 
-	// All 5 must have transitioned to GUARDING together
-	for i in 0..<5 {
+	// All must have transitioned to GUARDING together
+	for i in 0..<MINOR_WAVE_SIZE {
 		testing.expect(t, units[i].state == .GUARDING, "all fighters arrive and guard together")
 	}
 }
@@ -3656,7 +3667,7 @@ warning_glow_persists_during_transit_and_transitions_to_battle_glare :: proc(t: 
 	// 3. Minor wave launches at 75s: fighters spawn in transit, timer resets
 	launch_minor_wave()
 	testing.expect(t, minor_wave_timer == 0, "timer resets on launch")
-	testing.expect(t, transit_fighters_at(EARTH, true) == 5, "5 enemy fighters in transit to Earth")
+	testing.expect(t, transit_fighters_at(EARTH, true) == MINOR_WAVE_SIZE, "enemy fighters in transit to Earth")
 	testing.expect(t, planet_under_attack_warning(EARTH), "warning persists while fighters are in transit")
 
 	// During transit: red glow must not stop or drop, remains at 0.5
@@ -3799,10 +3810,10 @@ minor_wave_concurrent_launch_and_multi_target_warnings :: proc(t: ^testing.T) {
 	testing.expect(t, abs(minor_wave_source_nebula_intensity[VENUS] - 0.5) < 0.05, "Venus yellow aura at ~0.5")
 	testing.expect(t, abs(minor_wave_source_nebula_intensity[NEPTUNE] - 0.5) < 0.05, "Neptune yellow aura at ~0.5")
 
-	// Launch concurrent minor waves: 5 drones to Earth from Venus, 5 drones to Mars from Neptune
+	// Launch concurrent minor waves: 10 drones to Earth from Venus, 10 drones to Mars from Neptune
 	before := unit_count
 	launch_minor_wave()
-	testing.expect(t, unit_count - before == 10, "10 total drones launched (5 per liberated planet)")
+	testing.expect(t, unit_count - before == 2 * MINOR_WAVE_SIZE, "20 total drones launched (10 per liberated planet)")
 	testing.expect(t, minor_wave_timer == 0, "minor_wave_timer reset to 0")
 
 	// Verify drone assignments
@@ -3821,8 +3832,8 @@ minor_wave_concurrent_launch_and_multi_target_warnings :: proc(t: ^testing.T) {
 			mars_drones += 1
 		}
 	}
-	testing.expect(t, earth_drones == 5, "5 drones targeting Earth")
-	testing.expect(t, mars_drones == 5, "5 drones targeting Mars")
+	testing.expect(t, earth_drones == MINOR_WAVE_SIZE, "10 drones targeting Earth")
+	testing.expect(t, mars_drones == MINOR_WAVE_SIZE, "10 drones targeting Mars")
 
 	// Source warnings clear immediately upon launch
 	testing.expect(t, !planet_is_minor_wave_source(VENUS), "Venus source warning cleared")
@@ -3885,10 +3896,10 @@ minor_wave_four_liberated_planets_launch_four_waves_jupiter_attacks_uranus_satur
 	testing.expect(t, planet_is_minor_wave_source(JUPITER), "Jupiter is minor wave source")
 	testing.expect(t, planet_is_minor_wave_source(NEPTUNE), "Neptune is minor wave source")
 
-	// Launch 4 concurrent minor waves (total 20 enemy combat drones)
+	// Launch 4 concurrent minor waves (total 40 enemy combat drones)
 	before := unit_count
 	launch_minor_wave()
-	testing.expect(t, unit_count - before == 20, "20 total drones launched (5 per liberated planet)")
+	testing.expect(t, unit_count - before == 4 * MINOR_WAVE_SIZE, "40 total drones launched (10 per liberated planet)")
 
 	earth_from_saturn := 0
 	venus_from_mercury := 0
@@ -3907,10 +3918,10 @@ minor_wave_four_liberated_planets_launch_four_waves_jupiter_attacks_uranus_satur
 		if u.target_planet == MARS && u.home_planet == NEPTUNE { mars_from_neptune += 1 }
 	}
 
-	testing.expect(t, earth_from_saturn == 5, "Saturn attacks Earth with 5 drones")
-	testing.expect(t, venus_from_mercury == 5, "Mercury attacks Venus with 5 drones")
-	testing.expect(t, uranus_from_jupiter == 5, "Jupiter attacks Uranus with 5 drones")
-	testing.expect(t, mars_from_neptune == 5, "Neptune attacks Mars with 5 drones")
+	testing.expect(t, earth_from_saturn == MINOR_WAVE_SIZE, "Saturn attacks Earth with 10 drones")
+	testing.expect(t, venus_from_mercury == MINOR_WAVE_SIZE, "Mercury attacks Venus with 10 drones")
+	testing.expect(t, uranus_from_jupiter == MINOR_WAVE_SIZE, "Jupiter attacks Uranus with 10 drones")
+	testing.expect(t, mars_from_neptune == MINOR_WAVE_SIZE, "Neptune attacks Mars with 10 drones")
 }
 
 // ---- Orbital Defense Tests -----------------------------------------------
@@ -5284,5 +5295,80 @@ planet_mining_hard_cap_idle_drones_step_up_when_active_miner_destroyed :: proc(t
 		}
 	}
 	testing.expect(t, idle_count == 4, "remaining 4 surplus drones remain idle")
+}
+
+// ---- Tweakable Configuration & Starting World Tests ----------------------
+
+@(test)
+tweakable_gameplay_configuration_constants_and_globals :: proc(t: ^testing.T) {
+	// Starting setup globals:
+	testing.expect(t, STARTING_EARTH_MINERS == 5, "starting Earth miners is 5")
+	testing.expect(t, STARTING_EARTH_COMBAT == 0, "starting Earth combat drones is 0")
+	testing.expect(t, STARTING_EARTH_BASES == 1, "starting Earth bases is 1")
+	testing.expect(t, STARTING_EARTH_ORBITAL_DEFENSE == 1, "starting Earth orbital defense is 1")
+	testing.expect(t, STARTING_EARTH_REFINERY == true, "starting Earth refinery is true")
+
+	// Unit requisition costs:
+	testing.expect(t, MINER_COST == 50, "miner cost is 50")
+	testing.expect(t, COMBAT_COST == 125, "combat cost is 125")
+	testing.expect(t, BATCH_MINER_COST == MINER_COST * BATCH_BUILD_COUNT, "batch miner cost is 5x miner cost")
+	testing.expect(t, BATCH_COMBAT_COST == COMBAT_COST * BATCH_BUILD_COUNT, "batch combat cost is 5x combat cost")
+	testing.expect(t, unit_cost(.MINING) == MINER_COST, "unit_cost(.MINING) returns MINER_COST")
+	testing.expect(t, unit_cost(.COMBAT) == COMBAT_COST, "unit_cost(.COMBAT) returns COMBAT_COST")
+
+	// Minor wave size:
+	testing.expect(t, MINOR_WAVE_SIZE == 10, "minor wave enemy size is 10")
+}
+
+@(test)
+tweakable_starting_setup_controls_initial_world_generation :: proc(t: ^testing.T) {
+	// Save originals
+	orig_miners := STARTING_EARTH_MINERS
+	orig_combat := STARTING_EARTH_COMBAT
+	orig_bases := STARTING_EARTH_BASES
+	orig_defense := STARTING_EARTH_ORBITAL_DEFENSE
+	orig_refinery := STARTING_EARTH_REFINERY
+	defer {
+		STARTING_EARTH_MINERS = orig_miners
+		STARTING_EARTH_COMBAT = orig_combat
+		STARTING_EARTH_BASES = orig_bases
+		STARTING_EARTH_ORBITAL_DEFENSE = orig_defense
+		STARTING_EARTH_REFINERY = orig_refinery
+		reset_world()
+		initialize_game()
+	}
+
+	// Tweak to custom starting setup
+	STARTING_EARTH_MINERS = 7
+	STARTING_EARTH_COMBAT = 3
+	STARTING_EARTH_BASES = 2
+	STARTING_EARTH_ORBITAL_DEFENSE = 2
+
+	reset_world()
+	initialize_game()
+
+	// Verify custom starting structures and units
+	testing.expect(t, base_counts[EARTH] == 2, "Earth started with 2 bases")
+	testing.expect(t, orbital_defense_level[EARTH] == 2, "Earth started with level 2 orbital defense")
+	testing.expect(t, orbital_defense_hp[EARTH] == 200, "Earth orbital defense has 200 HP (level 2 * 100)")
+
+	players, enemies := planet_combatants(EARTH)
+	testing.expect(t, players == 3 && enemies == 0, "Earth started with 3 player combat drones")
+
+	selected_planet = EARTH
+	testing.expect(t, roster_count(.MINING) == 7, "Earth started with 7 player mining drones")
+}
+
+@(test)
+minor_wave_spawns_ten_combat_drones_by_default :: proc(t: ^testing.T) {
+	reset_world()
+	spawn_minor_wave(VENUS, EARTH)
+	testing.expect(t, unit_count == 10, "minor wave default count is 10 drones")
+	for i in 0..<unit_count {
+		testing.expect(t, units[i].enemy, "drone is enemy")
+		testing.expect(t, units[i].kind == .COMBAT, "drone is combat")
+		testing.expect(t, units[i].home_planet == VENUS, "drone home is Venus")
+		testing.expect(t, units[i].target_planet == EARTH, "drone target is Earth")
+	}
 }
 
