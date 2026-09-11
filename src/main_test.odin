@@ -5108,3 +5108,181 @@ orbital_defense_targeting_range_is_reduced_to_planet_vicinity :: proc(t: ^testin
 	testing.expect(t, abs(az) < 0.2, "turret aims toward target along +X axis")
 }
 
+@(test)
+earth_orbital_defense_queued_during_base_construction :: proc(t: ^testing.T) {
+	reset_world()
+	selected_planet = EARTH
+	minerals = 1500 // 500 for base, 1000 for orbital defense
+
+	// Provide 10 miners on Earth: 5 will work on the base, 5 will be available for defense
+	for _ in 0..<10 { add_miner(EARTH) }
+	testing.expect(t, player_miners_count(EARTH) == 10, "10 miners on Earth")
+
+	// Start building a base on Earth
+	start_base_construction()
+	testing.expect(t, base_build_planet == EARTH, "base construction started on Earth")
+	testing.expect(t, base_constructing_miners(EARTH) == 5, "5 miners assigned to base construction")
+	testing.expect(t, minerals == 1000, "500 minerals spent on base, 1000 remain")
+
+	// Verify player can queue orbital defense upgrade even while base is under construction
+	testing.expect(t, can_build_orbital_defense(EARTH), "can queue orbital defense while base is under construction")
+	start_orbital_defense_construction(EARTH)
+	testing.expect(t, orbital_defense_building[EARTH], "orbital defense construction started on Earth")
+	testing.expect(t, minerals == 0, "1000 minerals spent on orbital defense")
+
+	// The remaining 5 miners on Earth immediately get in line and join orbital defense
+	testing.expect(t, orbital_defense_constructing_miners(EARTH) == 5, "5 available miners joined orbital defense crew")
+
+	// Base has full crew (5/5), so base progress advances; defense has partial crew (5/10), so defense waits
+	for _ in 0..<int(BASE_CONSTRUCT_TIME) {
+		update_production(1.0)
+	}
+	testing.expect(t, base_counts[EARTH] == 2, "base completed construction")
+	testing.expect(t, base_build_planet == -1, "no base currently building")
+
+	// The 5 miners from the completed base rolled over to orbital defense, giving it a full crew of 10
+	testing.expect(t, orbital_defense_constructing_miners(EARTH) == 10, "all 10 miners now assigned to orbital defense")
+	testing.expect(t, orbital_defense_building[EARTH], "orbital defense is building with full crew")
+
+	// Advance orbital defense construction to completion
+	for _ in 0..<int(ORBITAL_DEFENSE_BUILD_TIME) {
+		update_production(1.0)
+	}
+	testing.expect(t, !orbital_defense_building[EARTH], "orbital defense finished building")
+	testing.expect(t, orbital_defense_level[EARTH] == 1, "orbital defense upgraded to level 1")
+}
+
+@(test)
+planet_mining_hard_cap_idle_reserve_and_immediate_upgrade :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[JUPITER] = 0
+	refinery_built[JUPITER] = true
+	selected_planet = JUPITER
+
+	// Jupiter mining cap is 100
+	testing.expect(t, planet_mining_cap(JUPITER) == 100, "Jupiter mining cap is 100")
+
+	// Add 100 active miners to Jupiter
+	for _ in 0..<100 {
+		units[unit_count] = Unit{
+			kind = .MINING,
+			state = .MINING,
+			position = sector_pos(JUPITER),
+			home_planet = JUPITER,
+			affiliation = JUPITER,
+			target_planet = JUPITER,
+			mining_active = true,
+		}
+		unit_count += 1
+	}
+	testing.expect(t, active_mining_drones_count(JUPITER) == 100, "100 active miners at Jupiter")
+
+	// Add 10 extra surplus miners to Jupiter
+	for _ in 0..<10 {
+		units[unit_count] = Unit{
+			kind = .MINING,
+			state = .IDLE,
+			position = sector_pos(JUPITER),
+			home_planet = JUPITER,
+			affiliation = JUPITER,
+			target_planet = JUPITER,
+			mining_active = false,
+		}
+		unit_count += 1
+	}
+	testing.expect(t, unit_count == 110, "110 total miners at Jupiter")
+	testing.expect(t, active_mining_drones_count(JUPITER) == 100, "still 100 active miners (hard cap enforced)")
+
+	// Advance simulation time for miners: idle miners must STAY idle and not start mining or transit to Earth
+	for i in 0..<unit_count {
+		update_miner(&units[i], i, 1.0)
+	}
+	idle_count := 0
+	for i in 0..<unit_count {
+		if units[i].target_planet == JUPITER && units[i].state == .IDLE {
+			idle_count += 1
+		}
+	}
+	testing.expect(t, idle_count == 10, "all 10 extra miners remain idle in orbit at Jupiter")
+
+	// Request orbital defense upgrade on Jupiter
+	minerals = 1000
+	testing.expect(t, can_build_orbital_defense(JUPITER), "can build orbital defense on Jupiter")
+	start_orbital_defense_construction(JUPITER)
+	testing.expect(t, orbital_defense_building[JUPITER], "orbital defense upgrade in progress")
+
+	// The 10 idle miners were immediately recruited into the construction crew without waiting for transit
+	testing.expect(t, orbital_defense_constructing_miners(JUPITER) == 10, "10 idle miners immediately recruited into crew")
+
+	// The 100 active miners remain active on their mining route
+	testing.expect(t, active_mining_drones_count(JUPITER) == 100, "100 active miners untouched and still cycling")
+
+	// Advance construction to completion
+	update_production(ORBITAL_DEFENSE_BUILD_TIME)
+	testing.expect(t, !orbital_defense_building[JUPITER], "orbital defense upgrade completed")
+	testing.expect(t, orbital_defense_level[JUPITER] == 1, "orbital defense level 1 reached")
+
+	// The 10 construction miners resume idle state since Jupiter's mining cap is already full (100 active)
+	new_idle_count := 0
+	for i in 0..<unit_count {
+		if units[i].target_planet == JUPITER && units[i].state == .IDLE {
+			new_idle_count += 1
+		}
+	}
+	testing.expect(t, new_idle_count == 10, "10 miners return to idle reserve at Jupiter after construction")
+}
+
+@(test)
+planet_mining_hard_cap_idle_drones_step_up_when_active_miner_destroyed :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[JUPITER] = 0
+	refinery_built[JUPITER] = true
+
+	// 100 active miners and 5 idle miners
+	for _ in 0..<100 {
+		units[unit_count] = Unit{
+			kind = .MINING,
+			state = .MINING,
+			position = sector_pos(JUPITER),
+			home_planet = JUPITER,
+			affiliation = JUPITER,
+			target_planet = JUPITER,
+			mining_active = true,
+		}
+		unit_count += 1
+	}
+	for _ in 0..<5 {
+		units[unit_count] = Unit{
+			kind = .MINING,
+			state = .IDLE,
+			position = sector_pos(JUPITER),
+			home_planet = JUPITER,
+			affiliation = JUPITER,
+			target_planet = JUPITER,
+			mining_active = false,
+		}
+		unit_count += 1
+	}
+
+	testing.expect(t, active_mining_drones_count(JUPITER) == 100, "100 active miners initially")
+
+	// An active miner is destroyed
+	killed := kill_player_miner(JUPITER)
+	testing.expect(t, killed, "miner was destroyed")
+	testing.expect(t, active_mining_drones_count(JUPITER) == 99, "active miners dropped to 99")
+
+	// Step simulation: an idle drone steps up to take the vacant active mining slot
+	for i := 0; i < unit_count; i += 1 {
+		update_miner(&units[i], i, 0.1)
+	}
+
+	testing.expect(t, active_mining_drones_count(JUPITER) == 100, "idle drone stepped up, active count restored to 100")
+	idle_count := 0
+	for i in 0..<unit_count {
+		if units[i].target_planet == JUPITER && units[i].state == .IDLE {
+			idle_count += 1
+		}
+	}
+	testing.expect(t, idle_count == 4, "remaining 4 surplus drones remain idle")
+}
+

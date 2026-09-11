@@ -236,6 +236,7 @@ Unit :: struct {
 	// unit itself keeps squads pruned as units are destroyed and shifted.
 	squad: int,
 	build_target: Build_Target,
+	mining_active: bool,
 }
 
 planets := [PLANET_COUNT]Planet{
@@ -976,6 +977,39 @@ start_base_construction :: proc() {
 	base_build_progress = 0
 	construction_seq_counter += 1
 	base_build_order[EARTH] = construction_seq_counter
+
+	// Pass 1: recruit idle miners on Earth immediately
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .MINING && !u.enemy && u.state == .IDLE {
+			if u.target_planet == EARTH || u.affiliation == EARTH {
+				if base_constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS {
+					u.state = .CONSTRUCTING
+					u.build_target = .BASE
+					u.progress = 0
+					u.target_planet = EARTH
+					u.affiliation = EARTH
+					u.mining_active = false
+				}
+			}
+		}
+	}
+	// Pass 2: recruit active miners (mining or depositing) on Earth if crew still needed
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .MINING && !u.enemy && u.state != .CONSTRUCTING && u.state != .IDLE {
+			if u.target_planet == EARTH || u.affiliation == EARTH {
+				if (u.state == .MINING || u.state == .DEPOSITING) && base_constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS {
+					u.state = .CONSTRUCTING
+					u.build_target = .BASE
+					u.progress = 0
+					u.target_planet = EARTH
+					u.affiliation = EARTH
+					u.mining_active = false
+				}
+			}
+		}
+	}
 }
 
 // Refinery cost: amount of drones required to mine the planet times 10.
@@ -1010,13 +1044,29 @@ start_refinery_construction :: proc(planet: int) {
 	refinery_progress[planet] = 0
 	construction_seq_counter += 1
 	refinery_build_order[planet] = construction_seq_counter
+
+	// Pass 1: recruit idle miners first
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
-		if u.kind == .MINING && !u.enemy && u.target_planet == planet && (u.state == .IDLE || u.state == .MINING) {
+		if u.kind == .MINING && !u.enemy && u.target_planet == planet && u.state == .IDLE {
 			if refinery_constructing_miners(planet) < REFINERY_CONSTRUCT_MINERS {
 				u.state = .CONSTRUCTING
 				u.build_target = .REFINERY
 				u.progress = 0
+				u.mining_active = false
+			}
+		}
+	}
+
+	// Pass 2: recruit active mining drones if crew still needed
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .MINING && !u.enemy && u.target_planet == planet && u.state == .MINING {
+			if refinery_constructing_miners(planet) < REFINERY_CONSTRUCT_MINERS {
+				u.state = .CONSTRUCTING
+				u.build_target = .REFINERY
+				u.progress = 0
+				u.mining_active = false
 			}
 		}
 	}
@@ -1150,13 +1200,16 @@ resume_constructing_miners :: proc(p: int, finished: Build_Target = .NONE) {
 				if next_target != .NONE {
 					u.build_target = next_target
 					u.progress = 0
+					u.mining_active = false
 				} else {
 					u.build_target = .NONE
 					u.progress = 0
-					if planet_can_mine(p) {
+					if planet_can_mine(p) && active_mining_drones_count(p) < planet_mining_cap(p) {
 						u.state = .MINING
+						u.mining_active = true
 					} else {
 						u.state = .IDLE
+						u.mining_active = false
 					}
 				}
 			}
@@ -1435,7 +1488,6 @@ can_build_orbital_defense :: proc(planet: int) -> bool {
 	if orbital_defense_level[planet] >= ORBITAL_DEFENSE_MAX_LEVEL { return false }
 	if minerals < ORBITAL_DEFENSE_COST { return false }
 	if planet == EARTH {
-		if base_build_planet == EARTH { return false }
 		return player_miners_count(EARTH) >= ORBITAL_DEFENSE_CONSTRUCT_MINERS
 	}
 	return true
@@ -1449,14 +1501,16 @@ start_orbital_defense_construction :: proc(planet: int) {
 	orbital_defense_elevation[planet] = ORBITAL_DEFENSE_PARK_ELEV
 	construction_seq_counter += 1
 	orbital_defense_build_order[planet] = construction_seq_counter
+
+	// Pass 1: recruit idle miners first
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
-		if u.kind == .MINING && !u.enemy && u.state != .CONSTRUCTING {
+		if u.kind == .MINING && !u.enemy && u.state == .IDLE {
 			is_match := false
 			if planet == EARTH {
-				is_match = (u.target_planet == EARTH || u.affiliation == EARTH) && (u.state == .MINING || u.state == .IDLE || u.state == .DEPOSITING)
+				is_match = (u.target_planet == EARTH || u.affiliation == EARTH)
 			} else {
-				is_match = (u.target_planet == planet) && (u.state == .MINING || u.state == .IDLE)
+				is_match = (u.target_planet == planet)
 			}
 			if is_match {
 				if orbital_defense_constructing_miners(planet) < ORBITAL_DEFENSE_CONSTRUCT_MINERS {
@@ -1465,6 +1519,30 @@ start_orbital_defense_construction :: proc(planet: int) {
 					u.progress = 0
 					u.target_planet = planet
 					u.affiliation = planet
+					u.mining_active = false
+				}
+			}
+		}
+	}
+
+	// Pass 2: recruit active miners (mining or depositing) if crew still needed
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .MINING && !u.enemy && u.state != .CONSTRUCTING && u.state != .IDLE {
+			is_match := false
+			if planet == EARTH {
+				is_match = (u.target_planet == EARTH || u.affiliation == EARTH) && (u.state == .MINING || u.state == .DEPOSITING)
+			} else {
+				is_match = (u.target_planet == planet) && (u.state == .MINING)
+			}
+			if is_match {
+				if orbital_defense_constructing_miners(planet) < ORBITAL_DEFENSE_CONSTRUCT_MINERS {
+					u.state = .CONSTRUCTING
+					u.build_target = .ORBITAL_DEFENSE
+					u.progress = 0
+					u.target_planet = planet
+					u.affiliation = planet
+					u.mining_active = false
 				}
 			}
 		}
@@ -1865,9 +1943,25 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 		target_planet = earth_rally
 		state = .TRANSIT
 	}
+	build_target := Build_Target.NONE
+	mining_active := false
+	if kind == .MINING {
+		if state != .TRANSIT {
+			target_project := planet_next_needed_build_target(target_planet)
+			if target_project != .NONE {
+				state = .CONSTRUCTING
+				build_target = target_project
+			} else if planet_can_mine(target_planet) && active_mining_drones_count(target_planet) < planet_mining_cap(target_planet) {
+				state = .MINING
+				mining_active = true
+			} else {
+				state = .IDLE
+			}
+		}
+	}
 	affiliation := planet
 	if kind == .MINING || target_planet != planet { affiliation = target_planet }
-	units[unit_count] = Unit{kind = kind, state = state, position = pos, home_planet = planet, affiliation = affiliation, target_planet = target_planet, orbit_angle = angle}
+	units[unit_count] = Unit{kind = kind, state = state, position = pos, home_planet = planet, affiliation = affiliation, target_planet = target_planet, orbit_angle = angle, build_target = build_target, mining_active = mining_active}
 	unit_count += 1
 }
 
@@ -2477,6 +2571,7 @@ issue_group_order :: proc(planet: int) {
 		units[i].affiliation = planet
 		units[i].progress = 0
 		units[i].build_target = .NONE
+		units[i].mining_active = false
 		if units[i].kind == .MINING {
 			units[i].state = .TRANSIT
 		} else {
@@ -2524,11 +2619,26 @@ planet_mining_cap :: proc(planet: int) -> int {
 	return 10
 }
 
-// Per-planet hard cap on earning miners: only the first planet_mining_cap(p)
-// player miners targeting planet p (by unit index) deposit minerals; extras
-// still mine and deplete the planet but pay out 0. Constructing miners hold
-// no slot, so the cap counts active miners only.
-// ponytail: index-order cap, revisit if a weighted split is wanted
+active_mining_drones_count :: proc(planet: int) -> int {
+	count := 0
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind != .MINING || u.enemy || u.state == .CONSTRUCTING { continue }
+		is_match := false
+		if planet == EARTH {
+			is_match = (u.target_planet == EARTH || u.affiliation == EARTH)
+		} else {
+			is_match = (u.target_planet == planet)
+		}
+		if is_match && u.mining_active {
+			count += 1
+		}
+	}
+	return count
+}
+
+// Per-planet hard cap on earning miners: only active miners within planet_mining_cap(p)
+// participate in the mining route. Extra drones idle on the planet.
 is_effective_miner :: proc(index: int) -> bool {
 	if units[index].kind != .MINING || units[index].enemy { return false }
 	p := units[index].target_planet
@@ -2536,7 +2646,9 @@ is_effective_miner :: proc(index: int) -> bool {
 	rank := 0
 	for j := 0; j < index; j += 1 {
 		u := &units[j]
-		if u.kind == .MINING && !u.enemy && u.target_planet == p && u.state != .CONSTRUCTING { rank += 1 }
+		if u.kind == .MINING && !u.enemy && u.target_planet == p && u.state != .CONSTRUCTING && u.state != .IDLE {
+			rank += 1
+		}
 	}
 	return rank < planet_mining_cap(p)
 }
@@ -2614,14 +2726,29 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 				u.state = .CONSTRUCTING
 				u.build_target = target_project
 				u.progress = 0
+				u.mining_active = false
 			} else if planet_can_mine(u.target_planet) {
-				u.state = .MINING
-				u.progress = 0
+				can_mine := false
+				if u.mining_active {
+					can_mine = active_mining_drones_count(u.target_planet) <= planet_mining_cap(u.target_planet)
+				} else {
+					can_mine = active_mining_drones_count(u.target_planet) < planet_mining_cap(u.target_planet)
+				}
+				if can_mine {
+					u.state = .MINING
+					u.progress = 0
+					u.mining_active = true
+				} else {
+					u.state = .IDLE
+					u.progress = 0
+					u.mining_active = false
+				}
 			} else {
 				// Occupied or unrefined planet: hold in orbit until combat drones liberate it and refinery is built.
 				// progress doubles as the scout survival clock (kill_player_miner).
 				u.state = .IDLE
 				u.progress = 0
+				u.mining_active = false
 			}
 		}
 	case .MINING:
@@ -2654,21 +2781,24 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 					u.build_target = target_project
 					u.target_planet = EARTH
 					u.affiliation = EARTH
+					u.mining_active = false
 				}
 			}
 		}
 	case .IDLE:
 		// Held at an occupied or unrefined planet: join refinery or orbital defense construction if building and crew needed,
-		// or resume mining once it can be mined.
+		// or resume mining once it can be mined and under the hard cap.
 		// Otherwise the hold time feeds the scout survival clock.
 		target_project := planet_next_needed_build_target(u.target_planet)
 		if !u.enemy && target_project != .NONE {
 			u.state = .CONSTRUCTING
 			u.build_target = target_project
 			u.progress = 0
-		} else if planet_can_mine(u.target_planet) {
+			u.mining_active = false
+		} else if planet_can_mine(u.target_planet) && active_mining_drones_count(u.target_planet) < planet_mining_cap(u.target_planet) {
 			u.state = .MINING
 			u.progress = 0
+			u.mining_active = true
 		} else {
 			u.progress += dt
 		}
@@ -6285,14 +6415,15 @@ serialize_game_state :: proc(allocator := context.temp_allocator) -> string {
 	fmt.sbprintf(&b, "UNITS %d\n", unit_count)
 	for i in 0..<unit_count {
 		u := units[i]
-		fmt.sbprintf(&b, "UNIT %s %s %.4f %.4f %.4f %d %d %d %d %.4f %.4f %d %s\n",
+		fmt.sbprintf(&b, "UNIT %s %s %.4f %.4f %.4f %d %d %d %d %.4f %.4f %d %s %d\n",
 			unit_type_to_string(u.kind),
 			unit_state_to_string(u.state),
 			u.position.x, u.position.y, u.position.z,
 			u.home_planet, u.affiliation, u.target_planet,
 			u.enemy ? 1 : 0,
 			u.progress, u.orbit_angle, u.squad,
-			build_target_to_string(u.build_target))
+			build_target_to_string(u.build_target),
+			u.mining_active ? 1 : 0)
 	}
 
 	return strings.to_string(b)
@@ -6503,6 +6634,12 @@ deserialize_game_state :: proc(content: string) -> bool {
 						bt = .BASE
 					}
 				}
+				mining_active := false
+				if len(fields) >= 15 {
+					mining_active = fields[14] == "1"
+				} else if kind == .MINING && !enemy && (state == .MINING || state == .RETURNING || state == .DEPOSITING) {
+					mining_active = true
+				}
 				if unit_count < MAX_UNITS {
 					units[unit_count] = Unit{
 						kind = kind,
@@ -6516,6 +6653,7 @@ deserialize_game_state :: proc(content: string) -> bool {
 						orbit_angle = orbit,
 						squad = squad,
 						build_target = bt,
+						mining_active = mining_active,
 					}
 					unit_count += 1
 				}
