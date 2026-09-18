@@ -41,6 +41,7 @@ STARTING_EARTH_COMBAT := 0
 STARTING_EARTH_BASES := 1
 STARTING_EARTH_ORBITAL_DEFENSE := 1
 STARTING_EARTH_REFINERY := true
+STARTING_HQ_ORBITAL_DEFENSE := 10
 
 // ---- Unit Requisition Costs (Tweakable Constants) -----------------------
 MINER_COST :: 50
@@ -59,10 +60,10 @@ ENEMY_HOME :: PLANET_COUNT
 
 // The enemy HQ: a fortress at Neptune's ORIGINAL orbit {140, 5, 24} (before
 // the outer planets moved in), defended by 500 fighter drones with 500
-// structural HP. Every attack wave launches from here; destroying it - plus
-// liberating every planet - wins the game.
+// structural HP and a Level 10 Orbital Defense battery. Every attack wave launches
+// from here; destroying it - plus liberating every planet - wins the game.
 ENEMY_HQ_POSITION := rl.Vector3{140, 5, 24}
-ENEMY_HQ_RADIUS :: 2.6
+ENEMY_HQ_RADIUS :: 4.8
 ENEMY_HQ_GARRISON :: 500
 ENEMY_HQ_BASE_HP :: 500
 
@@ -322,18 +323,18 @@ ORBITAL_DEFENSE_IDLE_ELEV :: 38.0 * rl.DEG2RAD
 ORBITAL_DEFENSE_PARK_ELEV :: 16.0 * rl.DEG2RAD
 ORBITAL_DEFENSE_TARGET_RANGE :: 6.0
 ORBITAL_DEFENSE_WAVE_RESET_DELAY :: 10.0
-orbital_defense_level: [PLANET_COUNT]int
-orbital_defense_building: [PLANET_COUNT]bool
-orbital_defense_progress: [PLANET_COUNT]f32
-orbital_defense_hp: [PLANET_COUNT]int
-orbital_defense_angle: [PLANET_COUNT]f32
-orbital_defense_elevation: [PLANET_COUNT]f32
-orbital_defense_wave_kills: [PLANET_COUNT]int
-orbital_defense_reset_timer: [PLANET_COUNT]f32
-orbital_defense_fire_timer: [PLANET_COUNT]f32
+orbital_defense_level: [SECTOR_COUNT]int
+orbital_defense_building: [SECTOR_COUNT]bool
+orbital_defense_progress: [SECTOR_COUNT]f32
+orbital_defense_hp: [SECTOR_COUNT]int
+orbital_defense_angle: [SECTOR_COUNT]f32
+orbital_defense_elevation: [SECTOR_COUNT]f32
+orbital_defense_wave_kills: [SECTOR_COUNT]int
+orbital_defense_reset_timer: [SECTOR_COUNT]f32
+orbital_defense_fire_timer: [SECTOR_COUNT]f32
 construction_seq_counter := 0
 refinery_build_order: [PLANET_COUNT]int
-orbital_defense_build_order: [PLANET_COUNT]int
+orbital_defense_build_order: [SECTOR_COUNT]int
 base_build_order: [PLANET_COUNT]int
 
 Orbital_Defense_Blast :: struct {
@@ -502,9 +503,12 @@ initialize_game :: proc() {
 	refinery_built[EARTH] = STARTING_EARTH_REFINERY
 	orbital_defense_level = {}
 	orbital_defense_level[EARTH] = STARTING_EARTH_ORBITAL_DEFENSE
+	orbital_defense_level[ENEMY_HOME] = STARTING_HQ_ORBITAL_DEFENSE
 	orbital_defense_hp = {}
 	orbital_defense_hp[EARTH] = orbital_defense_max_hp(EARTH)
+	orbital_defense_hp[ENEMY_HOME] = orbital_defense_max_hp(ENEMY_HOME)
 	orbital_defense_elevation[EARTH] = ORBITAL_DEFENSE_IDLE_ELEV
+	orbital_defense_elevation[ENEMY_HOME] = ORBITAL_DEFENSE_IDLE_ELEV
 	enemy_base_hp = GARRISON_BASE_HP
 	unit_count = 0
 	for _ in 0..<STARTING_EARTH_MINERS {
@@ -565,7 +569,7 @@ reset_world :: proc() {
 	orbital_defense_progress = {}
 	orbital_defense_hp = {}
 	orbital_defense_angle = {}
-	for p in 0..<PLANET_COUNT {
+	for p in 0..<SECTOR_COUNT {
 		orbital_defense_elevation[p] = ORBITAL_DEFENSE_IDLE_ELEV
 	}
 	orbital_defense_wave_kills = {}
@@ -1247,10 +1251,15 @@ resume_constructing_miners :: proc(p: int, finished: Build_Target = .NONE) {
 // ---- Orbital Defense ---------------------------------------------------
 
 orbital_defense_max_hp :: proc(planet: int) -> int {
+	if planet < 0 || planet >= SECTOR_COUNT { return 0 }
 	return orbital_defense_level[planet] * ORBITAL_DEFENSE_HP_PER_LEVEL
 }
 
 orbital_defense_pos :: proc(planet: int) -> rl.Vector3 {
+	if planet == ENEMY_HOME {
+		return ENEMY_HQ_POSITION + {0.3, 1.95, 0}
+	}
+	if planet < 0 || planet >= PLANET_COUNT { return {} }
 	p := planets[planet]
 	return rl.Vector3{
 		p.position.x,
@@ -1260,6 +1269,7 @@ orbital_defense_pos :: proc(planet: int) -> rl.Vector3 {
 }
 
 closest_approaching_enemy :: proc(planet: int) -> (^Unit, bool) {
+	if planet < 0 || planet >= SECTOR_COUNT { return nil, false }
 	target_pos := sector_pos(planet)
 	max_range := sector_radius(planet) + ORBITAL_DEFENSE_TARGET_RANGE
 	closest_idx := -1
@@ -1268,7 +1278,8 @@ closest_approaching_enemy :: proc(planet: int) -> (^Unit, bool) {
 	for i in 0..<unit_count {
 		u := &units[i]
 		// Strictly target approaching combat fighters in transit; never target units that have already reached orbit (.GUARDING)
-		if !u.enemy || u.kind != .COMBAT || u.state != .TRANSIT || u.target_planet != planet { continue }
+		is_target := (planet == ENEMY_HOME) ? (!u.enemy) : (u.enemy)
+		if !is_target || u.kind != .COMBAT || u.state != .TRANSIT || u.target_planet != planet { continue }
 		d := distance(u.position, target_pos)
 		if d <= max_range && d < closest_dist {
 			closest_dist = d
@@ -1283,6 +1294,16 @@ closest_approaching_enemy :: proc(planet: int) -> (^Unit, bool) {
 }
 
 orbital_defense_aim_toward :: proc(planet_idx: int, target: rl.Vector3) -> (azimuth: f32, elev: f32) {
+	if planet_idx < 0 || planet_idx >= SECTOR_COUNT { return 0, 0 }
+	if planet_idx == ENEMY_HOME {
+		pivot := ENEMY_HQ_POSITION + {0.3, 2.31, 0}
+		diff := target - pivot
+		horiz_d := math.sqrt(diff.x * diff.x + diff.z * diff.z)
+		azimuth = math.atan2(diff.z, diff.x)
+		raw_elev := horiz_d > 0.001 ? math.atan2(diff.y, horiz_d) : (math.PI * 0.25)
+		elev = clamp(raw_elev, 8.0 * rl.DEG2RAD, 85.0 * rl.DEG2RAD)
+		return
+	}
 	planet := planets[planet_idx]
 	s: f32 = 0.84 + clamp(planet.radius * 0.07, 0.11, 0.32)
 	pole := rl.Vector3{planet.position.x, planet.position.y + planet.radius, planet.position.z}
@@ -1296,6 +1317,19 @@ orbital_defense_aim_toward :: proc(planet_idx: int, target: rl.Vector3) -> (azim
 }
 
 orbital_defense_muzzle_pos_toward :: proc(planet_idx: int, target: rl.Vector3) -> rl.Vector3 {
+	if planet_idx < 0 || planet_idx >= SECTOR_COUNT { return {} }
+	if planet_idx == ENEMY_HOME {
+		azimuth, elev := orbital_defense_aim_toward(planet_idx, target)
+		cos_az := math.cos(azimuth)
+		sin_az := math.sin(azimuth)
+		up := rl.Vector3{0, 1, 0}
+		fwd := rl.Vector3{cos_az, 0, sin_az}
+		cos_el := math.cos(elev)
+		sin_el := math.sin(elev)
+		barrel_dir := fwd * cos_el + up * sin_el
+		pivot := ENEMY_HQ_POSITION + {0.3, 2.31, 0}
+		return pivot + barrel_dir * 3.25
+	}
 	planet := planets[planet_idx]
 	s: f32 = 0.84 + clamp(planet.radius * 0.07, 0.11, 0.32)
 	pole := rl.Vector3{planet.position.x, planet.position.y + planet.radius, planet.position.z}
@@ -1319,11 +1353,11 @@ shortest_angle_diff :: proc(target, current: f32) -> f32 {
 }
 
 advance_orbital_defense_aim :: proc(planet_idx: int, dt: f32) {
-	if planet_idx < 0 || planet_idx >= PLANET_COUNT { return }
+	if planet_idx < 0 || planet_idx >= SECTOR_COUNT { return }
 	if orbital_defense_level[planet_idx] <= 0 { return }
 
-	// If upgrading, hold azimuth and park elevation in maintenance cradle (16 deg)
-	if orbital_defense_building[planet_idx] {
+	// If upgrading (planets only), hold azimuth and park elevation in maintenance cradle (16 deg)
+	if planet_idx < PLANET_COUNT && orbital_defense_building[planet_idx] {
 		target_el: f32 = ORBITAL_DEFENSE_PARK_ELEV
 		el_diff := target_el - orbital_defense_elevation[planet_idx]
 		max_el := ORBITAL_DEFENSE_ELEV_SPEED * dt
@@ -1380,14 +1414,30 @@ advance_orbital_defense_aim :: proc(planet_idx: int, dt: f32) {
 }
 
 orbital_defense_aim :: proc(planet_idx: int) -> (azimuth: f32, elev: f32) {
-	if planet_idx < 0 || planet_idx >= PLANET_COUNT { return 0, 0 }
-	if orbital_defense_building[planet_idx] {
+	if planet_idx < 0 || planet_idx >= SECTOR_COUNT { return 0, 0 }
+	if planet_idx < PLANET_COUNT && orbital_defense_building[planet_idx] {
 		return orbital_defense_angle[planet_idx], ORBITAL_DEFENSE_PARK_ELEV
+	}
+	if planet_idx == ENEMY_HOME && (enemy_hq_destroyed() || orbital_defense_hp[ENEMY_HOME] <= 0) {
+		return orbital_defense_angle[planet_idx], -0.32
 	}
 	return orbital_defense_angle[planet_idx], orbital_defense_elevation[planet_idx]
 }
 
 orbital_defense_muzzle_pos :: proc(planet_idx: int) -> rl.Vector3 {
+	if planet_idx < 0 || planet_idx >= SECTOR_COUNT { return {} }
+	if planet_idx == ENEMY_HOME {
+		azimuth, elev := orbital_defense_aim(planet_idx)
+		cos_az := math.cos(azimuth)
+		sin_az := math.sin(azimuth)
+		up := rl.Vector3{0, 1, 0}
+		fwd := rl.Vector3{cos_az, 0, sin_az}
+		cos_el := math.cos(elev)
+		sin_el := math.sin(elev)
+		barrel_dir := fwd * cos_el + up * sin_el
+		pivot := ENEMY_HQ_POSITION + {0.3, 2.31, 0}
+		return pivot + barrel_dir * 3.25
+	}
 	planet := planets[planet_idx]
 	s: f32 = 0.84 + clamp(planet.radius * 0.07, 0.11, 0.32)
 	pole := rl.Vector3{planet.position.x, planet.position.y + planet.radius, planet.position.z}
@@ -1442,7 +1492,7 @@ draw_orbital_defense_blasts :: proc() {
 		b := &orbital_defense_blasts[i]
 		if !b.active { continue }
 		if distance(b.from, b.to) < 0.05 { continue }
-		if !has_vision(b.planet) { continue }
+		if !has_vision(b.planet) && b.planet != ENEMY_HOME { continue }
 
 		t := clamp(b.elapsed / b.duration, 0.0, 1.0)
 		fade := 1.0 - t
@@ -1450,34 +1500,48 @@ draw_orbital_defense_blasts :: proc() {
 		glow_alpha := u8(clamp(180.0 * fade, 0, 255))
 		shock_alpha := u8(clamp(200.0 * fade, 0, 255))
 
-		// 1. Big Laser Blast Beam (from orbital defense station to enemy fighter)
-		// Core beam: brilliant solid white/cyan cylinder
-		core_r := 0.22 * fade + 0.04
-		rl.DrawCylinderEx(b.from, b.to, core_r, core_r * 0.75, 8, rl.Color{255, 255, 255, alpha})
+		// Distinct palettes: Crimson/amber for Enemy HQ, cyan/mint for Player Planets
+		beam_color := rl.Color{0, 240, 255, glow_alpha}
+		core_color := rl.Color{255, 255, 255, alpha}
+		line_color := rl.Color{210, 255, 255, alpha}
+		shock_color := rl.Color{130, 255, 245, shock_alpha}
+		spark_color := rl.Color{255, 240, 180, alpha}
 
-		// Outer glowing plasma cylinder: wide luminous cyan aura
+		if b.planet == ENEMY_HOME {
+			beam_color = rl.Color{255, 30, 45, glow_alpha}
+			core_color = rl.Color{255, 240, 220, alpha}
+			line_color = rl.Color{255, 120, 100, alpha}
+			shock_color = rl.Color{255, 60, 75, shock_alpha}
+			spark_color = rl.Color{255, 160, 80, alpha}
+		}
+
+		// 1. Big Laser Blast Beam (from orbital defense station to target fighter)
+		core_r := 0.22 * fade + 0.04
+		rl.DrawCylinderEx(b.from, b.to, core_r, core_r * 0.75, 8, core_color)
+
+		// Outer glowing plasma cylinder: wide luminous aura
 		glow_r := 0.65 * fade + 0.12
-		rl.DrawCylinderEx(b.from, b.to, glow_r, glow_r * 0.75, 8, rl.Color{0, 240, 255, glow_alpha})
+		rl.DrawCylinderEx(b.from, b.to, glow_r, glow_r * 0.75, 8, beam_color)
 
 		// Central accelerator beam core line
-		rl.DrawLine3D(b.from, b.to, rl.Color{210, 255, 255, alpha})
+		rl.DrawLine3D(b.from, b.to, line_color)
 
 		// 2. Muzzle Flash & Discharge at Orbital Defense Station (b.from)
 		flash_r := 0.55 * fade + 0.08
-		rl.DrawSphere(b.from, flash_r * 0.6, rl.Color{255, 255, 255, alpha})
-		rl.DrawSphereEx(b.from, flash_r, 8, 12, rl.Color{0, 220, 255, glow_alpha})
-		rl.DrawCircle3D(b.from, 0.5 + t * 1.0, {0, 1, 0}, 90, rl.Color{0, 240, 255, glow_alpha})
+		rl.DrawSphere(b.from, flash_r * 0.6, core_color)
+		rl.DrawSphereEx(b.from, flash_r, 8, 12, beam_color)
+		rl.DrawCircle3D(b.from, 0.5 + t * 1.0, {0, 1, 0}, 90, beam_color)
 
 		// 3. Vaporization Impact & Explosion at the Enemy Fighter (b.to)
 		burst_r := 0.40 + 1.5 * math.sqrt(t)
-		rl.DrawSphere(b.to, 0.30 * fade, rl.Color{255, 255, 255, alpha})
-		rl.DrawSphereEx(b.to, burst_r * 0.75, 8, 12, rl.Color{0, 230, 255, glow_alpha})
+		rl.DrawSphere(b.to, 0.30 * fade, core_color)
+		rl.DrawSphereEx(b.to, burst_r * 0.75, 8, 12, beam_color)
 
 		// Expanding vector wireframe sphere shockwave
 		shock_r := 0.45 + 2.4 * t
-		rl.DrawSphereWires(b.to, shock_r, 6, 8, rl.Color{130, 255, 245, shock_alpha})
+		rl.DrawSphereWires(b.to, shock_r, 6, 8, shock_color)
 		// Expanding horizontal planar tactical shockwave ring
-		rl.DrawCircle3D(b.to, shock_r * 1.2, {0, 1, 0}, 90, rl.Color{0, 240, 255, shock_alpha})
+		rl.DrawCircle3D(b.to, shock_r * 1.2, {0, 1, 0}, 90, beam_color)
 
 		// High-energy plasma sparks and debris radiating outward from the blast
 		spark_dist := t * 3.4
@@ -1487,8 +1551,8 @@ draw_orbital_defense_blasts :: proc() {
 			spark_dir := rl.Vector3Normalize(rl.Vector3{math.cos(ang), elev, math.sin(ang)})
 			spark_pos := b.to + spark_dir * spark_dist
 			trail_pos := b.to + spark_dir * (spark_dist * 0.65)
-			rl.DrawLine3D(trail_pos, spark_pos, rl.Color{0, 240, 255, shock_alpha})
-			rl.DrawSphere(spark_pos, 0.08 * fade, rl.Color{255, 240, 180, alpha})
+			rl.DrawLine3D(trail_pos, spark_pos, beam_color)
+			rl.DrawSphere(spark_pos, 0.08 * fade, spark_color)
 		}
 	}
 }
@@ -1582,7 +1646,7 @@ destroy_orbital_defense :: proc(planet: int) {
 	orbital_defense_building[planet] = false
 	orbital_defense_progress[planet] = 0
 	orbital_defense_angle[planet] = 0
-	orbital_defense_elevation[planet] = ORBITAL_DEFENSE_IDLE_ELEV
+	orbital_defense_elevation[planet] = (planet == ENEMY_HOME) ? -0.32 : ORBITAL_DEFENSE_IDLE_ELEV
 	orbital_defense_wave_kills[planet] = 0
 	orbital_defense_reset_timer[planet] = 0
 	for i := unit_count - 1; i >= 0; i -= 1 {
@@ -1591,7 +1655,7 @@ destroy_orbital_defense :: proc(planet: int) {
 			remove_unit_at(i)
 		}
 	}
-	if planet != EARTH {
+	if planet != EARTH && planet < PLANET_COUNT {
 		refinery_built[planet] = false
 		refinery_building[planet] = false
 		refinery_progress[planet] = 0
@@ -1675,7 +1739,7 @@ draw_orbital_defense_inspector_section :: proc(x: f32, btn: rl.Rectangle, p: int
 
 update_orbital_defenses :: proc(dt: f32) {
 	update_orbital_defense_blasts(dt)
-	for p in 0..<PLANET_COUNT {
+	for p in 0..<SECTOR_COUNT {
 		if orbital_defense_level[p] > 0 {
 			advance_orbital_defense_aim(p, dt)
 		}
@@ -1688,10 +1752,13 @@ update_orbital_defenses :: proc(dt: f32) {
 				orbital_defense_wave_kills[p] = 0
 			}
 		}
-		if transit_fighters_at(p, true) == 0 {
+
+		is_building := (p < PLANET_COUNT) && orbital_defense_building[p]
+		inbound_count := transit_fighters_at(p, p < PLANET_COUNT)
+		if inbound_count == 0 {
 			orbital_defense_wave_kills[p] = 0
 			orbital_defense_reset_timer[p] = 0
-		} else if orbital_defense_level[p] > 0 && !orbital_defense_building[p] {
+		} else if orbital_defense_level[p] > 0 && !is_building {
 			max_kills := orbital_defense_level[p] * ORBITAL_DEFENSE_KILLS_PER_LEVEL
 			if orbital_defense_wave_kills[p] < max_kills {
 				target_pos := sector_pos(p)
@@ -1701,8 +1768,8 @@ update_orbital_defenses :: proc(dt: f32) {
 
 				for i := unit_count - 1; i >= 0; i -= 1 {
 					u := &units[i]
-					// Strictly target approaching combat fighters in transit; never target units that have already reached orbit (.GUARDING)
-					if !u.enemy || u.kind != .COMBAT || u.state != .TRANSIT || u.target_planet != p { continue }
+					is_target := (p == ENEMY_HOME) ? (!u.enemy) : (u.enemy)
+					if !is_target || u.kind != .COMBAT || u.state != .TRANSIT || u.target_planet != p { continue }
 					d := distance(u.position, target_pos)
 					if d <= engage_dist {
 						if orbital_defense_fire_timer[p] <= 0 || d <= arrival_dist {
@@ -2361,6 +2428,16 @@ update_planet_combat :: proc(dt: f32, p: int) {
 				miner_timer[p] -= COMBAT_TICK
 				if !kill_enemy_miner(p) { break }
 			}
+		} else if p < SECTOR_COUNT && orbital_defense_level[p] > 0 {
+			miner_timer[p] += dt
+			for miner_timer[p] >= COMBAT_TICK {
+				miner_timer[p] -= COMBAT_TICK
+				orbital_defense_hp[p] -= players
+				if orbital_defense_hp[p] <= 0 {
+					destroy_orbital_defense(p)
+					break
+				}
+			}
 		} else if enemy_base_hp[p] > 0 {
 			base_timer[p] += dt
 			for base_timer[p] >= COMBAT_TICK {
@@ -2557,7 +2634,7 @@ sector_in_combat :: proc(s: int) -> bool {
 	}
 	if players > 0 && enemies > 0 { return true }
 	if enemies > 0 && (has_player_miners || (s == EARTH && base_counts[s] > 0) || (s < PLANET_COUNT && orbital_defense_level[s] > 0)) { return true }
-	if players > 0 && (has_enemy_miners || enemy_base_hp[s] > 0) { return true }
+	if players > 0 && (has_enemy_miners || enemy_base_hp[s] > 0 || (s < SECTOR_COUNT && orbital_defense_level[s] > 0)) { return true }
 	return false
 }
 
@@ -3165,6 +3242,32 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 		p_pulse := 0.65 + 0.35 * math.sin(laser_anim_time * 6.0 + f32(planet_idx))
 		rl.DrawSphereEx(breech_c, 0.08 * s * p_pulse, 6, 8, rl.Fade(cyan_glow, 0.85))
 	}
+
+	if level >= 6 {
+		bcap_l := pole + up * (0.32 * s) - right * (0.28 * s) - fwd * (0.22 * s)
+		bcap_r := pole + up * (0.32 * s) + right * (0.28 * s) - fwd * (0.22 * s)
+		rl.DrawCylinderEx(bcap_l, bcap_l + up * (0.20 * s), 0.075 * s, 0.075 * s, 8, gunmetal)
+		rl.DrawCylinderEx(bcap_r, bcap_r + up * (0.20 * s), 0.075 * s, 0.075 * s, 8, gunmetal)
+		rl.DrawCylinderEx(bcap_l + up * (0.05 * s), bcap_l + up * (0.15 * s), 0.082 * s, 0.082 * s, 8, cyan_glow)
+		rl.DrawCylinderEx(bcap_r + up * (0.05 * s), bcap_r + up * (0.15 * s), 0.082 * s, 0.082 * s, 8, cyan_glow)
+	}
+
+	if level >= 8 {
+		draw_oriented_box(sh_center - right * (0.34 * s), 0.10 * s, 0.36 * s * 0.5, pl_th * 0.5, fwd, up, right, sand_dark)
+		draw_oriented_box(sh_center + right * (0.34 * s), 0.10 * s, 0.36 * s * 0.5, pl_th * 0.5, fwd, up, right, sand_dark)
+		rl.DrawLine3D(sh_center - right * (0.38 * s) - up * (0.16 * s), sh_center - right * (0.38 * s) + up * (0.16 * s), cyan_glow)
+		rl.DrawLine3D(sh_center + right * (0.38 * s) - up * (0.16 * s), sh_center + right * (0.38 * s) + up * (0.16 * s), cyan_glow)
+	}
+
+	if level >= 10 {
+		under_s := s1_e - barrel_normal * (0.085 * s)
+		under_e := s3_e - barrel_normal * (0.065 * s)
+		rl.DrawLine3D(under_s, under_e, mint_core)
+		corona_pulse := 0.70 + 0.30 * math.sin(laser_anim_time * 9.0 + f32(planet_idx))
+		corona_r: f32 = 0.16 * s * corona_pulse
+		rl.DrawCircle3D(mb_e + barrel_dir * (0.06 * s), corona_r, barrel_dir, 32, rl.Fade(cyan_glow, 0.85))
+		rl.DrawCircle3D(mb_e + barrel_dir * (0.09 * s), corona_r * 0.7, barrel_dir, 24, rl.Fade(mint_core, 0.95))
+	}
 }
 
 // Visual construction site for an orbital defense battery being assembled by miners
@@ -3295,7 +3398,7 @@ draw_world :: proc() {
 	}
 	draw_hq_fortress(ENEMY_HQ_POSITION, hq_color, hq_trim, hq_glow)
 	if selected_planet == ENEMY_HOME {
-		rl.DrawCubeWiresV(ENEMY_HQ_POSITION, {4.6, 4.6, 4.6}, SCIFI_CYAN)
+		rl.DrawCubeWiresV(ENEMY_HQ_POSITION, {11.2, 5.8, 11.2}, SCIFI_CYAN)
 	}
 	draw_rally_flag()
 
@@ -3787,8 +3890,15 @@ draw_hq_inspector :: proc(x: f32) {
 		_, garrison := planet_combatants(ENEMY_HOME)
 		draw_status_card(card, SCIFI_RED)
 		rl.DrawText("HOSTILE CITADEL", i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_RED)
-		rl.DrawText(rl.TextFormat("FIGHTERS %d   INTEGRITY %d/%d", garrison, enemy_base_hp[ENEMY_HOME], ENEMY_HQ_BASE_HP), i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2 - 2, 11, SCIFI_TEXT)
-		draw_progress({x + PANEL_PAD_X + CARD_INSET, CARD_LINE_2 + 13, PANEL_CONTENT_W - 2 * CARD_INSET, 6}, f32(enemy_base_hp[ENEMY_HOME]) / f32(ENEMY_HQ_BASE_HP), SCIFI_RED)
+		if orbital_defense_level[ENEMY_HOME] > 0 {
+			max_hp := orbital_defense_max_hp(ENEMY_HOME)
+			cur_hp := orbital_defense_hp[ENEMY_HOME]
+			rl.DrawText(rl.TextFormat("GARRISON %d   DEF LVL %d (HP %d/%d)", garrison, orbital_defense_level[ENEMY_HOME], cur_hp, max_hp), i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2 - 2, 11, SCIFI_TEXT)
+			draw_progress({x + PANEL_PAD_X + CARD_INSET, CARD_LINE_2 + 13, PANEL_CONTENT_W - 2 * CARD_INSET, 6}, f32(cur_hp) / f32(max(1, max_hp)), SCIFI_RED)
+		} else {
+			rl.DrawText(rl.TextFormat("FIGHTERS %d   INTEGRITY %d/%d (DEF OFFLINE)", garrison, enemy_base_hp[ENEMY_HOME], ENEMY_HQ_BASE_HP), i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2 - 2, 11, SCIFI_TEXT)
+			draw_progress({x + PANEL_PAD_X + CARD_INSET, CARD_LINE_2 + 13, PANEL_CONTENT_W - 2 * CARD_INSET, 6}, f32(enemy_base_hp[ENEMY_HOME]) / f32(ENEMY_HQ_BASE_HP), SCIFI_RED)
+		}
 	} else {
 		draw_status_card(card, SCIFI_STEEL)
 		rl.DrawText("UNSCOUTED REACHES", i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_MUTED)
@@ -4100,35 +4210,269 @@ draw_unit_tile_data :: proc(kind: Unit_Type, state: Unit_State, selected: bool, 
 	rl.DrawCircle(c.int(rect.x + rect.width - 4), c.int(rect.y + 4), 2, state_color(state))
 }
 
-// Layered enemy HQ battlestation: stacked hull, command tower, corner
-// turrets with barrels, emissive window band and a pulsing beacon spire.
+// Layered enemy HQ dreadnought battlestation: inverted ventral keel with pulsating
+// fusion core, heavy octagonal citadel foundation with armor applique panels and
+// VLS missile grids, four cantilevered outrigger bastions with drone hangar launch
+// bays, point-defense autocannons, and wingtip strobes, mid-deck superstructure
+// with command bridge observation visor, towering sensor mast with rotating radar
+// dish, and an integrated traversing Level 10 Orbital Defense heavy railgun battery.
 draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
-	dark := rl.Color{u8(f32(hull.r) * 0.55), u8(f32(hull.g) * 0.55), u8(f32(hull.b) * 0.55), 255}
-	rl.DrawCubeV(center, {3.6, 2.6, 3.6}, hull)
-	rl.DrawCubeV(center + {0, -1.45, 0}, {2.6, 0.5, 2.6}, dark)
-	rl.DrawCubeV(center + {0, 2.3, 0}, {1.7, 2.2, 1.7}, hull)
-	rl.DrawCubeV(center + {0, 2.3, 0}, {1.85, 0.35, 1.85}, trim)
-	// Emissive window band around the main hull.
-	rl.DrawCubeV(center + {0, 0.4, 0}, {3.66, 0.20, 3.66}, glow)
-	// Corner turrets with outward barrels.
-	for sx in -1..=1 {
-		for sz in -1..=1 {
-			if sx == 0 || sz == 0 { continue }
-			base := center + {f32(sx) * 1.9, 1.0, f32(sz) * 1.9}
-			rl.DrawCubeV(base, {0.55, 0.55, 0.55}, dark)
-			rl.DrawCubeV(base + {0, 0.45, 0}, {0.34, 0.34, 0.34}, trim)
-			out := rl.Vector3Normalize({f32(sx), 0.15, f32(sz)})
-			rl.DrawCylinderEx(base + {0, 0.5, 0}, base + {0, 0.5, 0} + out * 1.1, 0.09, 0.09, 6, dark)
+	dark       := rl.Color{u8(f32(hull.r) * 0.46), u8(f32(hull.g) * 0.46), u8(f32(hull.b) * 0.46), 255}
+	darker     := rl.Color{u8(f32(hull.r) * 0.25), u8(f32(hull.g) * 0.25), u8(f32(hull.b) * 0.25), 255}
+	gunmetal   := rl.Color{24, 27, 34, 255}
+	steel_mid  := rl.Color{48, 54, 64, 255}
+	steel_lit  := rl.Color{135, 145, 162, 255}
+	amber_warn := rl.Color{255, 140, 25, 255}
+
+	destroyed := enemy_hq_destroyed() || enemy_base_hp[ENEMY_HOME] <= 0
+
+	eff_glow := glow
+	eff_amber := amber_warn
+	if destroyed {
+		eff_glow = rl.Color{55, 58, 64, 255}
+		eff_amber = rl.Color{45, 48, 52, 255}
+	}
+
+	pulse_slow := 0.70 + 0.30 * math.sin(laser_anim_time * 3.0)
+	pulse_fast := 0.60 + 0.40 * math.sin(laser_anim_time * 7.5)
+
+	up := rl.Vector3{0, 1, 0}
+
+	// 1. Ventral Keel & Fusion Core
+	rl.DrawCylinderEx(center - up * 0.6, center - up * 1.5, 2.6, 1.9, 6, dark)
+	rl.DrawCylinderEx(center - up * 1.5, center - up * 2.3, 1.9, 1.0, 6, gunmetal)
+
+	reactor_col := rl.Fade(eff_glow, pulse_slow * 0.95)
+	rl.DrawCylinderEx(center - up * 2.25, center - up * 2.35, 1.15, 1.15, 12, reactor_col)
+	rl.DrawSphereEx(center - up * 2.45, 0.55 * pulse_slow + 0.12, 8, 12, reactor_col)
+
+	for i in 0..<4 {
+		ang := f32(i) * (math.PI / 2.0)
+		fdir := rl.Vector3{math.cos(ang), 0, math.sin(ang)}
+		ftan := rl.Vector3{-fdir.z, 0, fdir.x}
+		f_top := center - up * 1.0 + fdir * 1.7
+		f_bot := center - up * 2.3 + fdir * 0.7
+		rl.DrawCylinderEx(f_top, f_bot, 0.14, 0.06, 4, dark)
+		rl.DrawLine3D(f_top + ftan * 0.08, f_bot + ftan * 0.08, eff_glow)
+		rl.DrawLine3D(f_top - ftan * 0.08, f_bot - ftan * 0.08, eff_glow)
+	}
+
+	// 2. Main Bastion Citadel Platform (Layered Octagonal Hull)
+	draw_oriented_box(center - up * 0.35, 3.2, 0.35, 3.2, {1, 0, 0}, up, {0, 0, 1}, dark)
+	draw_oriented_box(center - up * 0.35, 2.26, 0.36, 2.26, {0.707, 0, 0.707}, up, {-0.707, 0, 0.707}, dark)
+
+	draw_oriented_box(center + up * 0.35, 2.9, 0.35, 2.9, {1, 0, 0}, up, {0, 0, 1}, hull)
+	draw_oriented_box(center + up * 0.35, 2.05, 0.36, 2.05, {0.707, 0, 0.707}, up, {-0.707, 0, 0.707}, hull)
+
+	draw_oriented_box(center + up * 0.02, 3.25, 0.06, 3.25, {1, 0, 0}, up, {0, 0, 1}, trim)
+	draw_oriented_box(center + up * 0.40, 3.02, 0.05, 3.02, {1, 0, 0}, up, {0, 0, 1}, eff_glow)
+
+	for i in 0..<4 {
+		ang := f32(i) * (math.PI / 2.0)
+		cdir := rl.Vector3{math.cos(ang), 0, math.sin(ang)}
+		ctan := rl.Vector3{-cdir.z, 0, cdir.x}
+		b_pos := center + up * 0.42 + cdir * 2.95
+		draw_oriented_box(b_pos, 0.10, 0.26, 1.4, cdir, up, ctan, dark)
+		draw_oriented_box(b_pos + up * 0.18, 0.08, 0.06, 1.2, cdir, up, ctan, trim)
+		rl.DrawLine3D(b_pos - ctan * 1.3 - up * 0.15, b_pos + ctan * 1.3 - up * 0.15, eff_glow)
+
+		// VLS missile silo cell grid on cardinal decks
+		vls_center := center + up * 0.72 + cdir * 2.15
+		draw_oriented_box(vls_center, 0.35, 0.02, 0.55, cdir, up, ctan, gunmetal)
+		for vr in -1..=1 {
+			for vc in 0..=1 {
+				cell_pos := vls_center + ctan * (f32(vr) * 0.24) + cdir * (f32(vc) * 0.24 - 0.12)
+				draw_oriented_box(cell_pos, 0.08, 0.025, 0.08, cdir, up, ctan, darker)
+				rl.DrawSphere(cell_pos + up * 0.02, 0.035, eff_glow)
+			}
 		}
 	}
-	// Beacon spire with pulsing tip.
-	rl.DrawCylinderEx(center + {0, 3.4, 0}, center + {0, 5.0, 0}, 0.12, 0.05, 6, trim)
-	pulse := 0.6 + 0.4 * math.sin(laser_anim_time * 4.0)
-	rl.DrawSphereEx(center + {0, 5.1, 0}, 0.22 * pulse + 0.12, 8, 12, rl.Fade(glow, 0.9))
-	// Rotating radar sweep off the tower.
-	sweep := laser_anim_time * 1.4
-	sweep_dir := rl.Vector3{math.cos(sweep), 0, math.sin(sweep)}
-	rl.DrawLine3D(center + {0, 3.1, 0}, center + {0, 3.1, 0} + sweep_dir * 2.6, rl.Fade(glow, 0.7))
+
+	// 3. Four Outrigger Fighter Hangar Bastions
+	for d_idx in 0..<4 {
+		ang := f32(d_idx) * (math.PI / 2.0) + (math.PI / 4.0)
+		b_dir := rl.Vector3{math.cos(ang), 0, math.sin(ang)}
+		b_tan := rl.Vector3{-b_dir.z, 0, b_dir.x}
+
+		boom_c := center + up * 0.25 + b_dir * 3.3
+		draw_oriented_box(boom_c, 0.38, 0.22, 0.75, b_dir, up, b_tan, gunmetal)
+
+		p1_s := center + up * 0.68 + b_dir * 2.0 + b_tan * 0.22
+		p1_e := boom_c + up * 0.18 + b_dir * 0.75 + b_tan * 0.22
+		rl.DrawCylinderEx(p1_s, p1_e, 0.05, 0.05, 6, steel_mid)
+		rl.DrawLine3D(p1_s + up * 0.04, p1_e + up * 0.04, eff_glow)
+
+		p2_s := center + up * 0.68 + b_dir * 2.0 - b_tan * 0.22
+		p2_e := boom_c + up * 0.18 + b_dir * 0.75 - b_tan * 0.22
+		rl.DrawCylinderEx(p2_s, p2_e, 0.05, 0.05, 6, steel_mid)
+		rl.DrawLine3D(p2_s + up * 0.04, p2_e + up * 0.04, eff_glow)
+
+		truss_s := center - up * 0.5 + b_dir * 2.2
+		truss_e := boom_c - up * 0.12 + b_dir * 0.6
+		rl.DrawCylinderEx(truss_s, truss_e, 0.12, 0.08, 6, dark)
+
+		pod_c := center + up * 0.32 + b_dir * 4.6
+		draw_oriented_box(pod_c, 0.65, 0.45, 0.85, b_dir, up, b_tan, hull)
+		draw_oriented_box(pod_c + up * 0.25, 0.52, 0.12, 0.72, b_dir, up, b_tan, trim)
+		draw_oriented_box(pod_c - up * 0.25, 0.52, 0.10, 0.72, b_dir, up, b_tan, dark)
+
+		bay_face := pod_c + b_dir * 0.86
+		draw_oriented_box(bay_face - b_dir * 0.08, 0.38, 0.24, 0.10, b_dir, up, b_tan, rl.Color{8, 10, 14, 255})
+		rl.DrawLine3D(bay_face - b_dir * 0.4 - up * 0.08, bay_face + b_dir * 0.15 - up * 0.08, eff_glow)
+		rl.DrawSphere(bay_face + b_dir * 0.05, 0.12, eff_glow)
+
+		turret_pos := pod_c + up * 0.48
+		rl.DrawCylinderEx(turret_pos, turret_pos + up * 0.14, 0.20, 0.18, 8, gunmetal)
+		b1 := turret_pos + up * 0.16 + b_tan * 0.09
+		b2 := turret_pos + up * 0.16 - b_tan * 0.09
+		rl.DrawCylinderEx(b1, b1 + b_dir * 0.55, 0.038, 0.034, 6, steel_lit)
+		rl.DrawCylinderEx(b2, b2 + b_dir * 0.55, 0.038, 0.034, 6, steel_lit)
+		rl.DrawSphere(b1 + b_dir * 0.56, 0.032, eff_glow)
+		rl.DrawSphere(b2 + b_dir * 0.56, 0.032, eff_glow)
+
+		strobe_col := (d_idx % 2 == 0) ? eff_glow : eff_amber
+		strobe_p   := (d_idx % 2 == 0) ? pulse_fast : (1.0 - pulse_fast)
+		tip_l := pod_c + b_tan * 0.65 + b_dir * 0.75 + up * 0.32
+		tip_r := pod_c - b_tan * 0.65 + b_dir * 0.75 + up * 0.32
+		rl.DrawSphere(tip_l, 0.07, rl.Fade(strobe_col, strobe_p))
+		rl.DrawSphere(tip_r, 0.07, rl.Fade(strobe_col, 1.0 - strobe_p))
+	}
+
+	// 4. Mid-Deck Superstructure & Command Citadel
+	draw_oriented_box(center + up * 1.1, 1.9, 0.40, 2.1, {1, 0, 0}, up, {0, 0, 1}, dark)
+	draw_oriented_box(center + up * 1.5, 1.5, 0.38, 1.7, {1, 0, 0}, up, {0, 0, 1}, hull)
+
+	bridge_c := center + up * 1.65 + rl.Vector3{0.3, 0, 0}
+	draw_oriented_box(bridge_c, 1.35, 0.12, 1.55, {1, 0, 0}, up, {0, 0, 1}, eff_glow)
+	draw_oriented_box(bridge_c + up * 0.14, 1.45, 0.06, 1.65, {1, 0, 0}, up, {0, 0, 1}, trim)
+
+	for s in -1..=1 {
+		if s == 0 { continue }
+		blister_p := center + up * 1.4 + rl.Vector3{0, 0, f32(s) * 1.65}
+		draw_oriented_box(blister_p, 0.28, 0.26, 0.28, {1, 0, 0}, up, {0, 0, 1}, gunmetal)
+		rl.DrawSphere(blister_p + rl.Vector3{0, 0.08, f32(s) * 0.22}, 0.12, eff_amber)
+		rl.DrawCylinderEx(blister_p + up * 0.26, blister_p + up * 0.85, 0.02, 0.01, 4, steel_lit)
+	}
+
+	// 5. Integrated Level 10 Orbital Defense Battery
+	battery_mount := center + up * 1.95 + rl.Vector3{0.3, 0, 0}
+	rl.DrawCylinderEx(battery_mount, battery_mount + up * 0.28, 1.4, 1.3, 16, gunmetal)
+	rl.DrawCylinderEx(battery_mount + up * 0.25, battery_mount + up * 0.29, 1.35, 1.35, 16, eff_glow)
+
+	aim_az, aim_el := orbital_defense_aim(ENEMY_HOME)
+	cur_az := aim_az
+	cur_el := aim_el
+	if destroyed || orbital_defense_hp[ENEMY_HOME] <= 0 {
+		cur_el = -0.32
+	}
+
+	cos_az := math.cos(cur_az)
+	sin_az := math.sin(cur_az)
+	b_fwd   := rl.Vector3{cos_az, 0, sin_az}
+	b_right := rl.Vector3{-sin_az, 0, cos_az}
+
+	cos_el := math.cos(cur_el)
+	sin_el := math.sin(cur_el)
+	barrel_dir    := b_fwd * cos_el + up * sin_el
+	barrel_normal := -b_fwd * sin_el + up * cos_el
+
+	turret_c := battery_mount + up * 0.46
+	draw_oriented_box(turret_c, 0.62, 0.26, 0.72, b_fwd, up, b_right, dark)
+	draw_oriented_box(turret_c + up * 0.22, 0.50, 0.10, 0.58, b_fwd, up, b_right, trim)
+
+	cheek_l := turret_c + b_right * 0.52 + up * 0.24
+	cheek_r := turret_c - b_right * 0.52 + up * 0.24
+	draw_oriented_box(cheek_l, 0.12, 0.32, 0.48, b_fwd, up, b_right, gunmetal)
+	draw_oriented_box(cheek_r, 0.12, 0.32, 0.48, b_fwd, up, b_right, gunmetal)
+
+	pivot := turret_c + up * 0.36
+	rl.DrawCylinderEx(pivot - b_right * 0.60, pivot + b_right * 0.60, 0.12, 0.12, 8, steel_lit)
+
+	shield_c := pivot + barrel_dir * 0.25
+	draw_oriented_box(shield_c + b_right * 0.34, 0.18, 0.38, 0.08, barrel_dir, barrel_normal, b_right, hull)
+	draw_oriented_box(shield_c - b_right * 0.34, 0.18, 0.38, 0.08, barrel_dir, barrel_normal, b_right, hull)
+	draw_oriented_box(shield_c + barrel_normal * 0.26, 0.42, 0.08, 0.08, barrel_dir, barrel_normal, b_right, trim)
+
+	breech := pivot - barrel_dir * 0.35
+	draw_oriented_box(breech, 0.45, 0.28, 0.48, barrel_dir, barrel_normal, b_right, gunmetal)
+	draw_oriented_box(breech + barrel_normal * 0.22, 0.36, 0.08, 0.40, barrel_dir, barrel_normal, b_right, hull)
+
+	cable_s := turret_c - b_fwd * 0.45 + up * 0.10
+	cable_e := breech - barrel_dir * 0.20
+	rl.DrawCylinderEx(cable_s, cable_e, 0.08, 0.07, 6, gunmetal)
+	rl.DrawLine3D(cable_s + up * 0.07, cable_e + barrel_normal * 0.07, eff_glow)
+
+	rc_l_s := pivot - barrel_dir * 0.30 + b_right * 0.26 + barrel_normal * 0.25
+	rc_l_e := pivot + barrel_dir * 0.70 + b_right * 0.26 + barrel_normal * 0.25
+	rl.DrawCylinderEx(rc_l_s, rc_l_e, 0.095, 0.095, 8, steel_lit)
+	rl.DrawCylinderEx(rc_l_s, rc_l_s + barrel_dir * 0.15, 0.12, 0.12, 8, gunmetal)
+
+	rc_r_s := pivot - barrel_dir * 0.30 - b_right * 0.26 + barrel_normal * 0.25
+	rc_r_e := pivot + barrel_dir * 0.70 - b_right * 0.26 + barrel_normal * 0.25
+	rl.DrawCylinderEx(rc_r_s, rc_r_e, 0.095, 0.095, 8, steel_lit)
+	rl.DrawCylinderEx(rc_r_s, rc_r_s + barrel_dir * 0.15, 0.12, 0.12, 8, gunmetal)
+
+	for b_i in 0..<2 {
+		b_sign: f32 = (b_i == 0) ? 1.0 : -1.0
+		bar_root := pivot + b_right * (b_sign * 0.26)
+
+		s1_s := bar_root
+		s1_e := bar_root + barrel_dir * 1.10
+		rl.DrawCylinderEx(s1_s, s1_e, 0.165, 0.145, 8, dark)
+		rl.DrawCylinderEx(s1_s, s1_s + barrel_dir * 0.25, 0.19, 0.19, 8, gunmetal)
+
+		s2_s := s1_e
+		s2_e := bar_root + barrel_dir * 2.70
+		rl.DrawCylinderEx(s2_s, s2_e, 0.13, 0.11, 8, gunmetal)
+
+		for c_idx in 0..<5 {
+			c_dist := 0.25 + f32(c_idx) * 0.46
+			c_pos := s2_s + barrel_dir * c_dist
+			c_end := c_pos + barrel_dir * 0.10
+			rl.DrawCylinderEx(c_pos, c_end, 0.155, 0.155, 8, eff_glow)
+			rl.DrawCylinderEx(c_pos, c_pos + barrel_dir * 0.02, 0.165, 0.165, 8, steel_lit)
+			rl.DrawCylinderEx(c_end - barrel_dir * 0.02, c_end, 0.165, 0.165, 8, steel_lit)
+		}
+
+		mb_s := s2_e
+		mb_e := s2_e + barrel_dir * 0.55
+		rl.DrawCylinderEx(mb_s, mb_e, 0.145, 0.145, 8, steel_mid)
+		baf1 := mb_s + barrel_dir * 0.15
+		baf2 := mb_s + barrel_dir * 0.32
+		rl.DrawCylinderEx(baf1, baf1 + barrel_dir * 0.06, 0.18, 0.18, 8, gunmetal)
+		rl.DrawCylinderEx(baf2, baf2 + barrel_dir * 0.06, 0.18, 0.18, 8, gunmetal)
+
+		rl.DrawSphereEx(mb_e, 0.09, 6, 6, eff_glow)
+	}
+
+	pod_c := pivot + barrel_normal * 0.32 + barrel_dir * 0.40
+	draw_oriented_box(pod_c, 0.18, 0.15, 0.22, barrel_dir, barrel_normal, b_right, gunmetal)
+	rl.DrawSphere(pod_c + barrel_dir * 0.23 + barrel_normal * 0.04, 0.08, eff_glow)
+	rl.DrawSphere(pod_c + barrel_dir * 0.23 - barrel_normal * 0.04, 0.07, eff_amber)
+
+	collimator_s := pivot + barrel_dir * 0.60
+	collimator_e := pivot + barrel_dir * 2.80
+	rl.DrawLine3D(collimator_s, collimator_e, eff_glow)
+
+	// 6. Sensor Mast, Rotating Radar & Command Spire
+	mast_root := center + up * 2.0 - rl.Vector3{1.1, 0, 0}
+	rl.DrawCylinderEx(mast_root, mast_root + up * 2.2, 0.26, 0.14, 6, gunmetal)
+	rl.DrawCylinderEx(mast_root + up * 2.2, mast_root + up * 4.2, 0.14, 0.05, 4, steel_lit)
+
+	rl.DrawCylinderEx(mast_root + up * 1.8 - b_right * 0.9, mast_root + up * 1.8 + b_right * 0.9, 0.04, 0.04, 4, steel_mid)
+	rl.DrawCylinderEx(mast_root + up * 2.8 - b_right * 0.55, mast_root + up * 2.8 + b_right * 0.55, 0.03, 0.03, 4, steel_mid)
+
+	spire_tip := mast_root + up * 4.3
+	rl.DrawSphere(spire_tip, 0.28 * pulse_fast + 0.14, rl.Fade(eff_glow, 0.95))
+
+	if !destroyed {
+		sweep_ang := laser_anim_time * 1.8
+		sweep_dir := rl.Vector3{math.cos(sweep_ang), 0.22, math.sin(sweep_ang)}
+		radar_hub := mast_root + up * 2.3
+		rl.DrawCylinderEx(radar_hub, radar_hub + sweep_dir * 0.75, 0.08, 0.26, 8, steel_mid)
+		rl.DrawSphere(radar_hub + sweep_dir * 0.78, 0.10, eff_glow)
+		rl.DrawLine3D(radar_hub, radar_hub + sweep_dir * 3.8, rl.Fade(eff_glow, 0.75))
+	}
 }
 
 // Orbit tangent used as a fighter's forward vector while guarding.
@@ -4590,6 +4934,9 @@ draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, 
 		if emc > 0 {
 			num_tc := min(emc, rep_count(emc))
 			for i in 0..<num_p { draw_laser_bolt(player_spots[i], enemy_miner_spots[i % num_tc], f32(i) * 2.3, SCIFI_CYAN) }
+		} else if p < SECTOR_COUNT && orbital_defense_level[p] > 0 {
+			def_pos := orbital_defense_pos(p)
+			for i in 0..<num_p { draw_laser_bolt(player_spots[i], def_pos, f32(i) * 2.3, SCIFI_CYAN) }
 		} else if enemy_base_hp[p] > 0 {
 			base := sector_pos(p) + rl.Vector3{0, sector_radius(p) * 0.6, 0}
 			for i in 0..<num_p { draw_laser_bolt(player_spots[i], base, f32(i) * 2.3, SCIFI_CYAN) }
@@ -6409,6 +6756,14 @@ serialize_game_state :: proc(allocator := context.temp_allocator) -> string {
 	}
 
 	for s in 0..<SECTOR_COUNT {
+		if s >= PLANET_COUNT && (orbital_defense_level[s] > 0 || orbital_defense_building[s] || orbital_defense_progress[s] > 0) {
+			fmt.sbprintf(&b, "ORBITAL_DEFENSE %d %d %d %.4f %d\n",
+				s,
+				orbital_defense_level[s],
+				orbital_defense_building[s] ? 1 : 0,
+				orbital_defense_progress[s],
+				orbital_defense_hp[s])
+		}
 		fmt.sbprintf(&b, "SECTOR %d %d %.4f %.4f %.4f %.4f\n",
 			s,
 			enemy_base_hp[s],
@@ -6519,7 +6874,7 @@ deserialize_game_state :: proc(content: string) -> bool {
 				bld := fields[3] == "1"
 				prog, _ := strconv.parse_f32(fields[4])
 				hp, _ := strconv.parse_int(fields[5])
-				if p >= 0 && p < PLANET_COUNT {
+				if p >= 0 && p < SECTOR_COUNT {
 					orbital_defense_level[p] = lvl
 					orbital_defense_building[p] = bld
 					orbital_defense_progress[p] = prog

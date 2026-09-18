@@ -5372,3 +5372,174 @@ minor_wave_spawns_ten_combat_drones_by_default :: proc(t: ^testing.T) {
 	}
 }
 
+// ---- Enemy HQ Level 10 Orbital Defense Tests -------------------------------
+
+@(test)
+enemy_hq_starts_with_level_10_orbital_defense :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+	testing.expect(t, orbital_defense_level[ENEMY_HOME] == STARTING_HQ_ORBITAL_DEFENSE, "Enemy HQ starts with level 10 orbital defense")
+	testing.expect(t, orbital_defense_level[ENEMY_HOME] == 10, "Enemy HQ orbital defense level is 10")
+	testing.expect(t, orbital_defense_hp[ENEMY_HOME] == 1000, "Enemy HQ orbital defense starts at 1000 HP")
+	testing.expect(t, orbital_defense_max_hp(ENEMY_HOME) == 1000, "Enemy HQ orbital defense max HP is 1000")
+	testing.expect(t, orbital_defense_elevation[ENEMY_HOME] == ORBITAL_DEFENSE_IDLE_ELEV, "Enemy HQ orbital defense starts in ready elevation")
+	testing.expect(t, !can_build_orbital_defense(ENEMY_HOME), "Player cannot build or upgrade orbital defense at Enemy HQ")
+}
+
+@(test)
+enemy_hq_orbital_defense_intercepts_inbound_player_drones :: proc(t: ^testing.T) {
+	reset_world()
+	orbital_defense_level[ENEMY_HOME] = 10
+	orbital_defense_hp[ENEMY_HOME] = 1000
+
+	// 15 player combat drones in engage range of HQ
+	for i in 0..<15 {
+		units[unit_count] = Unit{
+			kind = .COMBAT,
+			state = .TRANSIT,
+			position = ENEMY_HQ_POSITION + {7.0 + f32(i) * 0.1, 0, 0},
+			home_planet = EARTH,
+			affiliation = ENEMY_HOME,
+			target_planet = ENEMY_HOME,
+			enemy = false,
+		}
+		unit_count += 1
+	}
+	// 5 distant player combat drones still near Earth (distance > 100)
+	for i in 0..<5 {
+		units[unit_count] = Unit{
+			kind = .COMBAT,
+			state = .TRANSIT,
+			position = planets[EARTH].position + {f32(i) * 0.5, 0, 0},
+			home_planet = EARTH,
+			affiliation = ENEMY_HOME,
+			target_planet = ENEMY_HOME,
+			enemy = false,
+		}
+		unit_count += 1
+	}
+	testing.expect(t, unit_count == 20, "20 player combat drones launched toward HQ")
+	testing.expect(t, transit_fighters_at(ENEMY_HOME, false) == 20, "20 transit fighters toward HQ")
+
+	// Update defenses: fires on close targets
+	for _ in 0..<40 {
+		update_orbital_defenses(0.05)
+	}
+
+	// All 15 close player drones should be intercepted and destroyed
+	testing.expect(t, orbital_defense_wave_kills[ENEMY_HOME] == 15, "HQ orbital defense recorded 15 kills")
+	testing.expect(t, transit_fighters_at(ENEMY_HOME, false) == 5, "5 distant transit fighters remain")
+	testing.expect(t, orbital_defense_reset_timer[ENEMY_HOME] > 0, "reset timer is active")
+}
+
+@(test)
+enemy_hq_orbital_defense_wave_cap_and_reset :: proc(t: ^testing.T) {
+	reset_world()
+	orbital_defense_level[ENEMY_HOME] = 10
+	orbital_defense_hp[ENEMY_HOME] = 1000
+	// Pre-seed 98 wave kills so only 2 kills remain before hitting the 100-kill cap
+	orbital_defense_wave_kills[ENEMY_HOME] = 98
+
+	// Launch 5 close player combat drones in transit
+	for i in 0..<5 {
+		units[unit_count] = Unit{
+			kind = .COMBAT,
+			state = .TRANSIT,
+			position = ENEMY_HQ_POSITION + {7.0 + f32(i) * 0.1, 0, 0},
+			home_planet = EARTH,
+			affiliation = ENEMY_HOME,
+			target_planet = ENEMY_HOME,
+			enemy = false,
+		}
+		unit_count += 1
+	}
+	// And keep 1 distant fighter so transit_fighters_at doesn't hit 0 before we inspect
+	units[unit_count] = Unit{
+		kind = .COMBAT,
+		state = .TRANSIT,
+		position = planets[EARTH].position,
+		home_planet = EARTH,
+		affiliation = ENEMY_HOME,
+		target_planet = ENEMY_HOME,
+		enemy = false,
+	}
+	unit_count += 1
+
+	testing.expect(t, unit_count == 6, "6 player drones launched")
+
+	// Update defense: should destroy only 2 drones before hitting cap of 100
+	for _ in 0..<20 {
+		update_orbital_defenses(0.05)
+	}
+
+	// Exactly 2 drones destroyed (reaching the 100-kill cap), remaining 4 remain in transit
+	testing.expect(t, orbital_defense_wave_kills[ENEMY_HOME] == 100, "HQ orbital defense reached 100 kill cap")
+	testing.expect(t, unit_count == 4, "2 destroyed, 4 survive")
+
+	// Even with more updates while at cap, defense cannot fire anymore
+	for _ in 0..<10 {
+		update_orbital_defenses(0.05)
+	}
+	testing.expect(t, orbital_defense_wave_kills[ENEMY_HOME] == 100, "defense cannot exceed 100 kills cap")
+	testing.expect(t, unit_count == 4, "surviving drones untouched while cap reached")
+}
+
+@(test)
+enemy_hq_combat_siege_progression :: proc(t: ^testing.T) {
+	reset_world()
+	orbital_defense_level[ENEMY_HOME] = 10
+	orbital_defense_hp[ENEMY_HOME] = 20
+	enemy_base_hp[ENEMY_HOME] = 10
+
+	// 3 enemy garrison fighters defend the battlestation
+	for i in 0..<3 { add_guarding_fighter(ENEMY_HOME, true) }
+	// 8 player assault fighters arrive at the battlestation
+	for i in 0..<8 { add_guarding_fighter(ENEMY_HOME, false) }
+
+	// Phase 1: 3 ticks (0.6s) of combat - garrison defenders trade 1:1 with player fighters
+	for s := 0; s < 3; s += 1 {
+		update_enemy_waves(f32(COMBAT_TICK))
+	}
+	players, enemies := planet_combatants(ENEMY_HOME)
+	testing.expect(t, enemies == 0, "garrison fighters wiped out in Phase 1")
+	testing.expect(t, players == 5, "5 player fighters survive Phase 1")
+	testing.expect(t, orbital_defense_hp[ENEMY_HOME] == 20, "orbital defense took zero damage while garrison fought")
+	testing.expect(t, enemy_base_hp[ENEMY_HOME] == 10, "base took zero damage while garrison fought")
+
+	// Phase 2: 4 ticks (0.8s) of combat - 5 player fighters assault the orbital defense
+	// (5 damage per tick * 4 ticks = 20 damage)
+	for s := 0; s < 4; s += 1 {
+		update_enemy_waves(f32(COMBAT_TICK))
+	}
+	testing.expect(t, orbital_defense_hp[ENEMY_HOME] == 0, "orbital defense destroyed in Phase 2")
+	testing.expect(t, orbital_defense_level[ENEMY_HOME] == 0, "orbital defense level becomes 0")
+	testing.expect(t, enemy_base_hp[ENEMY_HOME] == 10, "base took zero damage while orbital defense absorbed assault")
+
+	// Phase 3: 2 ticks (0.4s) of combat - 5 player fighters breach the citadel base
+	// (5 damage per tick * 2 ticks = 10 damage)
+	for s := 0; s < 2; s += 1 {
+		update_enemy_waves(f32(COMBAT_TICK))
+	}
+	testing.expect(t, enemy_base_hp[ENEMY_HOME] == 0, "citadel base HP reduced to 0 in Phase 3")
+	testing.expect(t, planet_liberated(ENEMY_HOME), "Enemy HQ sector liberated")
+	testing.expect(t, enemy_hq_destroyed(), "Enemy HQ marked destroyed")
+}
+
+@(test)
+enemy_hq_orbital_defense_save_and_load_persistence :: proc(t: ^testing.T) {
+	reset_world()
+	orbital_defense_level[ENEMY_HOME] = 10
+	orbital_defense_hp[ENEMY_HOME] = 750
+
+	save_str := serialize_game_state()
+
+	reset_world()
+	testing.expect(t, orbital_defense_level[ENEMY_HOME] == 0, "reset zeroes HQ defense level")
+	testing.expect(t, orbital_defense_hp[ENEMY_HOME] == 0, "reset zeroes HQ defense HP")
+
+	ok := deserialize_game_state(save_str)
+	testing.expect(t, ok, "deserialization succeeded")
+	testing.expect(t, orbital_defense_level[ENEMY_HOME] == 10, "HQ defense level 10 restored")
+	testing.expect(t, orbital_defense_hp[ENEMY_HOME] == 750, "HQ defense HP 750 restored")
+}
+
