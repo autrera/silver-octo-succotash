@@ -2428,7 +2428,7 @@ update_planet_combat :: proc(dt: f32, p: int) {
 				miner_timer[p] -= COMBAT_TICK
 				if !kill_enemy_miner(p) { break }
 			}
-		} else if p < SECTOR_COUNT && orbital_defense_level[p] > 0 {
+		} else if p == ENEMY_HOME && orbital_defense_level[p] > 0 {
 			miner_timer[p] += dt
 			for miner_timer[p] >= COMBAT_TICK {
 				miner_timer[p] -= COMBAT_TICK
@@ -2445,6 +2445,9 @@ update_planet_combat :: proc(dt: f32, p: int) {
 				enemy_base_hp[p] = max(enemy_base_hp[p] - players, 0)
 				if enemy_base_hp[p] == 0 { break }
 			}
+		} else {
+			miner_timer[p] = 0
+			base_timer[p] = 0
 		}
 	} else {
 		combat_timer[p] = 0
@@ -2634,7 +2637,7 @@ sector_in_combat :: proc(s: int) -> bool {
 	}
 	if players > 0 && enemies > 0 { return true }
 	if enemies > 0 && (has_player_miners || (s == EARTH && base_counts[s] > 0) || (s < PLANET_COUNT && orbital_defense_level[s] > 0)) { return true }
-	if players > 0 && (has_enemy_miners || enemy_base_hp[s] > 0 || (s < SECTOR_COUNT && orbital_defense_level[s] > 0)) { return true }
+	if players > 0 && (has_enemy_miners || enemy_base_hp[s] > 0 || (s == ENEMY_HOME && orbital_defense_level[s] > 0)) { return true }
 	return false
 }
 
@@ -4934,7 +4937,7 @@ draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, 
 		if emc > 0 {
 			num_tc := min(emc, rep_count(emc))
 			for i in 0..<num_p { draw_laser_bolt(player_spots[i], enemy_miner_spots[i % num_tc], f32(i) * 2.3, SCIFI_CYAN) }
-		} else if p < SECTOR_COUNT && orbital_defense_level[p] > 0 {
+		} else if p == ENEMY_HOME && orbital_defense_level[p] > 0 {
 			def_pos := orbital_defense_pos(p)
 			for i in 0..<num_p { draw_laser_bolt(player_spots[i], def_pos, f32(i) * 2.3, SCIFI_CYAN) }
 		} else if enemy_base_hp[p] > 0 {

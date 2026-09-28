@@ -5543,3 +5543,28 @@ enemy_hq_orbital_defense_save_and_load_persistence :: proc(t: ^testing.T) {
 	testing.expect(t, orbital_defense_hp[ENEMY_HOME] == 750, "HQ defense HP 750 restored")
 }
 
+@(test)
+friendly_fighters_do_not_attack_own_orbital_defense_or_miners :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+	// Earth starts with 5 miners and level 1 orbital defense.
+	// Add 5 player combat drones to Earth.
+	for i in 0..<5 {
+		add_guarding_fighter(EARTH, false)
+	}
+	testing.expect(t, orbital_defense_hp[EARTH] == 100, "defense starts at 100 HP")
+	testing.expect(t, player_miners_count(EARTH) == 5, "Earth starts with 5 miners")
+
+	// Run enemy waves / combat update for 5 seconds (25 combat ticks).
+	// Without enemies present, Earth should remain peaceful:
+	// friendly combat drones should NOT attack Earth's orbital defense or miners.
+	for _ in 0..<50 {
+		update_enemy_waves(0.1)
+	}
+
+	testing.expect(t, orbital_defense_hp[EARTH] == 100, "orbital defense took zero damage from friendly fighters")
+	testing.expect(t, orbital_defense_level[EARTH] == 1, "orbital defense remains intact")
+	testing.expect(t, player_miners_count(EARTH) == 5, "miners remain alive on Earth")
+	testing.expect(t, !sector_in_combat(EARTH), "Earth is not in combat")
+}
+
