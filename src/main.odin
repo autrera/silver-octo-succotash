@@ -430,6 +430,7 @@ main :: proc() {
 	rl.SetConfigFlags({.VSYNC_HINT, .WINDOW_HIGHDPI, .WINDOW_RESIZABLE})
 	rl.InitWindow(1280, 760, "STARFALL COMMAND: Planetary RTS Prototype")
 	defer rl.CloseWindow()
+	rl.ToggleBorderlessWindowed()
 
 	// VSYNC handles refresh timing (60Hz / 120Hz). Setting target FPS to 2x the monitor
 	// refresh rate acts as an upper safety cap for unconstrained runs while ensuring raylib's
@@ -459,6 +460,9 @@ main :: proc() {
 
 
 	for !rl.WindowShouldClose() && !quit_requested {
+		if rl.IsKeyPressed(.F11) || ((rl.IsKeyDown(.LEFT_ALT) || rl.IsKeyDown(.RIGHT_ALT)) && rl.IsKeyPressed(.ENTER)) {
+			rl.ToggleBorderlessWindowed()
+		}
 		dt := rl.GetFrameTime()
 		if in_start_menu {
 			update_start_menu(dt)
@@ -3665,52 +3669,26 @@ draw_inspector :: proc() {
 
 	x := panel_orig_x
 
-	// Header banner: styled like the active glowing 'SOLAR' card from Star Fox Zero reference
-	header_box := rl.Rectangle{x + PANEL_PAD_X, 16, PANEL_CONTENT_W, 38}
+	// Header: clean planet name on the left, MPS on the right (no borders, no corners)
+	header_y: c.int = 26
 	is_enemy := selected_planet == ENEMY_HOME
-	card_glow := is_enemy ? SCIFI_RED : SCIFI_CYAN
-	card_bracket := is_enemy ? SCIFI_RED : SCIFI_MINT
-
-	// Luminous outer neon bloom
-	rl.DrawRectangleLinesEx({header_box.x - 2, header_box.y - 2, header_box.width + 4, header_box.height + 4}, 1, rl.Fade(card_glow, 0.45))
-	draw_chamfered_panel(header_box, 6, SCIFI_PANEL_SOLID, card_glow)
-	draw_corner_brackets(header_box, 2, 7, card_bracket)
 
 	if is_enemy {
 		hq_title: cstring = "ENEMY CITADEL"
 		if enemy_hq_destroyed() { hq_title = "CITADEL SILENCED (DEAD)" }
-		rl.DrawText(hq_title, c.int(x + PANEL_PAD_X + 14), c.int(header_box.y + 11), 17, SCIFI_RED)
+		rl.DrawText(hq_title, c.int(x + PANEL_PAD_X), header_y, 17, SCIFI_RED)
 	} else {
-		// Celestial sphere preview disc with concentric reticle arc
-		planet_pos := rl.Vector2{x + PANEL_PAD_X + 18, header_box.y + 19}
-		rl.DrawCircleV(planet_pos, 8, planets[selected_planet].color)
-		rl.DrawCircleLines(c.int(planet_pos.x), c.int(planet_pos.y), 12, rl.Fade(SCIFI_CYAN, 0.7))
-		rl.DrawLineV({planet_pos.x - 14, planet_pos.y}, {planet_pos.x - 10, planet_pos.y}, SCIFI_MINT)
-		rl.DrawLineV({planet_pos.x + 10, planet_pos.y}, {planet_pos.x + 14, planet_pos.y}, SCIFI_MINT)
-
-		title_x := x + PANEL_PAD_X + 38
-		rl.DrawText(planets[selected_planet].name, c.int(title_x), c.int(header_box.y + 11), 17, SCIFI_TEXT)
+		rl.DrawText(planets[selected_planet].name, c.int(x + PANEL_PAD_X), header_y, 17, SCIFI_TEXT)
 
 		if selected_planet == EARTH || has_vision(selected_planet) || intel_recorded[selected_planet] {
-			mps_text := rl.TextFormat("▲▲▲ %.1f MPS", planet_mps(selected_planet))
-			mps_w := f32(rl.MeasureText(mps_text, 11))
-			pill := rl.Rectangle{x + PANEL_PAD_X + PANEL_CONTENT_W - mps_w - 16, header_box.y + 9, mps_w + 12, 20}
-			draw_chamfered_panel(pill, 3, rl.Color{28, 20, 10, 240}, SCIFI_AMBER_DIM)
-			rl.DrawText(mps_text, c.int(pill.x + 6), c.int(pill.y + 5), 11, SCIFI_AMBER)
+			mps_text := rl.TextFormat("%.1f MPS", planet_mps(selected_planet))
+			mps_w := f32(rl.MeasureText(mps_text, 14))
+			rl.DrawText(mps_text, c.int(x + PANEL_PAD_X + PANEL_CONTENT_W - mps_w), header_y + 2, 14, SCIFI_AMBER)
 		} else {
-			unscouted: cstring = "▲▲▲ DARK"
-			uw := f32(rl.MeasureText(unscouted, 11))
-			pill := rl.Rectangle{x + PANEL_PAD_X + PANEL_CONTENT_W - uw - 16, header_box.y + 9, uw + 12, 20}
-			draw_chamfered_panel(pill, 3, rl.Color{16, 20, 24, 240}, SCIFI_DIM)
-			rl.DrawText(unscouted, c.int(pill.x + 6), c.int(pill.y + 5), 11, SCIFI_MUTED)
+			unscouted: cstring = "DARK"
+			uw := f32(rl.MeasureText(unscouted, 14))
+			rl.DrawText(unscouted, c.int(x + PANEL_PAD_X + PANEL_CONTENT_W - uw), header_y + 2, 14, SCIFI_MUTED)
 		}
-	}
-
-	// Connecting circuit bus line down from Header Card to next section (outposts/HQ status card)
-	if selected_planet != EARTH {
-		circuit_x := x + PANEL_PAD_X + 18
-		rl.DrawLineV({circuit_x, header_box.y + header_box.height}, {circuit_x, header_box.y + header_box.height + 12}, rl.Fade(SCIFI_CYAN, 0.45))
-		rl.DrawCircleV({circuit_x, header_box.y + header_box.height + 12}, 2.0, SCIFI_MINT)
 	}
 
 	if selected_planet == EARTH {
@@ -6604,6 +6582,8 @@ draw_controls_overlay :: proc() {
 	rl.DrawText("SYSTEM AND SIMULATION", c.int(col2_x), c.int(cy2), 13, SCIFI_AMBER)
 	cy2 += 20
 	draw_control_row(col2_x, cy2, "P / F10", "Pause game / Mission menu")
+	cy2 += 18
+	draw_control_row(col2_x, cy2, "F11", "Toggle fullscreen window")
 	cy2 += 18
 	draw_control_row(col2_x, cy2, "F5", "Quick-save game state")
 	cy2 += 18
