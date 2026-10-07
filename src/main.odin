@@ -168,8 +168,8 @@ Intel :: struct {
 }
 
 MAX_PENDING :: 25
-TILE_SIZE :: 16
-TILE_GAP :: 6
+TILE_SIZE :: 20
+TILE_GAP :: 10
 TILES_PER_ROW :: 10
 
 // ---- Sci-Fi Cyberpunk HUD Palette ---------------------------------------
@@ -203,24 +203,25 @@ BTN_GAP :: 12
 BUILD_BTN_W :: 139
 BUILD_BTN_H :: 36
 BASE_BTN_H :: 36
-SLOT_SIZE :: 18
+QUEUE_SLOT_W :: 50
+QUEUE_SLOT_H :: 20
+QUEUE_SLOT_GAP :: 10
 GRID_PITCH :: 24
 PROD_PITCH :: 34
 PANEL_SUB_Y :: 60
 OUTPOST_CARD_Y :: PANEL_SUB_Y
-BASES_Y :: 76
-SECTION_TOP :: 108
+SECTION_TOP :: PANEL_SUB_Y
 CARD_H :: 54
 CARD_LINE_1 :: OUTPOST_CARD_Y + 14
 CARD_LINE_2 :: OUTPOST_CARD_Y + 33
 REFINERY_BTN_Y :: 122
 ORBITAL_DEFENSE_BTN_Y :: 166
 OUTPOST_LIBERATED_ROSTER_Y :: 235
-BASE_PROGRESS_Y :: 148
-PROD_TITLE_Y :: 198
-PROD_FIRST_Y :: 221
+BASE_PROGRESS_Y :: SECTION_TOP + BASE_BTN_H + 4
+PROD_TITLE_Y :: 150
+PROD_FIRST_Y :: 173
 PROD_BAR_DY :: 16
-ORDERS_BASE_Y :: 292
+ORDERS_BASE_Y :: 244
 BASE_COLLAPSE_Y :: BASE_BTN_H + 8
 UPGRADE_DY :: 48
 UPGRADE_H :: 36
@@ -229,7 +230,6 @@ QUEUE_LABEL_GAP :: 23
 DIALOG_PAD :: 28
 DIALOG_BTN_H :: 44
 HUD_PAD :: 16
-PIPS_OFF :: 56
 BADGE_PAD :: 8
 BADGE_GAP :: 8
 BADGE_Y :: 72
@@ -1899,7 +1899,7 @@ queue_slot_rect :: proc(panel_x: f32, slot: int) -> rl.Rectangle {
 	queue_y := f32(earth_queue_y())
 	row := slot / MAX_BASES
 	column := slot % MAX_BASES
-	return rl.Rectangle{panel_x + PANEL_PAD_X + f32(column * GRID_PITCH), queue_y + QUEUE_LABEL_GAP + f32(row * GRID_PITCH), SLOT_SIZE, SLOT_SIZE}
+	return rl.Rectangle{panel_x + PANEL_PAD_X + f32(column * (QUEUE_SLOT_W + QUEUE_SLOT_GAP)), queue_y + QUEUE_LABEL_GAP + f32(row * GRID_PITCH), QUEUE_SLOT_W, QUEUE_SLOT_H}
 }
 
 // Cancel the unit at queue position `index` (same ordering as
@@ -3762,19 +3762,6 @@ draw_inspector :: proc() {
 // Earth owns the command bases: base pips, base construction, production
 // lines and the build queue all live here and nowhere else.
 draw_earth_inspector :: proc(x: f32) {
-	rl.DrawText("BASES", i32(x + PANEL_PAD_X), BASES_Y + 3, 11, SCIFI_CYAN)
-	for pip := 0; pip < MAX_BASES; pip += 1 {
-		pip_color := SCIFI_PANEL_SOLID
-		pip_border := SCIFI_DIM
-		if pip < base_counts[EARTH] { pip_color = rl.Color{0, 65, 85, 255}; pip_border = SCIFI_CYAN }
-		pip_rect := rl.Rectangle{x + PANEL_PAD_X + PIPS_OFF + f32(pip * GRID_PITCH), BASES_Y - 1, SLOT_SIZE, SLOT_SIZE}
-		draw_chamfered_panel(pip_rect, 3, pip_color, pip_border)
-		if pip < base_counts[EARTH] {
-			draw_corner_brackets(pip_rect, 1, 3, SCIFI_CYAN)
-			rl.DrawRectangle(i32(pip_rect.x + 5), i32(pip_rect.y + 5), 8, 8, SCIFI_CYAN)
-		}
-	}
-
 	if base_button_visible() {
 		base_button := rl.Rectangle{x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, BASE_BTN_H}
 		if base_build_planet == EARTH {
@@ -4172,7 +4159,7 @@ draw_unit_tile_data :: proc(kind: Unit_Type, state: Unit_State, selected: bool, 
 	accent := SCIFI_AMBER
 	if kind == .COMBAT { symbol = "C"; accent = SCIFI_BLUE }
 	if enemy { accent = SCIFI_RED }
-	rl.DrawText(symbol, c.int(rect.x + 4), c.int(rect.y + 2), 11, accent)
+	rl.DrawText(symbol, c.int(rect.x + 5), c.int(rect.y + 4), 11, accent)
 	rl.DrawCircle(c.int(rect.x + rect.width - 4), c.int(rect.y + 4), 2, state_color(state))
 }
 
@@ -5438,8 +5425,11 @@ draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type) {
 	draw_chamfered_panel(rect, 3, color, border)
 	if queued {
 		draw_corner_brackets(rect, 1, 3, border)
-		rl.DrawText(symbol, c.int(rect.x + 6), c.int(rect.y + 4), 12, rl.Color{0, 0, 0, 160})
-		rl.DrawText(symbol, c.int(rect.x + 5), c.int(rect.y + 3), 12, accent)
+		tw := f32(rl.MeasureText(symbol, 12))
+		tx := rect.x + (rect.width - tw) / 2
+		ty := rect.y + (rect.height - 12) / 2
+		rl.DrawText(symbol, c.int(tx + 1), c.int(ty + 1), 12, rl.Color{0, 0, 0, 160})
+		rl.DrawText(symbol, c.int(tx), c.int(ty), 12, accent)
 	}
 }
 
