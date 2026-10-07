@@ -238,7 +238,7 @@ BOTTOM_DOCK_H :: 36
 ROSTER_BASE_Y :: 150
 ROSTER_BELOW_QUEUE :: 206
 SECTION_PAD_Y :: 26
-PROD_BAR_W :: 200
+PROD_BAR_W :: PANEL_CONTENT_W
 BAR_H :: 8
 
 Unit :: struct {
@@ -5119,6 +5119,14 @@ draw_winged_panel_left :: proc(rect: rl.Rectangle, chamfer: f32, wing_cut: f32, 
 	rl.DrawLineV(v5, v6, border)
 	rl.DrawLineV(v6, v7, border)
 	rl.DrawLineV(v7, v0, border)
+	rl.DrawPixelV(v0, border)
+	rl.DrawPixelV(v1, border)
+	rl.DrawPixelV(v2, border)
+	rl.DrawPixelV(v3, border)
+	rl.DrawPixelV(v4, border)
+	rl.DrawPixelV(v5, border)
+	rl.DrawPixelV(v6, border)
+	rl.DrawPixelV(v7, border)
 
 	// Inner subtle secondary rail (inset by 3px)
 	inner_border := SCIFI_STEEL
@@ -5131,21 +5139,21 @@ draw_winged_panel_left :: proc(rect: rl.Rectangle, chamfer: f32, wing_cut: f32, 
 	iv6 := rl.Vector2{x + 3, y + h - ch - 2}
 	iv7 := rl.Vector2{x + 3, y + ch + 2}
 	rl.DrawLineV(iv0, iv1, inner_border)
+	rl.DrawLineV(iv1, iv2, inner_border)
 	rl.DrawLineV(iv2, iv3, inner_border)
 	rl.DrawLineV(iv3, iv4, inner_border)
 	rl.DrawLineV(iv4, iv5, inner_border)
+	rl.DrawLineV(iv5, iv6, inner_border)
 	rl.DrawLineV(iv6, iv7, inner_border)
-
-	// Outer detached tactical brackets
-	bracket_col := SCIFI_MINT
-	// Top-left bracket
-	rl.DrawLineV({x - 3, y - 3}, {x + 12, y - 3}, bracket_col)
-	rl.DrawLineV({x - 3, y - 3}, {x - 3, y + 12}, bracket_col)
-	// Top-right bracket
-	rl.DrawLineV({x + w + 3, y - 3}, {x + w - 10, y - 3}, bracket_col)
-	rl.DrawLineV({x + w + 3, y - 3}, {x + w + 3, y + 10}, bracket_col)
-	// Wing cut accent tick
-	rl.DrawLineV({x + w - wing + 4, y + h + 3}, {x + w + 3, y + h - wing - 4}, rl.Fade(bracket_col, 0.7))
+	rl.DrawLineV(iv7, iv0, inner_border)
+	rl.DrawPixelV(iv0, inner_border)
+	rl.DrawPixelV(iv1, inner_border)
+	rl.DrawPixelV(iv2, inner_border)
+	rl.DrawPixelV(iv3, inner_border)
+	rl.DrawPixelV(iv4, inner_border)
+	rl.DrawPixelV(iv5, inner_border)
+	rl.DrawPixelV(iv6, inner_border)
+	rl.DrawPixelV(iv7, inner_border)
 }
 
 // Draws a symmetrical aerospace HUD dock for the top-right with an angled 45° wing cut on its bottom-left corner,
