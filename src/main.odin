@@ -214,9 +214,8 @@ SECTION_TOP :: PANEL_SUB_Y
 CARD_H :: 54
 CARD_LINE_1 :: OUTPOST_CARD_Y + 14
 CARD_LINE_2 :: OUTPOST_CARD_Y + 33
-REFINERY_BTN_Y :: 122
-ORBITAL_DEFENSE_BTN_Y :: 166
-OUTPOST_LIBERATED_ROSTER_Y :: 235
+REFINERY_BTN_Y :: SECTION_TOP
+ORBITAL_DEFENSE_BTN_Y :: 104
 BASE_PROGRESS_Y :: SECTION_TOP + BASE_BTN_H + 4
 PROD_TITLE_Y :: 150
 PROD_FIRST_Y :: 173
@@ -3813,10 +3812,10 @@ draw_earth_inspector :: proc(x: f32) {
 	}
 
 	if drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
-		draw_button(drone_speed_button_rect(x), rl.TextFormat("DRONE BUILD SPEED  LVL %d/%d (MAX)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX), SCIFI_PANEL_SOLID, false)
+		draw_button(drone_speed_button_rect(x), "DRONE BUILD SPEED (MAX)", SCIFI_PANEL_SOLID, false)
 	} else {
 		can_upgrade_speed := minerals >= DRONE_SPEED_UPGRADE_COST
-		draw_button(drone_speed_button_rect(x), rl.TextFormat("[U] DRONE BUILD SPEED  LVL %d/%d (%d)", drone_speed_level, DRONE_SPEED_UPGRADE_MAX, DRONE_SPEED_UPGRADE_COST), SCIFI_PANEL_SOLID, can_upgrade_speed)
+		draw_button(drone_speed_button_rect(x), rl.TextFormat("[U] DRONE BUILD SPEED (%d)", DRONE_SPEED_UPGRADE_COST), SCIFI_PANEL_SOLID, can_upgrade_speed)
 	}
 
 	queue_y := earth_queue_y()
@@ -3862,53 +3861,28 @@ draw_hq_inspector :: proc(x: f32) {
 // Outpost planets host no player bases: show the mining forecast, the enemy
 // stronghold status (mining is locked until it falls) and unit rosters only.
 draw_outpost_inspector :: proc(x: f32) {
-	card := rl.Rectangle{x + PANEL_PAD_X, OUTPOST_CARD_Y, PANEL_CONTENT_W, CARD_H}
-	if has_vision(selected_planet) {
-		stronghold_color := SCIFI_STEEL
-		title: cstring = "UNSCOUTED SECTOR"
-		status: cstring = "STATUS UNKNOWN: DISPATCH SCOUT"
-		if planet_liberated(selected_planet) {
-			if refinery_built[selected_planet] {
-				stronghold_color = SCIFI_MINT
-				title = "SECTOR LIBERATED"
-				status = "REFINERY OPERATIONAL: EXTRACTION ACTIVE"
-			} else if refinery_building[selected_planet] {
-				stronghold_color = SCIFI_CYAN
-				title = "SECTOR LIBERATED"
-				status = "REFINERY UNDER CONSTRUCTION"
-			} else {
-				stronghold_color = SCIFI_AMBER
-				title = "SECTOR LIBERATED"
-				status = "REFINERY REQUIRED FOR MINING"
-			}
-		} else {
-			stronghold_color = SCIFI_RED
-			title = "ENEMY STRONGHOLD"
+	if !planet_liberated(selected_planet) {
+		card := rl.Rectangle{x + PANEL_PAD_X, OUTPOST_CARD_Y, PANEL_CONTENT_W, CARD_H}
+		if has_vision(selected_planet) {
+			stronghold_color := SCIFI_RED
+			title: cstring = "ENEMY STRONGHOLD"
 			_, garrison := planet_combatants(selected_planet)
-			status = rl.TextFormat("%02d FIGHTERS  BASE %02d: HOSTILE OCCUPATION", garrison, enemy_base_hp[selected_planet])
+			status := rl.TextFormat("%02d FIGHTERS  BASE %02d: HOSTILE OCCUPATION", garrison, enemy_base_hp[selected_planet])
+			draw_status_card(card, stronghold_color)
+			rl.DrawText(title, i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, stronghold_color)
+			rl.DrawText(status, i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_TEXT)
+		} else if intel_recorded[selected_planet] {
+			intel := last_known_intel[selected_planet]
+			title: cstring = "ENEMY STRONGHOLD (STALE INTEL)"
+			status := rl.TextFormat("%02d FIGHTERS  BASE %02d/%02d: PREVIOUS RECON", intel.fighters, intel.miners, GARRISON_BASE_HP[selected_planet])
+			draw_status_card(card, SCIFI_AMBER)
+			rl.DrawText(title, i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_AMBER)
+			rl.DrawText(status, i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_MUTED)
+		} else {
+			draw_status_card(card, SCIFI_STEEL)
+			rl.DrawText("UNSCOUTED SECTOR", i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_MUTED)
+			rl.DrawText("STATUS UNKNOWN: DISPATCH SCOUT", i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_TEXT)
 		}
-		draw_status_card(card, stronghold_color)
-		rl.DrawText(title, i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, stronghold_color)
-		rl.DrawText(status, i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_TEXT)
-	} else if intel_recorded[selected_planet] {
-		card.height = CARD_H
-		intel := last_known_intel[selected_planet]
-		title: cstring = "ENEMY STRONGHOLD (STALE INTEL)"
-		status := rl.TextFormat("%02d FIGHTERS  BASE %02d/%02d: PREVIOUS RECON", intel.fighters, intel.miners, GARRISON_BASE_HP[selected_planet])
-		if intel.base_hp <= 0 {
-			if refinery_built[selected_planet] {
-				title = "LIBERATED (REFINERY ACTIVE)"
-			} else {
-				title = "LIBERATED (NO REFINERY)"
-			}
-		}
-		draw_status_card(card, SCIFI_AMBER)
-		rl.DrawText(title, i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_AMBER)
-		rl.DrawText(status, i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_MUTED)
-	} else {
-		draw_status_card(card, SCIFI_STEEL)
-		rl.DrawText("UNSCOUTED SECTOR", i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_1, 13, SCIFI_MUTED)
-		rl.DrawText("STATUS UNKNOWN: DISPATCH SCOUT", i32(x + PANEL_PAD_X + CARD_INSET), CARD_LINE_2, 11, SCIFI_TEXT)
 	}
 
 	if planet_liberated(selected_planet) {
@@ -5217,20 +5191,22 @@ draw_fighter_vector_icon :: proc(center: rl.Vector2, size: f32, color: rl.Color)
 // and ambient cyan edge glow.
 draw_tactical_container :: proc(rect: rl.Rectangle) {
 	x, y, w, h := rect.x, rect.y, rect.width, rect.height
-	ch: f32 = 18.0
+	ch: f32 = 6.0
+	wing: f32 = 20.0
 
 	// Soft drop shadow and ambient neon cyan bloom spilling into the viewport to the left
 	rl.DrawRectangleGradientH(i32(x - 28), i32(y), 28, i32(h), rl.Color{0, 0, 0, 0}, rl.Color{0, 0, 0, 160})
-	rl.DrawRectangleGradientH(i32(x - 10), i32(y), 10, i32(h), rl.Color{0, 0, 0, 0}, rl.Fade(SCIFI_CYAN, 0.14))
+	glow_col := rl.Fade(SCIFI_CYAN, 0.08)
+	rl.DrawRectangleGradientV(i32(x), i32(y), i32(w), i32(h), glow_col, rl.Color{0, 0, 0, 0})
 
-	// 8-vertex chamfered polygon for container housing
+	// 8-vertex winged polygon matching the main HUD dock
 	v0 := rl.Vector2{x + ch, y}
 	v1 := rl.Vector2{x + w - ch, y}
 	v2 := rl.Vector2{x + w, y + ch}
 	v3 := rl.Vector2{x + w, y + h - ch}
 	v4 := rl.Vector2{x + w - ch, y + h}
-	v5 := rl.Vector2{x + ch, y + h}
-	v6 := rl.Vector2{x, y + h - ch}
+	v5 := rl.Vector2{x + wing, y + h}
+	v6 := rl.Vector2{x, y + h - wing}
 	v7 := rl.Vector2{x, y + ch}
 
 	fill := SCIFI_PANEL
@@ -5251,32 +5227,42 @@ draw_tactical_container :: proc(rect: rl.Rectangle) {
 	rl.DrawLineV(v5, v6, border)
 	rl.DrawLineV(v6, v7, border)
 	rl.DrawLineV(v7, v0, border)
+	rl.DrawPixelV(v0, border)
+	rl.DrawPixelV(v1, border)
+	rl.DrawPixelV(v2, border)
+	rl.DrawPixelV(v3, border)
+	rl.DrawPixelV(v4, border)
+	rl.DrawPixelV(v5, border)
+	rl.DrawPixelV(v6, border)
+	rl.DrawPixelV(v7, border)
 
 	// Secondary inner rail (inset by 3px)
 	inner := SCIFI_STEEL
-	rl.DrawLineV({x + ch + 2, y + 3}, {x + w - ch - 2, y + 3}, inner)
-	rl.DrawLineV({x + w - 3, y + ch + 2}, {x + w - 3, y + h - ch - 2}, inner)
-	rl.DrawLineV({x + w - ch - 2, y + h - 3}, {x + ch + 2, y + h - 3}, inner)
-	rl.DrawLineV({x + 3, y + h - ch - 2}, {x + 3, y + ch + 2}, inner)
+	iv0 := rl.Vector2{x + ch + 2, y + 3}
+	iv1 := rl.Vector2{x + w - ch - 2, y + 3}
+	iv2 := rl.Vector2{x + w - 3, y + ch + 2}
+	iv3 := rl.Vector2{x + w - 3, y + h - ch - 2}
+	iv4 := rl.Vector2{x + w - ch - 2, y + h - 3}
+	iv5 := rl.Vector2{x + wing, y + h - 3}
+	iv6 := rl.Vector2{x + 3, y + h - wing}
+	iv7 := rl.Vector2{x + 3, y + ch + 2}
 
-	// Outer corner bracket accents
-	draw_corner_brackets(rect, 3, 12, SCIFI_MINT)
-
-	// Precision tactical ruler tick marks along the vertical left border
-	tick_step: f32 = 32.0
-	for ty := y + ch + 16; ty < y + h - ch - 16; ty += tick_step {
-		major := math.mod(ty - y, 64.0) < tick_step * 0.5
-		tick_len: f32 = major ? 7.0 : 4.0
-		tick_col := major ? SCIFI_CYAN : SCIFI_STEEL
-		rl.DrawLineV({x - tick_len, ty}, {x, ty}, tick_col)
-	}
-
-	// Precision tick notches along the top border line (matching modular top brackets in reference image)
-	for tx := x + ch + 24; tx < x + w - ch - 24; tx += 40.0 {
-		rl.DrawLineV({tx - 5, y}, {tx - 5, y - 3}, SCIFI_CYAN)
-		rl.DrawLineV({tx - 5, y - 3}, {tx + 5, y - 3}, SCIFI_MINT)
-		rl.DrawLineV({tx + 5, y - 3}, {tx + 5, y}, SCIFI_CYAN)
-	}
+	rl.DrawLineV(iv0, iv1, inner)
+	rl.DrawLineV(iv1, iv2, inner)
+	rl.DrawLineV(iv2, iv3, inner)
+	rl.DrawLineV(iv3, iv4, inner)
+	rl.DrawLineV(iv4, iv5, inner)
+	rl.DrawLineV(iv5, iv6, inner)
+	rl.DrawLineV(iv6, iv7, inner)
+	rl.DrawLineV(iv7, iv0, inner)
+	rl.DrawPixelV(iv0, inner)
+	rl.DrawPixelV(iv1, inner)
+	rl.DrawPixelV(iv2, inner)
+	rl.DrawPixelV(iv3, inner)
+	rl.DrawPixelV(iv4, inner)
+	rl.DrawPixelV(iv5, inner)
+	rl.DrawPixelV(iv6, inner)
+	rl.DrawPixelV(iv7, inner)
 }
 
 // High-tech tactical section header with title text and glowing dividing rail.
