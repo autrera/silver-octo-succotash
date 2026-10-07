@@ -458,7 +458,6 @@ main :: proc() {
 	in_start_menu = true
 	start_menu_selection = 0
 
-
 	for !rl.WindowShouldClose() && !quit_requested {
 		if rl.IsKeyPressed(.F11) || ((rl.IsKeyDown(.LEFT_ALT) || rl.IsKeyDown(.RIGHT_ALT)) && rl.IsKeyPressed(.ENTER)) {
 			rl.ToggleBorderlessWindowed()
@@ -3617,40 +3616,26 @@ draw_world :: proc() {
 	rl.DrawText(speed_val, i32(col3_x), i32(HUD_PAD + 24), 11, SCIFI_MINT)
 	draw_segmented_meter({col3_x + 58, HUD_PAD + 24, 48, 12}, f32(drone_speed_level) / f32(DRONE_SPEED_UPGRADE_MAX), 5, SCIFI_MINT, SCIFI_DIM)
 
-	// Top right of viewport: telemetry dock (FPS, altitude, zoom)
-	// Symmetrical aerospace winged HUD dock (inspired by Star Fox Zero top-right UI)
-	tr_dock_w: f32 = 230.0
-	tr_dock_h: f32 = 50.0
-	tr_x := f32(viewport_w) - f32(HUD_PAD) - tr_dock_w
-	tr_rect := rl.Rectangle{tr_x, HUD_PAD, tr_dock_w, tr_dock_h}
-	draw_winged_panel_right(tr_rect, 6, 20, SCIFI_PANEL, SCIFI_CYAN)
-
-	// Fighter vector glyph icon (Arwing-style silhouette)
-	draw_fighter_vector_icon({tr_x + 24, HUD_PAD + 25}, 10.0, SCIFI_MINT)
-
-	// Telemetry readouts (altitude and zoom)
-	telemetry_cam := rl.TextFormat("ALT %.0f   ZOOM %d%%", camera.position.y, zoom_percent())
-	rl.DrawText(telemetry_cam, i32(tr_x + 44), i32(HUD_PAD + 20), 13, SCIFI_CYAN)
-
-	// Divider before FPS
-	div_tr_x := tr_x + tr_dock_w - 60.0
-	rl.DrawLineV({div_tr_x, HUD_PAD + 10}, {div_tr_x, HUD_PAD + 40}, SCIFI_DIM)
-	draw_diamond(div_tr_x, HUD_PAD + 25, 2.5, SCIFI_CYAN)
-
-	fps_str := rl.TextFormat("%d FPS", rl.GetFPS())
-	rl.DrawText(fps_str, i32(div_tr_x + 10), i32(HUD_PAD + 20), 12, SCIFI_MINT)
-
 	// Save notification chip (if active)
 	if hud_save_notification_timer > 0 {
 		saved_lbl: cstring = "GAME SAVED"
 		saved_w := f32(rl.MeasureText(saved_lbl, 11))
-		saved_x := tr_x - saved_w - 20
+		saved_x := f32(viewport_w) - f32(HUD_PAD) - saved_w - 8
 		draw_chamfered_panel({saved_x - 8, HUD_PAD + 12, saved_w + 16, 26}, 4, rl.Color{30, 20, 10, 240}, SCIFI_AMBER_DIM)
 		rl.DrawText(saved_lbl, i32(saved_x), i32(HUD_PAD + 18), 11, SCIFI_AMBER)
 	}
 
 	// Bottom: standalone Controls button
-	draw_button(controls_button_rect(), "Controls", SCIFI_PANEL_SOLID, true)
+	ctrl_rect := controls_button_rect()
+	draw_button(ctrl_rect, "Controls", SCIFI_PANEL_SOLID, true)
+
+	// Bottom right of viewport: telemetry readout (ALT, ZOOM, FPS) in plain white text
+	telemetry_cam := rl.TextFormat("ALT %.0f   ZOOM %d%%   %d FPS", camera.position.y, zoom_percent(), rl.GetFPS())
+	tel_font_size: i32 = 12
+	tel_w := rl.MeasureText(telemetry_cam, tel_font_size)
+	tel_x := i32(viewport_w) - tel_w - HUD_PAD
+	tel_y := i32(ctrl_rect.y + (ctrl_rect.height - f32(tel_font_size)) / 2)
+	rl.DrawText(telemetry_cam, tel_x, tel_y, tel_font_size, rl.WHITE)
 
 	draw_squad_hud()
 }
