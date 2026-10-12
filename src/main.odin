@@ -5588,19 +5588,22 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 		return
 	}
 
-	// Subtle, non-distracting transparency:
-	// Unselected badges are faint and unobtrusive (alpha ~38%); selected badges highlight softly (~70%)
-	alpha_factor := is_selected ? f32(0.70) : f32(0.38)
+	// Unselected badges are faint and unobtrusive (~30% alpha);
+	// selected badges are fully visible and bright (100% alpha).
+	alpha_factor := is_selected ? f32(1.0) : f32(0.30)
 
-	// 1. Transparent glass background (strictly subtle, no red)
-	bg_alpha := u8(60.0 * alpha_factor)
-	rl.DrawRectangleRounded(rect, 0.16, 4, rl.Color{6, 16, 12, bg_alpha})
+	// 1. Dark solid background when selected:
+	// Remove background opacity/transparency (alpha 255) so planets, bright rings,
+	// and beam lines behind the badge do not bleed through, making it completely legible.
+	// When unselected, subtle translucent glass backing (alpha 80).
+	bg_alpha := u8(is_selected ? 255 : 80)
+	rl.DrawRectangleRounded(rect, 0.16, 4, rl.Color{4, 12, 10, bg_alpha})
 
-	// 2. Very subtle green border (strictly subtle, no red)
-	border_alpha := u8(160.0 * alpha_factor)
-	border_col := rl.Color{45, 175, 100, border_alpha}
+	// 2. Green border:
+	// Selected: high-contrast bright sci-fi border; Unselected: subtle
+	border_col := rl.Color{45, 175, 100, u8(130.0 * alpha_factor)}
 	if is_selected {
-		border_col = rl.Color{65, 215, 130, u8(220.0 * alpha_factor)}
+		border_col = rl.Color{65, 215, 130, 240}
 	}
 	rl.DrawRectangleRoundedLinesEx(rect, 0.16, 4, 1.2, border_col)
 
@@ -5617,10 +5620,10 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 	icon_x := rect.x + 19.0
 	txt_x := i32(rect.x + 38.0)
 
-	// Horizontal micro-dividers between stacked rows (very faint)
+	// Horizontal micro-dividers between stacked rows
 	div1_y := rect.y + 34.0
 	div2_y := rect.y + 68.0
-	div_col := rl.Color{35, 95, 60, u8(60.0 * alpha_factor)}
+	div_col := is_selected ? rl.Color{35, 95, 60, 120} : rl.Color{35, 95, 60, u8(50.0 * alpha_factor)}
 	rl.DrawLineEx({rect.x + 8.0, div1_y}, {rect.x + rect.width - 8.0, div1_y}, 1.0, div_col)
 	rl.DrawLineEx({rect.x + 8.0, div2_y}, {rect.x + rect.width - 8.0, div2_y}, 1.0, div_col)
 
@@ -5628,22 +5631,27 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 	text_alpha := u8(240.0 * alpha_factor)
 	muted_alpha := u8(140.0 * alpha_factor)
 
+	shadow_col := rl.Color{0, 0, 0, u8(180.0 * alpha_factor)}
+
 	// Row 1: Planetary Defenses
 	row1_cy := rect.y + 17.0
 	def_col := def_lvl > 0 ? rl.Color{130, 240, 200, icon_alpha} : rl.Color{130, 155, 145, muted_alpha}
 	draw_defense_vector_icon({icon_x, row1_cy}, icon_size, def_col)
+	rl.DrawText(def_str, txt_x + 1, i32(row1_cy - 8.0), 18, shadow_col)
 	rl.DrawText(def_str, txt_x, i32(row1_cy - 9.0), 18, def_lvl > 0 ? rl.Color{130, 240, 200, text_alpha} : rl.Color{130, 155, 145, muted_alpha})
 
 	// Row 2: Miners
 	row2_cy := rect.y + 51.0
 	miner_col := miners > 0 ? rl.Color{240, 180, 60, icon_alpha} : rl.Color{140, 140, 140, muted_alpha}
 	draw_miner_vector_icon({icon_x, row2_cy}, icon_size, miner_col)
+	rl.DrawText(miner_str, txt_x + 1, i32(row2_cy - 8.0), 18, shadow_col)
 	rl.DrawText(miner_str, txt_x, i32(row2_cy - 9.0), 18, miners > 0 ? rl.Color{240, 180, 60, text_alpha} : rl.Color{140, 140, 140, muted_alpha})
 
 	// Row 3: Combat Drones
 	row3_cy := rect.y + 85.0
 	combat_col := combat > 0 ? rl.Color{100, 200, 255, icon_alpha} : rl.Color{120, 145, 155, muted_alpha}
 	draw_fighter_vector_icon({icon_x, row3_cy}, icon_size, combat_col)
+	rl.DrawText(combat_str, txt_x + 1, i32(row3_cy - 8.0), 18, shadow_col)
 	rl.DrawText(combat_str, txt_x, i32(row3_cy - 9.0), 18, combat_col)
 }
 
@@ -5652,8 +5660,9 @@ draw_conquered_planet_overlays :: proc(viewport_w, screen_h: f32) {
 	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
 	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
 
+	// Draw unselected badges first
 	for p in 0..<PLANET_COUNT {
-		if !planet_liberated(p) { continue }
+		if !planet_liberated(p) || p == selected_planet { continue }
 
 		to_planet := planets[p].position - camera.position
 		if rl.Vector3DotProduct(to_planet, cam_forward) <= 0.1 { continue }
@@ -5666,7 +5675,21 @@ draw_conquered_planet_overlays :: proc(viewport_w, screen_h: f32) {
 		limb_screen := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
 		screen_r := max(rl.Vector2Distance(center_screen, limb_screen), 14.0)
 
-		draw_conquered_planet_overlay_badge(p, center_screen, screen_r, p == selected_planet, viewport_w, screen_h)
+		draw_conquered_planet_overlay_badge(p, center_screen, screen_r, false, viewport_w, screen_h)
+	}
+
+	// Draw selected planet badge last so it renders on top
+	if selected_planet >= 0 && selected_planet < PLANET_COUNT && planet_liberated(selected_planet) {
+		to_planet := planets[selected_planet].position - camera.position
+		if rl.Vector3DotProduct(to_planet, cam_forward) > 0.1 {
+			center_screen := rl.GetWorldToScreen(planets[selected_planet].position, camera)
+			if center_screen.x >= -100 && center_screen.x <= viewport_w + 100 && center_screen.y >= -100 && center_screen.y <= screen_h + 100 {
+				limb_screen := rl.GetWorldToScreen(planets[selected_planet].position + cam_right * planets[selected_planet].radius, camera)
+				screen_r := max(rl.Vector2Distance(center_screen, limb_screen), 14.0)
+
+				draw_conquered_planet_overlay_badge(selected_planet, center_screen, screen_r, true, viewport_w, screen_h)
+			}
+		}
 	}
 }
 
