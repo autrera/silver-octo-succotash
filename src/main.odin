@@ -299,6 +299,14 @@ minerals := 350
 mineral_accumulator: f32 = 0
 // Drone build-speed upgrade level (0..DRONE_SPEED_UPGRADE_MAX).
 drone_speed_level := 0
+Auto_Build_Mode :: enum {
+	OFF,
+	MINERS,
+	COMBAT,
+}
+auto_build_mode: Auto_Build_Mode = .OFF
+auto_build_last_mode: Auto_Build_Mode = .MINERS
+autobuild_retry_timer: f32 = 0
 // Player command bases exist only on Earth; set by initialize_game/reset_world.
 base_counts: [PLANET_COUNT]int
 production: [PLANET_COUNT][MAX_BASES]Production
@@ -501,6 +509,9 @@ main :: proc() {
 }
 
 initialize_game :: proc() {
+	auto_build_mode = .OFF
+	auto_build_last_mode = .MINERS
+	autobuild_retry_timer = 0
 	base_counts = {}
 	base_counts[EARTH] = STARTING_EARTH_BASES
 	refinery_built = {}
@@ -600,6 +611,9 @@ reset_world :: proc() {
 	earth_industry_intensity = 0
 	drone_speed_level = 0
 	earth_rally = NO_RALLY
+	auto_build_mode = .OFF
+	auto_build_last_mode = .MINERS
+	autobuild_retry_timer = 0
 	victory = false
 	defeated = false
 	game_paused = false
@@ -706,6 +720,10 @@ update_input :: proc() {
 		if can_build_5_combat() {
 			queue_5_combat()
 		}
+	}
+	// [T] toggles autobuilder mode (Earth only, unlocked at 5 bases).
+	if rl.IsKeyPressed(.T) && can_use_autobuilder() {
+		toggle_autobuild_mode()
 	}
 	// [U] buys the next drone build-speed upgrade level (Earth only).
 	if rl.IsKeyPressed(.U) { purchase_drone_speed_upgrade() }
@@ -861,6 +879,22 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 			return
 		}
 		if base_counts[EARTH] >= MAX_BASES {
+			off_rect, miner_rect, combat_rect := autobuild_radio_rects(panel_x)
+			if rl.CheckCollisionPointRec(mouse, off_rect) {
+				last_unit_clicked_index = -1
+				set_autobuild_mode(.OFF)
+				return
+			}
+			if rl.CheckCollisionPointRec(mouse, miner_rect) {
+				last_unit_clicked_index = -1
+				set_autobuild_mode(.MINERS)
+				return
+			}
+			if rl.CheckCollisionPointRec(mouse, combat_rect) {
+				last_unit_clicked_index = -1
+				set_autobuild_mode(.COMBAT)
+				return
+			}
 			if rl.CheckCollisionPointRec(mouse, queue_5_miner_button_rect(panel_x)) {
 				last_unit_clicked_index = -1
 				queue_5_miners()
@@ -1826,19 +1860,111 @@ purchase_drone_speed_upgrade :: proc() -> bool {
 	return true
 }
 
+queue_unit_on_earth :: proc(kind: Unit_Type) -> bool {
+	cost := unit_cost(kind)
+	if minerals < cost || queued_count(EARTH) >= base_counts[EARTH] * 5 { return false }
+	minerals -= cost
+	for i := 0; i < base_counts[EARTH]; i += 1 {
+		if !production[EARTH][i].active {
+			production[EARTH][i] = Production{kind = kind, active = true, progress = 0}
+			return true
+		}
+	}
+	pending[EARTH][pending_count[EARTH]] = kind
+	pending_count[EARTH] += 1
+	return true
+}
+
 queue_unit :: proc(kind: Unit_Type) {
 	if selected_planet != EARTH { return } // All production happens at Earth command bases.
-	cost := unit_cost(kind)
-	if minerals < cost || queued_count(selected_planet) >= base_counts[selected_planet] * 5 { return }
-	minerals -= cost
-	for i := 0; i < base_counts[selected_planet]; i += 1 {
-		if !production[selected_planet][i].active {
-			production[selected_planet][i] = Production{kind = kind, active = true, progress = 0}
+	queue_unit_on_earth(kind)
+}
+
+// Directly queue up to 5 units on Earth (used by autobuilder regardless of selected planet)
+queue_5_units_on_earth :: proc(kind: Unit_Type) {
+	for _ in 0..<BATCH_BUILD_COUNT {
+		if !queue_unit_on_earth(kind) { break }
+	}
+}
+
+can_use_autobuilder :: proc() -> bool {
+	return base_counts[EARTH] >= MAX_BASES
+}
+
+toggle_autobuild_mode :: proc() {
+	if !can_use_autobuilder() { return }
+	if auto_build_mode != .OFF {
+		auto_build_last_mode = auto_build_mode
+		auto_build_mode = .OFF
+	} else {
+		target := auto_build_last_mode
+		if target == .OFF { target = .MINERS }
+		auto_build_mode = target
+	}
+	autobuild_retry_timer = 0
+}
+
+set_autobuild_mode :: proc(mode: Auto_Build_Mode) {
+	if !can_use_autobuilder() && mode != .OFF { return }
+	auto_build_mode = mode
+	if mode != .OFF {
+		auto_build_last_mode = mode
+	}
+	autobuild_retry_timer = 0
+}
+
+autobuild_radio_rects :: proc(panel_x: f32) -> (off_rect, miner_rect, combat_rect: rl.Rectangle) {
+	btn_h: f32 = 20.0
+	y := f32(earth_queue_y() - 2)
+	right := panel_x + PANEL_PAD_X + PANEL_CONTENT_W
+	w_off: f32 = 36.0
+	w_m: f32 = 26.0
+	w_c: f32 = 26.0
+	total_w := w_off + w_m + w_c
+	x0 := right - total_w
+
+	off_rect = rl.Rectangle{x0, y, w_off, btn_h}
+	miner_rect = rl.Rectangle{x0 + w_off, y, w_m, btn_h}
+	combat_rect = rl.Rectangle{x0 + w_off + w_m, y, w_c, btn_h}
+	return
+}
+
+autobuild_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
+	off_r, _, combat_r := autobuild_radio_rects(panel_x)
+	return rl.Rectangle{off_r.x, off_r.y, (combat_r.x + combat_r.width) - off_r.x, off_r.height}
+}
+
+update_autobuilder :: proc(dt: f32) {
+	if !can_use_autobuilder() || auto_build_mode == .OFF {
+		autobuild_retry_timer = 0
+		return
+	}
+
+	// Autobuilder only triggers when the queue buffer is completely empty
+	if queued_count(EARTH) > 0 {
+		autobuild_retry_timer = 0
+		return
+	}
+
+	cost := auto_build_mode == .MINERS ? BATCH_MINER_COST : BATCH_COMBAT_COST
+
+	if autobuild_retry_timer > 0 {
+		autobuild_retry_timer -= dt
+		if autobuild_retry_timer > 0 {
 			return
 		}
 	}
-	pending[selected_planet][pending_count[selected_planet]] = kind
-	pending_count[selected_planet] += 1
+
+	// Queue buffer is completely empty: check resources
+	if minerals >= cost {
+		unit_type := auto_build_mode == .MINERS ? Unit_Type.MINING : Unit_Type.COMBAT
+		auto_build_last_mode = auto_build_mode
+		queue_5_units_on_earth(unit_type)
+		autobuild_retry_timer = 0
+	} else {
+		// Not enough resources: retry every second until there are enough resources
+		autobuild_retry_timer = 1.0
+	}
 }
 
 // Batch queue up to `count` units as long as minerals and queue space allow.
@@ -2018,6 +2144,7 @@ update_production :: proc(dt: f32) {
 			}
 		}
 	}
+	update_autobuilder(dt)
 }
 
 // Move pending queue items into idle production lines: a line freed by a
@@ -3951,6 +4078,9 @@ draw_earth_inspector :: proc(x: f32) {
 	queue_capacity := base_counts[EARTH] * MAX_BASES
 	queue_total := queued_count(EARTH)
 	draw_section_header(x + PANEL_PAD_X, f32(queue_y), PANEL_CONTENT_W, rl.TextFormat("QUEUE BUFFER (%d/%d)", queue_total, queue_capacity), SCIFI_CYAN)
+	if base_counts[EARTH] >= MAX_BASES {
+		draw_autobuild_radio_buttons(x)
+	}
 	for slot := 0; slot < queue_capacity; slot += 1 {
 		queued := slot < queue_total
 		kind := Unit_Type.MINING
@@ -5782,6 +5912,114 @@ draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type) {
 	}
 }
 
+// Segmented radio buttons for the Earth autobuilder (Off | M | C).
+draw_autobuild_radio_buttons :: proc(panel_x: f32) {
+	off_rect, miner_rect, combat_rect := autobuild_radio_rects(panel_x)
+	total_rect := rl.Rectangle{off_rect.x, off_rect.y, (combat_rect.x + combat_rect.width) - off_rect.x, off_rect.height}
+	mouse := rl.GetMousePosition()
+
+	// Clear dividing rail behind the radio group and the label
+	lbl: cstring = "AUTO:"
+	lbl_w := f32(rl.MeasureText(lbl, 11))
+	lbl_x := off_rect.x - lbl_w - 6
+	rl.DrawRectangleRec({lbl_x - 4, total_rect.y - 1, lbl_w + 8, total_rect.height + 2}, SCIFI_PANEL_SOLID)
+	rl.DrawText(lbl, i32(lbl_x), i32(total_rect.y + 4), 11, SCIFI_MUTED)
+
+	// Base panel for segmented radio button group
+	draw_chamfered_panel(total_rect, 3, SCIFI_PANEL_SOLID, SCIFI_DIM)
+
+	// 1. Off option
+	{
+		selected := auto_build_mode == .OFF
+		hovered := rl.CheckCollisionPointRec(mouse, off_rect)
+		fill := SCIFI_PANEL_SOLID
+		border := rl.Color{0, 0, 0, 0}
+		text_col := SCIFI_MUTED
+
+		if selected {
+			fill = rl.Color{0, 60, 75, 255}
+			border = SCIFI_CYAN
+			text_col = SCIFI_MINT
+		} else if hovered {
+			fill = rl.Color{10, 36, 46, 255}
+			border = SCIFI_STEEL
+			text_col = SCIFI_TEXT
+		}
+
+		if selected || hovered {
+			draw_chamfered_panel(off_rect, 2, fill, border)
+		}
+		if selected {
+			rl.DrawLineV({off_rect.x + 2, off_rect.y + 1}, {off_rect.x + off_rect.width - 2, off_rect.y + 1}, SCIFI_MINT)
+		}
+		tw := f32(rl.MeasureText("Off", 12))
+		rl.DrawText("Off", i32(off_rect.x + (off_rect.width - tw) / 2), i32(off_rect.y + 4), 12, text_col)
+	}
+
+	// 2. Miners option (M)
+	{
+		selected := auto_build_mode == .MINERS
+		hovered := rl.CheckCollisionPointRec(mouse, miner_rect)
+		fill := SCIFI_PANEL_SOLID
+		border := rl.Color{0, 0, 0, 0}
+		text_col := SCIFI_MUTED
+
+		if selected {
+			fill = rl.Color{60, 40, 10, 255}
+			border = SCIFI_AMBER
+			text_col = SCIFI_AMBER
+		} else if hovered {
+			fill = rl.Color{32, 22, 8, 255}
+			border = SCIFI_AMBER_DIM
+			text_col = SCIFI_TEXT
+		}
+
+		if selected || hovered {
+			draw_chamfered_panel(miner_rect, 2, fill, border)
+		}
+		if selected {
+			rl.DrawLineV({miner_rect.x + 2, miner_rect.y + 1}, {miner_rect.x + miner_rect.width - 2, miner_rect.y + 1}, SCIFI_AMBER)
+		}
+		tw := f32(rl.MeasureText("M", 12))
+		rl.DrawText("M", i32(miner_rect.x + (miner_rect.width - tw) / 2), i32(miner_rect.y + 4), 12, text_col)
+	}
+
+	// 3. Combat option (C)
+	{
+		selected := auto_build_mode == .COMBAT
+		hovered := rl.CheckCollisionPointRec(mouse, combat_rect)
+		fill := SCIFI_PANEL_SOLID
+		border := rl.Color{0, 0, 0, 0}
+		text_col := SCIFI_MUTED
+
+		if selected {
+			fill = rl.Color{10, 45, 80, 255}
+			border = SCIFI_BLUE
+			text_col = SCIFI_BLUE
+		} else if hovered {
+			fill = rl.Color{8, 28, 48, 255}
+			border = SCIFI_STEEL
+			text_col = SCIFI_TEXT
+		}
+
+		if selected || hovered {
+			draw_chamfered_panel(combat_rect, 2, fill, border)
+		}
+		if selected {
+			rl.DrawLineV({combat_rect.x + 2, combat_rect.y + 1}, {combat_rect.x + combat_rect.width - 2, combat_rect.y + 1}, SCIFI_BLUE)
+		}
+		tw := f32(rl.MeasureText("C", 12))
+		rl.DrawText("C", i32(combat_rect.x + (combat_rect.width - tw) / 2), i32(combat_rect.y + 4), 12, text_col)
+	}
+
+	// Segment vertical dividers (Off | M | C)
+	rl.DrawLineV({off_rect.x + off_rect.width, total_rect.y + 2}, {off_rect.x + off_rect.width, total_rect.y + total_rect.height - 2}, SCIFI_DIM)
+	rl.DrawLineV({miner_rect.x + miner_rect.width, total_rect.y + 2}, {miner_rect.x + miner_rect.width, total_rect.y + total_rect.height - 2}, SCIFI_DIM)
+
+	// Outer frame
+	rl.DrawRectangleLinesEx(total_rect, 1, SCIFI_DIM)
+}
+
 // Digital segmented progress bar replacing continuous solid bars.
 draw_progress :: proc(rect: rl.Rectangle, value: f32, color: rl.Color) {
 	segments := int(rect.width / 14)
@@ -6810,7 +7048,7 @@ controls_overlay_rects :: proc() -> (box: rl.Rectangle, close_btn: rl.Rectangle)
 	w := f32(rl.GetScreenWidth())
 	h := f32(rl.GetScreenHeight())
 	box_w: f32 = 740.0
-	box_h: f32 = 470.0
+	box_h: f32 = 490.0
 	box = rl.Rectangle{(w - box_w) / 2, (h - box_h) / 2, box_w, box_h}
 	close_btn_w: f32 = 200.0
 	close_btn_h: f32 = 36.0
@@ -6905,6 +7143,8 @@ draw_controls_overlay :: proc() {
 	draw_control_row(col2_x, cy2, "X", rl.TextFormat("Build +5 Fighters (%d)", BATCH_COMBAT_COST))
 	cy2 += 18
 	draw_control_row(col2_x, cy2, "U / SPEED", "Upgrade Build Speed (5,000)")
+	cy2 += 18
+	draw_control_row(col2_x, cy2, "T", "Toggle Autobuild On / Off")
 	cy2 += 18
 	draw_control_row(col2_x, cy2, "ESC", "Cancel last build (Refund)")
 	cy2 += 18
@@ -7020,6 +7260,24 @@ parse_build_target :: proc(s: string) -> (Build_Target, bool) {
 	}
 }
 
+auto_build_mode_to_string :: proc(m: Auto_Build_Mode) -> string {
+	switch m {
+	case .OFF: return "OFF"
+	case .MINERS: return "MINERS"
+	case .COMBAT: return "COMBAT"
+	}
+	return "OFF"
+}
+
+parse_auto_build_mode :: proc(s: string) -> (Auto_Build_Mode, bool) {
+	switch s {
+	case "OFF": return .OFF, true
+	case "MINERS": return .MINERS, true
+	case "COMBAT": return .COMBAT, true
+	case: return .OFF, false
+	}
+}
+
 serialize_game_state :: proc(allocator := context.temp_allocator) -> string {
 	b: strings.Builder
 	strings.builder_init(&b, allocator)
@@ -7028,6 +7286,8 @@ serialize_game_state :: proc(allocator := context.temp_allocator) -> string {
 	fmt.sbprintf(&b, "VERSION 1\n")
 	fmt.sbprintf(&b, "MINERALS %d\n", minerals)
 	fmt.sbprintf(&b, "DRONE_SPEED_LEVEL %d\n", drone_speed_level)
+	fmt.sbprintf(&b, "AUTO_BUILD_MODE %s\n", auto_build_mode_to_string(auto_build_mode))
+	fmt.sbprintf(&b, "AUTO_BUILD_LAST_MODE %s\n", auto_build_mode_to_string(auto_build_last_mode))
 	fmt.sbprintf(&b, "EARTH_RALLY %d\n", earth_rally)
 	fmt.sbprintf(&b, "SELECTED_PLANET %d\n", selected_planet)
 	fmt.sbprintf(&b, "BASE_BUILD %d %.4f\n", base_build_planet, base_build_progress)
@@ -7154,6 +7414,19 @@ deserialize_game_state :: proc(content: string) -> bool {
 		case "DRONE_SPEED_LEVEL":
 			if val, ok := strconv.parse_int(fields[1]); ok {
 				drone_speed_level = val
+			}
+		case "AUTO_BUILD_MODE":
+			if mode, ok := parse_auto_build_mode(fields[1]); ok {
+				auto_build_mode = mode
+				if mode != .OFF {
+					auto_build_last_mode = mode
+				}
+			}
+		case "AUTO_BUILD_LAST_MODE":
+			if mode, ok := parse_auto_build_mode(fields[1]); ok {
+				if mode != .OFF {
+					auto_build_last_mode = mode
+				}
 			}
 		case "EARTH_RALLY":
 			if val, ok := strconv.parse_int(fields[1]); ok {
@@ -7357,6 +7630,11 @@ deserialize_game_state :: proc(content: string) -> bool {
 			}
 		}
 	}
+
+	if !can_use_autobuilder() {
+		auto_build_mode = .OFF
+	}
+	autobuild_retry_timer = 0
 
 	camera.target = camera_target
 	camera.up = {0, 1, 0}

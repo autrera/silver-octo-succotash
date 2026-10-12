@@ -2,6 +2,7 @@ package main
 
 import "core:math"
 import "core:os"
+import "core:strings"
 import "core:testing"
 import "core:time"
 import rl "vendor:raylib"
@@ -5667,5 +5668,219 @@ conquered_planet_overlay_rect_positioning :: proc(t: ^testing.T) {
 	center_x := rect.x + rect.width * 0.5
 	testing.expect(t, abs(center_x - center.x) < 1.0, "overlay is horizontally centered with the planet")
 }
+
+@(test)
+autobuilder_locked_until_5_bases :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+
+	// Default game starts with STARTING_EARTH_BASES (1 base)
+	testing.expect(t, base_counts[EARTH] < MAX_BASES, "starts with less than 5 bases")
+	testing.expect(t, !can_use_autobuilder(), "autobuilder locked under 5 bases")
+
+	// Attempting to toggle or set mode does nothing when locked
+	toggle_autobuild_mode()
+	testing.expect(t, auto_build_mode == .OFF, "cannot toggle autobuilder under 5 bases")
+	set_autobuild_mode(.MINERS)
+	testing.expect(t, auto_build_mode == .OFF, "cannot set autobuilder mode under 5 bases")
+
+	// Unlock with 5 bases
+	base_counts[EARTH] = MAX_BASES
+	testing.expect(t, can_use_autobuilder(), "autobuilder unlocked at 5 bases")
+	toggle_autobuild_mode()
+	testing.expect(t, auto_build_mode == .MINERS, "autobuilder toggles to MINERS at 5 bases")
+}
+
+@(test)
+autobuilder_toggle_on_off_remembers_last_unit :: proc(t: ^testing.T) {
+	reset_world()
+	base_counts[EARTH] = MAX_BASES
+
+	testing.expect(t, auto_build_mode == .OFF, "initially OFF")
+	testing.expect(t, auto_build_last_mode == .MINERS, "default last unit is MINERS")
+
+	// Pressing T turns it on with MINERS
+	toggle_autobuild_mode()
+	testing.expect(t, auto_build_mode == .MINERS, "toggles ON to MINERS")
+
+	// Pressing T turns it OFF
+	toggle_autobuild_mode()
+	testing.expect(t, auto_build_mode == .OFF, "toggles OFF")
+
+	// Pressing T again turns it back ON to MINERS
+	toggle_autobuild_mode()
+	testing.expect(t, auto_build_mode == .MINERS, "toggles back ON to MINERS")
+
+	// Switch to COMBAT via set_autobuild_mode (or clicking C in inspector)
+	set_autobuild_mode(.COMBAT)
+	testing.expect(t, auto_build_mode == .COMBAT, "mode is COMBAT")
+	testing.expect(t, auto_build_last_mode == .COMBAT, "last mode is now COMBAT")
+
+	// Pressing T turns it OFF
+	toggle_autobuild_mode()
+	testing.expect(t, auto_build_mode == .OFF, "toggles OFF from COMBAT")
+
+	// Pressing T again turns it back ON to COMBAT
+	toggle_autobuild_mode()
+	testing.expect(t, auto_build_mode == .COMBAT, "toggles back ON to COMBAT")
+}
+
+@(test)
+autobuilder_queues_5_miners_when_buffer_empty_and_enough_resources :: proc(t: ^testing.T) {
+	reset_world()
+	base_counts[EARTH] = MAX_BASES
+	set_autobuild_mode(.MINERS)
+	minerals = 300
+
+	testing.expect(t, queued_count(EARTH) == 0, "queue starts empty")
+
+	update_production(0.016)
+
+	testing.expect(t, queued_count(EARTH) == 5, "autobuilder added 5 miners")
+	testing.expect(t, minerals == 300 - BATCH_MINER_COST, "deducted batch miner cost (250)")
+	for i in 0..<5 {
+		testing.expect(t, production[EARTH][i].active, "production line active")
+		testing.expect(t, production[EARTH][i].kind == .MINING, "production line is mining drone")
+	}
+}
+
+@(test)
+autobuilder_queues_5_combat_when_buffer_empty_and_enough_resources :: proc(t: ^testing.T) {
+	reset_world()
+	base_counts[EARTH] = MAX_BASES
+	set_autobuild_mode(.COMBAT)
+	minerals = 650
+
+	testing.expect(t, queued_count(EARTH) == 0, "queue starts empty")
+
+	update_production(0.016)
+
+	testing.expect(t, queued_count(EARTH) == 5, "autobuilder added 5 combat drones")
+	testing.expect(t, minerals == 650 - BATCH_COMBAT_COST, "deducted batch combat cost (500)")
+	for i in 0..<5 {
+		testing.expect(t, production[EARTH][i].active, "production line active")
+		testing.expect(t, production[EARTH][i].kind == .COMBAT, "production line is combat drone")
+	}
+}
+
+@(test)
+autobuilder_does_not_fill_queue_buffer :: proc(t: ^testing.T) {
+	reset_world()
+	base_counts[EARTH] = MAX_BASES
+	set_autobuild_mode(.MINERS)
+	minerals = 5000 // Plenty of resources
+
+	update_production(0.016)
+
+	// Autobuilder must only add 5 units, NOT fill up to 25
+	testing.expect(t, queued_count(EARTH) == 5, "autobuilder added only 5 units")
+	testing.expect(t, minerals == 5000 - BATCH_MINER_COST, "only charged for 5 units")
+
+	// When queue buffer is not empty, it must not queue any more units
+	update_production(0.016)
+	testing.expect(t, queued_count(EARTH) == 5, "queue remains at 5 units")
+	testing.expect(t, minerals == 5000 - BATCH_MINER_COST, "minerals unchanged while queue has units")
+}
+
+@(test)
+autobuilder_retries_every_second_when_insufficient_resources :: proc(t: ^testing.T) {
+	reset_world()
+	base_counts[EARTH] = MAX_BASES
+	set_autobuild_mode(.MINERS)
+	minerals = 150 // Not enough for 5 miners (cost 250)
+
+	testing.expect(t, queued_count(EARTH) == 0, "queue is empty")
+
+	// Initial check: not enough resources, sets 1s retry timer
+	update_production(0.1)
+	testing.expect(t, queued_count(EARTH) == 0, "did not queue without enough resources")
+	testing.expect(t, minerals == 150, "minerals untouched")
+	testing.expect(t, autobuild_retry_timer == 1.0, "1s retry timer is initialized to 1.0")
+
+	// Add enough minerals now, but timer is still running: should not queue immediately
+	minerals = 400
+	update_production(0.4) // 0.4s elapsed on the 1.0s timer
+	testing.expect(t, queued_count(EARTH) == 0, "still waiting on 1-second retry timer")
+	testing.expect(t, minerals == 400, "minerals still untouched")
+	testing.expect(t, abs(autobuild_retry_timer - 0.6) < 0.01, "retry timer decremented to 0.6")
+
+	// Advance past the 1.0 second retry mark
+	update_production(0.65) // full 1.05s elapsed
+	testing.expect(t, queued_count(EARTH) == 5, "autobuilder retried after 1 second and queued 5 units")
+	testing.expect(t, minerals == 400 - BATCH_MINER_COST, "minerals deducted upon retry")
+}
+
+@(test)
+autobuilder_save_and_load_persistence :: proc(t: ^testing.T) {
+	reset_world()
+	base_counts[EARTH] = MAX_BASES
+	set_autobuild_mode(.COMBAT)
+	toggle_autobuild_mode() // Turn off, but last mode is COMBAT
+	testing.expect(t, auto_build_mode == .OFF, "mode is OFF")
+	testing.expect(t, auto_build_last_mode == .COMBAT, "last mode is COMBAT")
+
+	saved := serialize_game_state(context.temp_allocator)
+	testing.expect(t, strings.contains(saved, "AUTO_BUILD_MODE OFF"), "save contains AUTO_BUILD_MODE OFF")
+	testing.expect(t, strings.contains(saved, "AUTO_BUILD_LAST_MODE COMBAT"), "save contains AUTO_BUILD_LAST_MODE COMBAT")
+
+	reset_world()
+	testing.expect(t, auto_build_mode == .OFF, "reset world sets mode to OFF")
+	testing.expect(t, auto_build_last_mode == .MINERS, "reset world resets last mode to MINERS")
+
+	ok := deserialize_game_state(saved)
+	testing.expect(t, ok, "deserialization succeeded")
+	testing.expect(t, auto_build_mode == .OFF, "restored AUTO_BUILD_MODE OFF")
+	testing.expect(t, auto_build_last_mode == .COMBAT, "restored AUTO_BUILD_LAST_MODE COMBAT")
+
+	// Pressing T toggles on to COMBAT
+	toggle_autobuild_mode()
+	testing.expect(t, auto_build_mode == .COMBAT, "toggled on restores remembered COMBAT mode")
+}
+
+@(test)
+autobuilder_click_hitbox_in_inspector :: proc(t: ^testing.T) {
+	reset_world()
+	base_counts[EARTH] = MAX_BASES
+	selected_planet = EARTH
+
+	panel_x: f32 = 470
+	off_rect, miner_rect, combat_rect := autobuild_radio_rects(panel_x)
+
+	testing.expect(t, auto_build_mode == .OFF, "starts OFF")
+
+	// Click M radio button selects MINERS
+	click_miner := rl.Vector2{miner_rect.x + miner_rect.width / 2, miner_rect.y + miner_rect.height / 2}
+	handle_inspector_click(click_miner, panel_x)
+	testing.expect(t, auto_build_mode == .MINERS, "click on M selects MINERS")
+
+	// Clicking M again keeps MINERS active
+	handle_inspector_click(click_miner, panel_x)
+	testing.expect(t, auto_build_mode == .MINERS, "click on M again stays MINERS")
+
+	// Click C radio button selects COMBAT
+	click_combat := rl.Vector2{combat_rect.x + combat_rect.width / 2, combat_rect.y + combat_rect.height / 2}
+	handle_inspector_click(click_combat, panel_x)
+	testing.expect(t, auto_build_mode == .COMBAT, "click on C selects COMBAT")
+
+	// Click Off radio button selects OFF
+	click_off := rl.Vector2{off_rect.x + off_rect.width / 2, off_rect.y + off_rect.height / 2}
+	handle_inspector_click(click_off, panel_x)
+	testing.expect(t, auto_build_mode == .OFF, "click on Off selects OFF")
+}
+
+@(test)
+autobuilder_radio_rects_alignment :: proc(t: ^testing.T) {
+	panel_x: f32 = 500
+	off_rect, miner_rect, combat_rect := autobuild_radio_rects(panel_x)
+	btn_rect := autobuild_button_rect(panel_x)
+
+	testing.expect(t, off_rect.x < miner_rect.x, "Off sits to the left of M")
+	testing.expect(t, miner_rect.x < combat_rect.x, "M sits to the left of C")
+	testing.expect(t, miner_rect.x == off_rect.x + off_rect.width, "contiguous segment from Off to M")
+	testing.expect(t, combat_rect.x == miner_rect.x + miner_rect.width, "contiguous segment from M to C")
+	testing.expect(t, btn_rect.width == off_rect.width + miner_rect.width + combat_rect.width, "bounding box covers all 3 segments")
+	testing.expect(t, f32(earth_queue_y()) + QUEUE_LABEL_GAP > btn_rect.y + btn_rect.height, "radio buttons sit above queue slots")
+}
+
 
 
