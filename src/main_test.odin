@@ -5612,3 +5612,60 @@ friendly_fighters_do_not_attack_own_orbital_defense_or_miners :: proc(t: ^testin
 	testing.expect(t, !sector_in_combat(EARTH), "Earth is not in combat")
 }
 
+@(test)
+conquered_planet_overlay_shows_for_liberated_planets_only :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+
+	// Earth starts conquered / liberated
+	testing.expect(t, planet_liberated(EARTH), "Earth starts liberated")
+
+	// Other planets start unliberated under enemy occupation
+	testing.expect(t, !planet_liberated(MARS), "Mars starts under hostile occupation")
+	testing.expect(t, !planet_liberated(JUPITER), "Jupiter starts under hostile occupation")
+
+	// Destroying enemy base on Mars liberates it
+	enemy_base_hp[MARS] = 0
+	testing.expect(t, planet_liberated(MARS), "Mars becomes liberated once enemy base is destroyed")
+}
+
+@(test)
+conquered_planet_overlay_counts_match_world_state :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+
+	// Initial Earth counts
+	testing.expect(t, orbital_defense_level[EARTH] == 1, "Earth defense level starts at 1")
+	testing.expect(t, planet_miner_drone_count(EARTH) == 5, "Earth starts with 5 miners")
+	testing.expect(t, planet_mining_cap(EARTH) == 10, "Earth mining cap is 10")
+	testing.expect(t, planet_combat_drone_count(EARTH) == 0, "Earth starts with 0 combat drones")
+
+	// Spawn combat drone on Earth
+	spawn_unit(.COMBAT, EARTH)
+	testing.expect(t, planet_combat_drone_count(EARTH) == 1, "Earth now has 1 combat drone")
+
+	// Upgrade orbital defense on Earth
+	orbital_defense_level[EARTH] = 3
+	testing.expect(t, orbital_defense_level[EARTH] == 3, "orbital defense level updated to 3")
+}
+
+@(test)
+conquered_planet_overlay_rect_positioning :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+
+	center := rl.Vector2{400, 300}
+	screen_r: f32 = 30.0
+	rect := conquered_planet_overlay_rect(EARTH, center, screen_r, false, 800, 600)
+
+	// Rect must be positioned below the planet with at least 21px spacing
+	testing.expect(t, rect.y >= center.y + screen_r + 21.0, "overlay rectangle sits below planet sphere with expanded spacing")
+	testing.expect(t, rect.width >= 110.0, "overlay width fits stacked stat rows")
+	testing.expect(t, rect.height == 102.0, "overlay height is stacked 102px")
+
+	// Centered horizontally around planet center
+	center_x := rect.x + rect.width * 0.5
+	testing.expect(t, abs(center_x - center.x) < 1.0, "overlay is horizontally centered with the planet")
+}
+
+

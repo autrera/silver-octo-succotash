@@ -752,6 +752,8 @@ update_input :: proc() {
 			last_unit_clicked_index = -1
 			if planet := pick_planet(mouse); planet >= 0 {
 				selected_planet = planet
+			} else if ov_p := pick_conquered_planet_overlay(mouse); ov_p >= 0 {
+				selected_planet = ov_p
 			} else if hq_picked(mouse) {
 				selected_planet = ENEMY_HOME
 			} else if !ctrl_down() {
@@ -765,6 +767,8 @@ update_input :: proc() {
 	if rl.IsMouseButtonPressed(.RIGHT) && mouse.x < panel_x {
 		if planet := pick_planet(mouse); planet >= 0 {
 			handle_planet_right_click(planet)
+		} else if ov_p := pick_conquered_planet_overlay(mouse); ov_p >= 0 {
+			handle_planet_right_click(ov_p)
 		} else if hq_picked(mouse) {
 			handle_planet_right_click(ENEMY_HOME)
 		}
@@ -3701,6 +3705,9 @@ draw_world :: proc() {
 		}
 	}
 
+	// Conquered planet overlays (planetary defense level, miners current/cap, combat drone count)
+	draw_conquered_planet_overlays(f32(viewport_w), f32(rl.GetScreenHeight()))
+
 	// Top bar: minerals plus global MPS and drone speed upgrade level
 	// Two-tier aerospace winged HUD dock (inspired by Star Fox Zero top-left UI)
 	tl_dock_w: f32 = 400.0
@@ -5297,14 +5304,248 @@ draw_fighter_vector_icon :: proc(center: rl.Vector2, size: f32, color: rl.Color)
 	wing_r := rl.Vector2{center.x + size * 1.0, center.y + size * 0.7}
 	tail := rl.Vector2{center.x, center.y + size * 0.2}
 
-	rl.DrawTriangle(nose, wing_l, tail, rl.Fade(color, 0.35))
-	rl.DrawTriangle(nose, tail, wing_r, rl.Fade(color, 0.35))
+	fill_col := rl.Color{color.r, color.g, color.b, u8(f32(color.a) * 0.35)}
+	rl.DrawTriangle(nose, wing_l, tail, fill_col)
+	rl.DrawTriangle(nose, tail, wing_r, fill_col)
 
-	rl.DrawLineV(nose, wing_l, color)
-	rl.DrawLineV(wing_l, tail, color)
-	rl.DrawLineV(tail, wing_r, color)
-	rl.DrawLineV(wing_r, nose, color)
-	rl.DrawLineV(nose, tail, SCIFI_MINT)
+	thick := max(1.0, size * 0.12)
+	rl.DrawLineEx(nose, wing_l, thick, color)
+	rl.DrawLineEx(wing_l, tail, thick, color)
+	rl.DrawLineEx(tail, wing_r, thick, color)
+	rl.DrawLineEx(wing_r, nose, thick, color)
+	spine_col := rl.Color{SCIFI_MINT.r, SCIFI_MINT.g, SCIFI_MINT.b, color.a}
+	rl.DrawLineEx(nose, tail, thick, spine_col)
+}
+
+// Tactical defense shield icon for planetary defense level
+draw_defense_vector_icon :: proc(center: rl.Vector2, size: f32, color: rl.Color) {
+	w := size * 0.9
+	h := size * 1.15
+	p_top_l := rl.Vector2{center.x - w, center.y - h * 0.55}
+	p_top_m := rl.Vector2{center.x, center.y - h * 0.40}
+	p_top_r := rl.Vector2{center.x + w, center.y - h * 0.55}
+	p_mid_r := rl.Vector2{center.x + w, center.y + h * 0.10}
+	p_tip   := rl.Vector2{center.x, center.y + h * 0.80}
+	p_mid_l := rl.Vector2{center.x - w, center.y + h * 0.10}
+
+	// Interior fill scaled by color alpha
+	fill_col := rl.Color{color.r, color.g, color.b, u8(f32(color.a) * 0.30)}
+	rl.DrawTriangle(p_top_l, p_mid_l, p_tip, fill_col)
+	rl.DrawTriangle(p_top_l, p_tip, p_top_m, fill_col)
+	rl.DrawTriangle(p_top_m, p_tip, p_top_r, fill_col)
+	rl.DrawTriangle(p_top_r, p_tip, p_mid_r, fill_col)
+
+	// Perimeter lines
+	thick := max(1.0, size * 0.12)
+	rl.DrawLineEx(p_top_l, p_top_m, thick, color)
+	rl.DrawLineEx(p_top_m, p_top_r, thick, color)
+	rl.DrawLineEx(p_top_r, p_mid_r, thick, color)
+	rl.DrawLineEx(p_mid_r, p_tip, thick, color)
+	rl.DrawLineEx(p_tip, p_mid_l, thick, color)
+	rl.DrawLineEx(p_mid_l, p_top_l, thick, color)
+
+	// Inner vertical spine
+	spine_col := rl.Color{color.r, color.g, color.b, u8(f32(color.a) * 0.75)}
+	rl.DrawLineEx(p_top_m, {center.x, center.y + h * 0.45}, thick, spine_col)
+}
+
+// Stylized mining pickaxe icon for mining drone counts
+draw_miner_vector_icon :: proc(center: rl.Vector2, size: f32, color: rl.Color) {
+	// Diagonal handle
+	h_start := rl.Vector2{center.x - size * 0.55, center.y + size * 0.65}
+	h_end   := rl.Vector2{center.x + size * 0.40, center.y - size * 0.45}
+	handle_thick := max(1.5, size * 0.18)
+	handle_col := rl.Color{color.r, color.g, color.b, u8(f32(color.a) * 0.85)}
+	rl.DrawLineEx(h_start, h_end, handle_thick, handle_col)
+
+	// Arched double-sided pick head
+	p_tip1 := rl.Vector2{center.x - size * 0.30, center.y - size * 0.75}
+	p_mid  := rl.Vector2{center.x + size * 0.35, center.y - size * 0.40}
+	p_tip2 := rl.Vector2{center.x + size * 0.75, center.y + size * 0.20}
+	p_back := rl.Vector2{center.x + size * 0.48, center.y - size * 0.52}
+
+	rl.DrawTriangle(p_tip1, p_mid, p_back, color)
+	rl.DrawTriangle(p_mid, p_tip2, p_back, color)
+	blade_thick := max(1.0, size * 0.12)
+	rl.DrawLineEx(p_tip1, p_back, blade_thick, color)
+	rl.DrawLineEx(p_back, p_tip2, blade_thick, color)
+	rl.DrawLineEx(p_tip2, p_mid, blade_thick, color)
+	rl.DrawLineEx(p_mid, p_tip1, blade_thick, color)
+}
+
+// Player miners assigned/targeting planet p (matches inspector live roster logic)
+planet_miner_drone_count :: proc(p: int) -> int {
+	count := 0
+	for i in 0..<unit_count {
+		u := &units[i]
+		if u.kind == .MINING && !u.enemy {
+			if p == EARTH {
+				if u.target_planet == EARTH || (u.target_planet < 0 && u.affiliation == EARTH) {
+					count += 1
+				}
+			} else if u.target_planet == p {
+				count += 1
+			}
+		}
+	}
+	return count
+}
+
+// Player combat drones stationed at/assigned to planet p (matches inspector fighting drones count)
+planet_combat_drone_count :: proc(p: int) -> int {
+	count := 0
+	for i in 0..<unit_count {
+		u := &units[i]
+		if u.kind == .COMBAT && !u.enemy && u.affiliation == p {
+			count += 1
+		}
+	}
+	return count
+}
+
+// Calculates screen-space bounding rectangle for a conquered planet status overlay
+conquered_planet_overlay_rect :: proc(p: int, center_screen: rl.Vector2, screen_r: f32, is_selected: bool, viewport_w, screen_h: f32) -> rl.Rectangle {
+	def_lvl := orbital_defense_level[p]
+	miners := planet_miner_drone_count(p)
+	cap := planet_mining_cap(p)
+	combat := planet_combat_drone_count(p)
+
+	def_str := rl.TextFormat("Lv.%d", def_lvl)
+	miner_str := rl.TextFormat("%d/%d", miners, cap)
+	combat_str := rl.TextFormat("%d", combat)
+
+	def_txt_w := f32(rl.MeasureText(def_str, 18))
+	miner_txt_w := f32(rl.MeasureText(miner_str, 18))
+	combat_txt_w := f32(rl.MeasureText(combat_str, 18))
+
+	max_txt_w := max(def_txt_w, max(miner_txt_w, combat_txt_w))
+	w := max(52.0 + max_txt_w, 118.0)
+	h: f32 = 102.0
+
+	eff_r := screen_r
+	if is_selected {
+		eff_r = max(screen_r, max(planets[p].radius * 5.0, 20.0) + 9.0)
+	}
+
+	// 3x wider spacing from planet bottom/reticle (22px)
+	overlay_y := center_screen.y + eff_r + 22.0
+	overlay_x := center_screen.x - w * 0.5
+	overlay_x = clamp(overlay_x, 6.0, max(6.0, viewport_w - w - 6.0))
+
+	return rl.Rectangle{overlay_x, overlay_y, w, h}
+}
+
+// Renders the transparent overlay badge with subtle green border below a conquered planet
+draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, screen_r: f32, is_selected: bool, viewport_w, screen_h: f32) {
+	rect := conquered_planet_overlay_rect(p, center_screen, screen_r, is_selected, viewport_w, screen_h)
+	if rect.y + rect.height > screen_h - 4.0 || rect.y < 4.0 {
+		return
+	}
+
+	// Subtle, non-distracting transparency:
+	// Unselected badges are faint and unobtrusive (alpha ~38%); selected badges highlight softly (~70%)
+	alpha_factor := is_selected ? f32(0.70) : f32(0.38)
+
+	// 1. Transparent glass background (strictly subtle, no red)
+	bg_alpha := u8(60.0 * alpha_factor)
+	rl.DrawRectangleRounded(rect, 0.16, 8, rl.Color{6, 16, 12, bg_alpha})
+
+	// 2. Very subtle green border (strictly subtle, no red)
+	border_alpha := u8(160.0 * alpha_factor)
+	border_col := rl.Color{45, 175, 100, border_alpha}
+	if is_selected {
+		border_col = rl.Color{65, 215, 130, u8(220.0 * alpha_factor)}
+	}
+	rl.DrawRectangleRoundedLinesEx(rect, 0.16, 8, 1.2, border_col)
+
+	def_lvl := orbital_defense_level[p]
+	miners := planet_miner_drone_count(p)
+	cap := planet_mining_cap(p)
+	combat := planet_combat_drone_count(p)
+
+	def_str := rl.TextFormat("Lv.%d", def_lvl)
+	miner_str := rl.TextFormat("%d/%d", miners, cap)
+	combat_str := rl.TextFormat("%d", combat)
+
+	icon_size: f32 = 12.0
+	icon_x := rect.x + 19.0
+	txt_x := i32(rect.x + 38.0)
+
+	// Horizontal micro-dividers between stacked rows (very faint)
+	div1_y := rect.y + 34.0
+	div2_y := rect.y + 68.0
+	div_col := rl.Color{35, 95, 60, u8(60.0 * alpha_factor)}
+	rl.DrawLineEx({rect.x + 8.0, div1_y}, {rect.x + rect.width - 8.0, div1_y}, 1.0, div_col)
+	rl.DrawLineEx({rect.x + 8.0, div2_y}, {rect.x + rect.width - 8.0, div2_y}, 1.0, div_col)
+
+	icon_alpha := u8(240.0 * alpha_factor)
+	text_alpha := u8(240.0 * alpha_factor)
+	muted_alpha := u8(140.0 * alpha_factor)
+
+	// Row 1: Planetary Defenses
+	row1_cy := rect.y + 17.0
+	def_col := def_lvl > 0 ? rl.Color{130, 240, 200, icon_alpha} : rl.Color{130, 155, 145, muted_alpha}
+	draw_defense_vector_icon({icon_x, row1_cy}, icon_size, def_col)
+	rl.DrawText(def_str, txt_x, i32(row1_cy - 9.0), 18, def_lvl > 0 ? rl.Color{130, 240, 200, text_alpha} : rl.Color{130, 155, 145, muted_alpha})
+
+	// Row 2: Miners
+	row2_cy := rect.y + 51.0
+	miner_col := miners > 0 ? rl.Color{240, 180, 60, icon_alpha} : rl.Color{140, 140, 140, muted_alpha}
+	draw_miner_vector_icon({icon_x, row2_cy}, icon_size, miner_col)
+	rl.DrawText(miner_str, txt_x, i32(row2_cy - 9.0), 18, miners > 0 ? rl.Color{240, 180, 60, text_alpha} : rl.Color{140, 140, 140, muted_alpha})
+
+	// Row 3: Combat Drones
+	row3_cy := rect.y + 85.0
+	combat_col := combat > 0 ? rl.Color{100, 200, 255, icon_alpha} : rl.Color{120, 145, 155, muted_alpha}
+	draw_fighter_vector_icon({icon_x, row3_cy}, icon_size, combat_col)
+	rl.DrawText(combat_str, txt_x, i32(row3_cy - 9.0), 18, combat_col)
+}
+
+// Iterates through all conquered planets and draws their HUD status overlays
+draw_conquered_planet_overlays :: proc(viewport_w, screen_h: f32) {
+	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
+	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
+
+	for p in 0..<PLANET_COUNT {
+		if !planet_liberated(p) { continue }
+
+		to_planet := planets[p].position - camera.position
+		if rl.Vector3DotProduct(to_planet, cam_forward) <= 0.1 { continue }
+
+		center_screen := rl.GetWorldToScreen(planets[p].position, camera)
+		if center_screen.x < -100 || center_screen.x > viewport_w + 100 || center_screen.y < -100 || center_screen.y > screen_h + 100 {
+			continue
+		}
+
+		limb_screen := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
+		screen_r := max(rl.Vector2Distance(center_screen, limb_screen), 14.0)
+
+		draw_conquered_planet_overlay_badge(p, center_screen, screen_r, p == selected_planet, viewport_w, screen_h)
+	}
+}
+
+// Ray/mouse hit test for clicking on a conquered planet overlay badge
+pick_conquered_planet_overlay :: proc(mouse: rl.Vector2) -> int {
+	viewport_w := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
+	screen_h := f32(rl.GetScreenHeight())
+	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
+	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
+
+	for p in 0..<PLANET_COUNT {
+		if !planet_liberated(p) { continue }
+		to_planet := planets[p].position - camera.position
+		if rl.Vector3DotProduct(to_planet, cam_forward) <= 0.1 { continue }
+
+		center_screen := rl.GetWorldToScreen(planets[p].position, camera)
+		limb_screen := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
+		screen_r := max(rl.Vector2Distance(center_screen, limb_screen), 14.0)
+
+		rect := conquered_planet_overlay_rect(p, center_screen, screen_r, p == selected_planet, viewport_w, screen_h)
+		if rl.CheckCollisionPointRec(mouse, rect) {
+			return p
+		}
+	}
+	return -1
 }
 
 // Draws an aerospace tactical console container for the planet inspector
