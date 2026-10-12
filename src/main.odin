@@ -912,11 +912,9 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 				return
 			}
 		}
-		if rl.CheckCollisionPointRec(mouse, drone_speed_button_rect(panel_x)) {
+		if !drone_speed_maxed() && rl.CheckCollisionPointRec(mouse, drone_speed_button_rect(panel_x)) {
 			last_unit_clicked_index = -1
-			if drone_speed_level < DRONE_SPEED_UPGRADE_MAX {
-				purchase_drone_speed_upgrade()
-			}
+			purchase_drone_speed_upgrade()
 			return
 		}
 		// Clicking an occupied build-queue slot cancels that unit (refund included).
@@ -1781,10 +1779,10 @@ draw_orbital_defense_inspector_section :: proc(x: f32, btn: rl.Rectangle, p: int
 		draw_progress({btn.x, btn.y + btn.height + 4, PANEL_CONTENT_W, BAR_H}, orbital_defense_progress[p] / ORBITAL_DEFENSE_BUILD_TIME, SCIFI_CYAN)
 	} else if orbital_defense_level[p] == 0 {
 		can_build := can_build_orbital_defense(p)
-		draw_button(btn, "[O] ORBITAL DEFENSE (1000)", SCIFI_PANEL_SOLID, can_build)
+		draw_button(btn, rl.TextFormat("[O] BUILD ORBITAL DEFENSE (%d)", ORBITAL_DEFENSE_COST), SCIFI_PANEL_SOLID, can_build)
 	} else if orbital_defense_level[p] < ORBITAL_DEFENSE_MAX_LEVEL {
 		can_upgrade := can_build_orbital_defense(p)
-		draw_button(btn, rl.TextFormat("[O] DEF LVL %d (HP %d) +1 (1000)", orbital_defense_level[p], orbital_defense_hp[p]), SCIFI_PANEL_SOLID, can_upgrade)
+		draw_button(btn, rl.TextFormat("[O] UPGRADE ORBITAL DEFENSE (%d)", ORBITAL_DEFENSE_COST), SCIFI_PANEL_SOLID, can_upgrade)
 	} else {
 		draw_chamfered_panel(btn, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
 		draw_corner_brackets(btn, 2, 6, SCIFI_MINT)
@@ -1858,9 +1856,13 @@ drone_build_time :: proc(kind: Unit_Type) -> f32 {
 
 // Buy the next drone build-speed level: 5000 minerals, capped at
 // DRONE_SPEED_UPGRADE_MAX. Purchases live in the Earth inspector.
+drone_speed_maxed :: proc() -> bool {
+	return drone_speed_level >= DRONE_SPEED_UPGRADE_MAX
+}
+
 purchase_drone_speed_upgrade :: proc() -> bool {
 	if selected_planet != EARTH { return false }
-	if drone_speed_level >= DRONE_SPEED_UPGRADE_MAX || minerals < DRONE_SPEED_UPGRADE_COST { return false }
+	if drone_speed_maxed() || minerals < DRONE_SPEED_UPGRADE_COST { return false }
 	minerals -= DRONE_SPEED_UPGRADE_COST
 	drone_speed_level += 1
 	return true
@@ -2004,6 +2006,8 @@ queue_5_combat :: proc() {
 // Screen rect of the drone build-speed upgrade button. Shared by the
 // render and the click hitbox so they cannot drift apart. Sits below the
 // +1 buttons when under 5 bases, or below the +5 buttons when 5 bases are built.
+// Hidden once maxed: callers must check drone_speed_maxed() first, and the
+// queue/roster layout below collapses up by UPGRADE_DY so no gap remains.
 drone_speed_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
 	dy := UPGRADE_DY
 	if base_counts[EARTH] >= MAX_BASES {
@@ -2032,6 +2036,9 @@ earth_queue_y :: proc() -> int {
 	dy := QUEUE_DY
 	if base_counts[EARTH] >= MAX_BASES {
 		dy += UPGRADE_DY
+	}
+	if drone_speed_maxed() {
+		dy -= UPGRADE_DY
 	}
 	return production_orders_y() + dy
 }
@@ -4113,9 +4120,7 @@ draw_earth_inspector :: proc(x: f32) {
 		draw_button(queue_5_combat_button_rect(x), rl.TextFormat("[X] +5 COMBAT (%d)", BATCH_COMBAT_COST), SCIFI_PANEL_SOLID, can_build_5_combat())
 	}
 
-	if drone_speed_level >= DRONE_SPEED_UPGRADE_MAX {
-		draw_button(drone_speed_button_rect(x), "DRONE BUILD SPEED (MAX)", SCIFI_PANEL_SOLID, false)
-	} else {
+	if !drone_speed_maxed() {
 		can_upgrade_speed := minerals >= DRONE_SPEED_UPGRADE_COST
 		draw_button(drone_speed_button_rect(x), rl.TextFormat("[U] DRONE BUILD SPEED (%d)", DRONE_SPEED_UPGRADE_COST), SCIFI_PANEL_SOLID, can_upgrade_speed)
 	}
@@ -4335,6 +4340,9 @@ unit_tile_y :: proc(kind: Unit_Type) -> int {
 		extra_dy := 0
 		if base_counts[EARTH] >= MAX_BASES {
 			extra_dy = UPGRADE_DY
+		}
+		if drone_speed_maxed() {
+			extra_dy -= UPGRADE_DY
 		}
 		y = production_orders_y() + ROSTER_BELOW_QUEUE + extra_dy + (base_counts[selected_planet] - 1) * GRID_PITCH
 	} else if selected_planet != ENEMY_HOME && planet_liberated(selected_planet) {
@@ -5525,6 +5533,19 @@ draw_defense_vector_icon :: proc(center: rl.Vector2, size: f32, color: rl.Color)
 	rl.DrawLineEx(p_top_m, {center.x, center.y + h * 0.45}, thick, spine_col)
 }
 
+// Rotating upgrade spinner shown in place of the defense shield icon while
+// an orbital defense build/upgrade is underway. Animated on laser_anim_time
+// so it freezes on pause like the rest of the sim-driven UI.
+draw_orbital_upgrade_spinner :: proc(center: rl.Vector2, size: f32, color: rl.Color) {
+	r := size * 0.75
+	rl.DrawCircleLines(c.int(center.x), c.int(center.y), r, rl.Fade(color, 0.35))
+	ang := laser_anim_time * 5.0
+	head := rl.Vector2{center.x + math.cos(ang) * r, center.y + math.sin(ang) * r}
+	tail := rl.Vector2{center.x - math.cos(ang) * r * 0.45, center.y - math.sin(ang) * r * 0.45}
+	rl.DrawLineEx(tail, head, max(1.5, size * 0.18), color)
+	rl.DrawCircleV(center, max(1.5, size * 0.14), color)
+}
+
 // Stylized mining pickaxe icon for mining drone counts
 draw_miner_vector_icon :: proc(center: rl.Vector2, size: f32, color: rl.Color) {
 	// Diagonal handle
@@ -5633,10 +5654,14 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 
 	shadow_col := rl.Color{0, 0, 0, u8(180.0 * alpha_factor)}
 
-	// Row 1: Planetary Defenses
+	// Row 1: Planetary Defenses (spinner while a build/upgrade is underway)
 	row1_cy := rect.y + 17.0
 	def_col := def_lvl > 0 ? rl.Color{130, 240, 200, icon_alpha} : rl.Color{130, 155, 145, muted_alpha}
-	draw_defense_vector_icon({icon_x, row1_cy}, icon_size, def_col)
+	if orbital_defense_building[p] {
+		draw_orbital_upgrade_spinner({icon_x, row1_cy}, icon_size, rl.Color{0, 240, 216, icon_alpha})
+	} else {
+		draw_defense_vector_icon({icon_x, row1_cy}, icon_size, def_col)
+	}
 	rl.DrawText(def_str, txt_x + 1, i32(row1_cy - 8.0), 18, shadow_col)
 	rl.DrawText(def_str, txt_x, i32(row1_cy - 9.0), 18, def_lvl > 0 ? rl.Color{130, 240, 200, text_alpha} : rl.Color{130, 155, 145, muted_alpha})
 
