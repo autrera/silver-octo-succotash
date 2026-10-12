@@ -544,21 +544,67 @@ mining_round_trip_deposits_on_earth :: proc(t: ^testing.T) {
 		home_planet = EARTH, affiliation = JUPITER, target_planet = JUPITER,
 	}
 	unit_count += 1
-	// A full mining cycle sends the drone back to Earth.
+	// Mining drones stay mining at the planet instead of returning to Earth
 	units[0].progress = MINING_DURATION - 0.01
 	update_miner(&units[0], 0, 0.02)
-	testing.expect(t, units[0].state == .RETURNING, "miner returns to Earth after a full cycle")
-	// Deposit pays out only after DEPOSIT_DURATION on Earth.
-	units[0].position = planets[EARTH].position
-	units[0].state = .DEPOSITING
-	units[0].progress = 0.1
+	testing.expect(t, units[0].state == .MINING, "miner remains mining at Jupiter instead of returning to Earth")
+	// Refinery beam is active from operational Jupiter refinery to Earth
+	testing.expect(t, planet_has_refinery_beam(JUPITER), "Jupiter refinery draws energy beam to Earth")
+	testing.expect(t, !planet_has_refinery_beam(EARTH), "Earth does not draw beam to Earth")
+	// Minerals stream to Earth continuously per second based on MPS
 	minerals = 0
-	update_miner(&units[0], 0, 0.02)
-	testing.expect(t, minerals == 0, "no payout before the deposit completes")
-	units[0].progress = DEPOSIT_DURATION - 0.01
-	update_miner(&units[0], 0, 0.02)
-	testing.expect(t, minerals == mining_rate(JUPITER), "deposit pays the mined rate")
-	testing.expect(t, units[0].state == .TRANSIT, "deposited miner transits back out")
+	mps := global_mps()
+	testing.expect(t, mps > 0, "Jupiter produces positive MPS with operational refinery")
+	// Stepping simulation for 1 second delivers exactly MPS minerals
+	step_simulation(1.0)
+	expected_payout := int(mps)
+	testing.expect(t, minerals == expected_payout, "1 second of simulation delivers MPS minerals directly to Earth")
+}
+
+@(test)
+mining_drones_stay_unless_player_moves_them :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[MARS] = 0
+	enemy_base_hp[VENUS] = 0
+	refinery_built[MARS] = true
+	refinery_built[VENUS] = true
+
+	units[unit_count] = Unit{
+		kind = .MINING, state = .MINING, position = planets[MARS].position,
+		home_planet = EARTH, affiliation = MARS, target_planet = MARS,
+		mining_active = true,
+	}
+	unit_count += 1
+
+	// Stays mining after multiple cycles and positioned inside the planet
+	for _ in 0..<100 {
+		update_miner(&units[0], 0, 0.5)
+	}
+	testing.expect(t, units[0].state == .MINING, "drone stays mining at Mars")
+	testing.expect(t, units[0].position == planets[MARS].position, "drone position is inside Mars")
+
+	// Player selects drone and moves to Venus
+	selected_units[0] = true
+	issue_group_order(VENUS)
+	testing.expect(t, units[0].state == .TRANSIT, "drone enters transit when ordered to Venus")
+	testing.expect(t, units[0].target_planet == VENUS, "drone target is Venus")
+
+	// Drone arrives at Venus and resumes mining inside the planet
+	units[0].position = planets[VENUS].position
+	update_miner(&units[0], 0, 0.1)
+	testing.expect(t, units[0].state == .MINING, "drone stays mining at Venus once arrived")
+	testing.expect(t, units[0].position == planets[VENUS].position, "drone position is inside Venus")
+}
+
+@(test)
+refinery_beam_active_only_when_operational :: proc(t: ^testing.T) {
+	reset_world()
+	testing.expect(t, !planet_has_refinery_beam(MARS), "unliberated unrefined Mars has no beam")
+	enemy_base_hp[MARS] = 0
+	testing.expect(t, !planet_has_refinery_beam(MARS), "liberated Mars without refinery has no beam")
+	refinery_built[MARS] = true
+	testing.expect(t, planet_has_refinery_beam(MARS), "operational refinery draws blue beam to Earth")
+	testing.expect(t, !planet_has_refinery_beam(EARTH), "Earth itself has no beam to Earth")
 }
 
 @(test)

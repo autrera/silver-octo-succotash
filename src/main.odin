@@ -10,6 +10,7 @@ import "core:strconv"
 import "core:path/filepath"
 import "core:time"
 import rl "vendor:raylib"
+import "vendor:raylib/rlgl"
 
 SCREEN_PANEL_WIDTH :: 330
 MAX_BASES :: 5
@@ -295,6 +296,7 @@ unit_count: int
 selected_units: [MAX_UNITS]bool
 selected_planet := EARTH
 minerals := 350
+mineral_accumulator: f32 = 0
 // Drone build-speed upgrade level (0..DRONE_SPEED_UPGRADE_MAX).
 drone_speed_level := 0
 // Player command bases exist only on Earth; set by initialize_game/reset_world.
@@ -583,6 +585,7 @@ reset_world :: proc() {
 	orbital_defense_build_order = {}
 	base_build_order = {}
 	minerals = 350
+	mineral_accumulator = 0
 	enemy_wave_timer = 0
 	wave_started = false
 	minor_wave_timer = 0
@@ -1109,6 +1112,12 @@ start_refinery_construction :: proc(planet: int) {
 planet_can_mine :: proc(planet: int) -> bool {
 	if planet < 0 || planet >= PLANET_COUNT { return false }
 	return planet_liberated(planet) && refinery_built[planet]
+}
+
+// An off-world planet has an operational refinery beam connecting to Earth once its refinery is built.
+planet_has_refinery_beam :: proc(planet: int) -> bool {
+	if planet < 0 || planet >= PLANET_COUNT || planet == EARTH { return false }
+	return refinery_built[planet]
 }
 
 // Player miners currently on a planet's build crew.
@@ -2027,9 +2036,11 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 	if unit_count >= MAX_UNITS { return }
 	angle := f32(unit_count) * 1.8
 	pos := planets[planet].position
-	pos.x += math.cos(angle) * (planets[planet].radius + 1.2)
-	pos.y += 0.5
-	pos.z += math.sin(angle) * (planets[planet].radius + 1.2)
+	if kind == .COMBAT {
+		pos.x += math.cos(angle) * (planets[planet].radius + 1.2)
+		pos.y += 0.5
+		pos.z += math.sin(angle) * (planets[planet].radius + 1.2)
+	}
 	state := Unit_State.TRANSIT
 	target_planet := planet
 	if kind == .COMBAT { state = .GUARDING }
@@ -2694,6 +2705,7 @@ issue_group_order :: proc(planet: int) {
 }
 
 update_units :: proc(dt: f32) {
+	update_mining_income(dt)
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.kind == .COMBAT {
@@ -2808,6 +2820,18 @@ global_mps :: proc() -> f32 {
 	return total
 }
 
+// Streams mining income per second based on empire-wide MPS.
+update_mining_income :: proc(dt: f32) {
+	mps := global_mps()
+	if mps <= 0 { return }
+	mineral_accumulator += mps * dt
+	payout := int(mineral_accumulator)
+	if payout > 0 {
+		minerals += payout
+		mineral_accumulator -= f32(payout)
+	}
+}
+
 update_combat :: proc(u: ^Unit, dt: f32) {
 	if u.state == .TRANSIT {
 		target := sector_pos(u.target_planet)
@@ -2862,9 +2886,11 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 		}
 	case .MINING:
 		u.progress += dt
-		if u.progress >= MINING_DURATION {
+		u.position = target
+		if !planet_can_mine(u.target_planet) {
+			u.state = .IDLE
+			u.mining_active = false
 			u.progress = 0
-			u.state = .RETURNING
 		}
 	case .RETURNING:
 		travel(u, earth, MINING_TRANSIT_SPEED * dt)
@@ -2898,6 +2924,7 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 		// Held at an occupied or unrefined planet: join refinery or orbital defense construction if building and crew needed,
 		// or resume mining once it can be mined and under the hard cap.
 		// Otherwise the hold time feeds the scout survival clock.
+		u.position = target
 		target_project := planet_next_needed_build_target(u.target_planet)
 		if !u.enemy && target_project != .NONE {
 			u.state = .CONSTRUCTING
@@ -2911,10 +2938,10 @@ update_miner :: proc(u: ^Unit, index: int, dt: f32) {
 		} else {
 			u.progress += dt
 		}
-	case .GUARDING, .CONSTRUCTING:
+	case .CONSTRUCTING:
+		u.position = target
+	case .GUARDING:
 		// Idle miners keep their creation planet as their affiliation.
-		// Constructing miners are parked at the build site; update_production
-		// resumes them when the base or refinery completes.
 	}
 }
 
@@ -3328,6 +3355,101 @@ draw_cyberpunk_flak88_construction_site :: proc(planet_idx: int) {
 	rl.DrawSphere(spark_pt, 0.045 * s, rl.Color{255, 255, 220, 255})
 }
 
+// Renders the intense energy beam from operational planetary refineries to Earth,
+// with a brilliant white core transitioning to deep blue at the edges,
+// carrying beamed mineral packets directly to the homeworld.
+draw_refinery_mineral_beams :: proc() {
+	has_any := false
+	for p in 0..<PLANET_COUNT {
+		if planet_has_refinery_beam(p) { has_any = true; break }
+	}
+	if !has_any { return }
+
+	earth_pos := planets[EARTH].position
+	earth_rad := planets[EARTH].radius
+
+	// Disable depth write so additive layers blend seamlessly without occluding each other,
+	// while keeping depth test enabled so planets in front still occlude the beam.
+	rlgl.DisableDepthMask()
+	rl.BeginBlendMode(.ADDITIVE)
+	defer {
+		rl.EndBlendMode()
+		rlgl.EnableDepthMask()
+	}
+
+	for p in 0..<PLANET_COUNT {
+		if !planet_has_refinery_beam(p) { continue }
+
+		p_pos := planets[p].position
+		p_rad := planets[p].radius
+		diff := earth_pos - p_pos
+		dist := rl.Vector3Length(diff)
+		if dist < 0.1 { continue }
+		dir := diff * (1.0 / dist)
+
+		// Terminals on celestial surfaces
+		start_pos := p_pos + dir * (p_rad + 0.1)
+		end_pos := earth_pos - dir * (earth_rad + 0.1)
+		beam_len := rl.Vector3Length(end_pos - start_pos)
+		if beam_len < 0.1 { continue }
+
+		// Dynamic high-energy beam pulse
+		pulse := 0.85 + 0.15 * math.sin(laser_anim_time * 6.0 + f32(p) * 1.5)
+		outer_alpha := u8(clamp(150.0 * pulse, 110, 180))
+		mid_alpha := u8(clamp(190.0 * pulse, 150, 220))
+		inner_alpha := u8(clamp(220.0 * pulse, 180, 255))
+		core_alpha := u8(clamp(255.0 * pulse, 240, 255))
+
+		// Concentric additive gradient:
+		// Searing pure white at center, smoothly transitioning outward to deep electric blue
+		// 1. Outer rich royal blue halo (radius 0.23)
+		rl.DrawCylinderEx(start_pos, end_pos, 0.23, 0.23, 12, rl.Color{0, 65, 255, outer_alpha})
+
+		// 2. Mid vivid electric blue layer (radius 0.15)
+		rl.DrawCylinderEx(start_pos, end_pos, 0.15, 0.15, 12, rl.Color{0, 150, 255, mid_alpha})
+
+		// 3. Inner cyan-white transition zone (radius 0.08)
+		rl.DrawCylinderEx(start_pos, end_pos, 0.08, 0.08, 10, rl.Color{70, 210, 255, inner_alpha})
+
+		// 4. White-hot central core cylinder (radius 0.035)
+		rl.DrawCylinderEx(start_pos, end_pos, 0.035, 0.035, 8, rl.Color{255, 255, 255, core_alpha})
+
+		// 5. Intense pure white center spine lines
+		rl.DrawLine3D(start_pos, end_pos, rl.Color{255, 255, 255, 255})
+		cross_y := rl.Vector3{0, 0.015, 0}
+		cross_z := rl.Vector3{0, 0, 0.015}
+		rl.DrawLine3D(start_pos + cross_y, end_pos + cross_y, rl.Color{255, 255, 255, 220})
+		rl.DrawLine3D(start_pos - cross_y, end_pos - cross_y, rl.Color{255, 255, 255, 220})
+		rl.DrawLine3D(start_pos + cross_z, end_pos + cross_z, rl.Color{255, 255, 255, 220})
+		rl.DrawLine3D(start_pos - cross_z, end_pos - cross_z, rl.Color{255, 255, 255, 220})
+
+		// 6. Emitter terminal glow halos at planet and receiver on Earth
+		glow_rad: f32 = 0.30 * pulse
+		rl.DrawSphere(start_pos, glow_rad, rl.Color{0, 90, 255, 160})
+		rl.DrawSphere(start_pos, glow_rad * 0.65, rl.Color{0, 190, 255, 210})
+		rl.DrawSphere(start_pos, glow_rad * 0.35, rl.Color{255, 255, 255, 255})
+
+		rl.DrawSphere(end_pos, glow_rad, rl.Color{0, 90, 255, 160})
+		rl.DrawSphere(end_pos, glow_rad * 0.65, rl.Color{0, 190, 255, 210})
+		rl.DrawSphere(end_pos, glow_rad * 0.35, rl.Color{255, 255, 255, 255})
+
+		// 7. Beamed mineral packets streaming from planet to Earth along the beam
+		if planet_mps(p) > 0 {
+			num_packets := max(3, int(beam_len / 10.0))
+			packet_speed: f32 = 18.0
+			for k in 0..<num_packets {
+				travel := math.mod(laser_anim_time * packet_speed + f32(k) * (beam_len / f32(num_packets)), beam_len)
+				pkt_pos := start_pos + dir * travel
+				trail_pos := pkt_pos - dir * 1.5
+				rl.DrawLine3D(trail_pos, pkt_pos, rl.Color{140, 230, 255, 240})
+				rl.DrawSphere(pkt_pos, 0.16, rl.Color{0, 130, 255, 200})
+				rl.DrawSphere(pkt_pos, 0.10, rl.Color{100, 220, 255, 240})
+				rl.DrawSphere(pkt_pos, 0.05, rl.Color{255, 255, 255, 255})
+			}
+		}
+	}
+}
+
 draw_world :: proc() {
 	viewport_w := rl.GetScreenWidth() - SCREEN_PANEL_WIDTH
 	// Stars and combat nebulae project to screen space before the 3D pass,
@@ -3480,7 +3602,6 @@ draw_world :: proc() {
 		for d in 0..<rep_count(s.pc) { draw_fighter_drone(s.player_combat[d], false, drone_heading(s.player_combat[d], sp)) }
 		for d in 0..<rep_count(s.ec) { draw_fighter_drone(s.enemy_combat[d], true, drone_heading(s.enemy_combat[d], sp)) }
 		draw_combat_lasers(p, s.player_combat[:], s.enemy_combat[:], s.pc, s.ec, s.player_miners[:], s.enemy_miners[:], s.pmc, s.emc)
-		for d in 0..<rep_count(s.pmc) { draw_miner_drone(s.player_miners[d], false, drone_heading(s.player_miners[d], sp)) }
 		for d in 0..<rep_count(s.emc) { draw_miner_drone(s.enemy_miners[d], true, drone_heading(s.enemy_miners[d], sp)) }
 	}
 
@@ -3545,6 +3666,7 @@ draw_world :: proc() {
 			}
 		}
 	}
+	draw_refinery_mineral_beams()
 	draw_orbital_defense_blasts()
 	rl.EndMode3D()
 	// Luminous industrial manufacturing lights on Earth when units are being created
