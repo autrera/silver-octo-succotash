@@ -294,6 +294,10 @@ drone_visuals_ready := false
 units: [MAX_UNITS]Unit
 unit_count: int
 selected_units: [MAX_UNITS]bool
+planet_miner_counts: [PLANET_COUNT]int
+planet_combat_counts: [PLANET_COUNT]int
+planet_mining_miners: [PLANET_COUNT]int
+planet_unit_cache_dirty := true
 selected_planet := EARTH
 minerals := 350
 mineral_accumulator: f32 = 0
@@ -509,6 +513,7 @@ main :: proc() {
 }
 
 initialize_game :: proc() {
+	planet_unit_cache_dirty = true
 	auto_build_mode = .OFF
 	auto_build_last_mode = .MINERS
 	autobuild_retry_timer = 0
@@ -614,6 +619,7 @@ reset_world :: proc() {
 	auto_build_mode = .OFF
 	auto_build_last_mode = .MINERS
 	autobuild_retry_timer = 0
+	planet_unit_cache_dirty = true
 	victory = false
 	defeated = false
 	game_paused = false
@@ -2201,6 +2207,7 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 	if kind == .MINING || target_planet != planet { affiliation = target_planet }
 	units[unit_count] = Unit{kind = kind, state = state, position = pos, home_planet = planet, affiliation = affiliation, target_planet = target_planet, orbit_angle = angle, build_target = build_target, mining_active = mining_active}
 	unit_count += 1
+	planet_unit_cache_dirty = true
 }
 
 // Enemy waves: every 3 minutes (first at the 3-minute mark) a single wave
@@ -2798,6 +2805,7 @@ remove_unit_at :: proc(index: int) {
 		selected_units[i] = selected_units[i + 1]
 	}
 	unit_count -= 1
+	planet_unit_cache_dirty = true
 }
 
 // Right-click on a planet is disambiguated by selection: with units selected
@@ -2845,6 +2853,7 @@ update_units :: proc(dt: f32) {
 			update_miner(u, i, dt)
 		}
 	}
+	planet_unit_cache_dirty = true
 }
 
 // Minerals delivered per mining cycle at a planet. The inner planets
@@ -2905,6 +2914,56 @@ is_effective_miner :: proc(index: int) -> bool {
 	return rank < planet_mining_cap(p)
 }
 
+refresh_planet_unit_cache :: proc() {
+	planet_miner_counts = {}
+	planet_combat_counts = {}
+	planet_mining_miners = {}
+	for i in 0..<unit_count {
+		u := &units[i]
+		if u.enemy { continue }
+		if u.kind == .MINING {
+			target := u.target_planet
+			if target == EARTH || (target < 0 && u.affiliation == EARTH) {
+				planet_miner_counts[EARTH] += 1
+				if u.state != .CONSTRUCTING {
+					planet_mining_miners[EARTH] += 1
+				}
+			} else if target >= 0 && target < PLANET_COUNT {
+				planet_miner_counts[target] += 1
+				if u.state != .CONSTRUCTING {
+					planet_mining_miners[target] += 1
+				}
+			}
+		} else if u.kind == .COMBAT {
+			p := u.affiliation
+			if p >= 0 && p < PLANET_COUNT {
+				planet_combat_counts[p] += 1
+			}
+		}
+	}
+	planet_unit_cache_dirty = false
+}
+
+// Player miners assigned/targeting planet p (matches inspector live roster logic)
+planet_miner_drone_count :: proc(p: int) -> int {
+	if p < 0 || p >= PLANET_COUNT { return 0 }
+	if planet_unit_cache_dirty { refresh_planet_unit_cache() }
+	return planet_miner_counts[p]
+}
+
+// Player combat drones stationed at/assigned to planet p (matches inspector fighting drones count)
+planet_combat_drone_count :: proc(p: int) -> int {
+	if p < 0 || p >= PLANET_COUNT { return 0 }
+	if planet_unit_cache_dirty { refresh_planet_unit_cache() }
+	return planet_combat_counts[p]
+}
+
+planet_cycle_time :: proc(planet: int) -> f32 {
+	round_trip := 2.0 * distance(planets[planet].position, planets[EARTH].position)
+	travel_time := round_trip / MINING_TRANSIT_SPEED
+	return MINING_DURATION + DEPOSIT_DURATION + travel_time
+}
+
 // Minerals per second delivered by a planet's effective mining drones
 // (planet_mining_cap already applied; constructing drones contribute nothing). One full
 // cycle is: transit out, mine MINING_DURATION, transit back to Earth, deposit
@@ -2921,9 +2980,8 @@ planet_mps :: proc(planet: int) -> f32 {
 			if effective >= cap { break }
 		}
 	}
-	round_trip := 2.0 * distance(planets[planet].position, planets[EARTH].position)
-	travel_time := round_trip / MINING_TRANSIT_SPEED
-	cycle_time := MINING_DURATION + DEPOSIT_DURATION + travel_time
+	cycle_time := planet_cycle_time(planet)
+	if cycle_time <= 0 { return 0 }
 	return f32(effective) * f32(mining_rate(planet)) / cycle_time
 }
 
@@ -2943,10 +3001,7 @@ global_mps :: proc() -> f32 {
 	total: f32 = 0
 	for p in 0..<PLANET_COUNT {
 		if !planet_can_mine(p) { continue }
-		round_trip := 2.0 * distance(planets[p].position, planets[EARTH].position)
-		travel_time := round_trip / MINING_TRANSIT_SPEED
-		cycle_time := MINING_DURATION + DEPOSIT_DURATION + travel_time
-		total += f32(counts[p]) * f32(mining_rate(p)) / cycle_time
+		total += f32(counts[p]) * f32(mining_rate(p)) / planet_cycle_time(p)
 	}
 	return total
 }
@@ -3533,49 +3588,40 @@ draw_refinery_mineral_beams :: proc() {
 
 		// Concentric additive gradient:
 		// Searing pure white at center, smoothly transitioning outward to deep electric blue
-		// 1. Outer rich royal blue halo (radius 0.23)
-		rl.DrawCylinderEx(start_pos, end_pos, 0.23, 0.23, 12, rl.Color{0, 65, 255, outer_alpha})
+		// 1. Outer rich royal blue halo (radius 0.23, 8 sides)
+		rl.DrawCylinderEx(start_pos, end_pos, 0.23, 0.23, 8, rl.Color{0, 65, 255, outer_alpha})
 
-		// 2. Mid vivid electric blue layer (radius 0.15)
-		rl.DrawCylinderEx(start_pos, end_pos, 0.15, 0.15, 12, rl.Color{0, 150, 255, mid_alpha})
+		// 2. Mid vivid electric blue layer (radius 0.14, 6 sides)
+		rl.DrawCylinderEx(start_pos, end_pos, 0.14, 0.14, 6, rl.Color{0, 150, 255, mid_alpha})
 
-		// 3. Inner cyan-white transition zone (radius 0.08)
-		rl.DrawCylinderEx(start_pos, end_pos, 0.08, 0.08, 10, rl.Color{70, 210, 255, inner_alpha})
+		// 3. Inner cyan-white transition zone (radius 0.07, 6 sides)
+		rl.DrawCylinderEx(start_pos, end_pos, 0.07, 0.07, 6, rl.Color{70, 210, 255, inner_alpha})
 
-		// 4. White-hot central core cylinder (radius 0.035)
-		rl.DrawCylinderEx(start_pos, end_pos, 0.035, 0.035, 8, rl.Color{255, 255, 255, core_alpha})
+		// 4. White-hot central core cylinder (radius 0.035, 4 sides)
+		rl.DrawCylinderEx(start_pos, end_pos, 0.035, 0.035, 4, rl.Color{255, 255, 255, core_alpha})
 
-		// 5. Intense pure white center spine lines
+		// 5. Intense pure white center spine line
 		rl.DrawLine3D(start_pos, end_pos, rl.Color{255, 255, 255, 255})
-		cross_y := rl.Vector3{0, 0.015, 0}
-		cross_z := rl.Vector3{0, 0, 0.015}
-		rl.DrawLine3D(start_pos + cross_y, end_pos + cross_y, rl.Color{255, 255, 255, 220})
-		rl.DrawLine3D(start_pos - cross_y, end_pos - cross_y, rl.Color{255, 255, 255, 220})
-		rl.DrawLine3D(start_pos + cross_z, end_pos + cross_z, rl.Color{255, 255, 255, 220})
-		rl.DrawLine3D(start_pos - cross_z, end_pos - cross_z, rl.Color{255, 255, 255, 220})
 
-		// 6. Emitter terminal glow halos at planet and receiver on Earth
+		// 6. Emitter terminal glow halos at planet and receiver on Earth (low-poly spheres)
 		glow_rad: f32 = 0.30 * pulse
-		rl.DrawSphere(start_pos, glow_rad, rl.Color{0, 90, 255, 160})
-		rl.DrawSphere(start_pos, glow_rad * 0.65, rl.Color{0, 190, 255, 210})
-		rl.DrawSphere(start_pos, glow_rad * 0.35, rl.Color{255, 255, 255, 255})
+		rl.DrawSphereEx(start_pos, glow_rad, 6, 8, rl.Color{0, 90, 255, 160})
+		rl.DrawSphereEx(start_pos, glow_rad * 0.45, 4, 6, rl.Color{255, 255, 255, 255})
 
-		rl.DrawSphere(end_pos, glow_rad, rl.Color{0, 90, 255, 160})
-		rl.DrawSphere(end_pos, glow_rad * 0.65, rl.Color{0, 190, 255, 210})
-		rl.DrawSphere(end_pos, glow_rad * 0.35, rl.Color{255, 255, 255, 255})
+		rl.DrawSphereEx(end_pos, glow_rad, 6, 8, rl.Color{0, 90, 255, 160})
+		rl.DrawSphereEx(end_pos, glow_rad * 0.45, 4, 6, rl.Color{255, 255, 255, 255})
 
 		// 7. Beamed mineral packets streaming from planet to Earth along the beam
-		if planet_mps(p) > 0 {
-			num_packets := max(3, int(beam_len / 10.0))
+		if planet_can_mine(p) && planet_miner_drone_count(p) > 0 {
+			num_packets := clamp(int(beam_len / 25.0), 3, 6)
 			packet_speed: f32 = 18.0
 			for k in 0..<num_packets {
 				travel := math.mod(laser_anim_time * packet_speed + f32(k) * (beam_len / f32(num_packets)), beam_len)
 				pkt_pos := start_pos + dir * travel
 				trail_pos := pkt_pos - dir * 1.5
 				rl.DrawLine3D(trail_pos, pkt_pos, rl.Color{140, 230, 255, 240})
-				rl.DrawSphere(pkt_pos, 0.16, rl.Color{0, 130, 255, 200})
-				rl.DrawSphere(pkt_pos, 0.10, rl.Color{100, 220, 255, 240})
-				rl.DrawSphere(pkt_pos, 0.05, rl.Color{255, 255, 255, 255})
+				rl.DrawSphereEx(pkt_pos, 0.16, 4, 6, rl.Color{0, 130, 255, 200})
+				rl.DrawSphereEx(pkt_pos, 0.07, 4, 4, rl.Color{255, 255, 255, 255})
 			}
 		}
 	}
@@ -5503,36 +5549,6 @@ draw_miner_vector_icon :: proc(center: rl.Vector2, size: f32, color: rl.Color) {
 	rl.DrawLineEx(p_mid, p_tip1, blade_thick, color)
 }
 
-// Player miners assigned/targeting planet p (matches inspector live roster logic)
-planet_miner_drone_count :: proc(p: int) -> int {
-	count := 0
-	for i in 0..<unit_count {
-		u := &units[i]
-		if u.kind == .MINING && !u.enemy {
-			if p == EARTH {
-				if u.target_planet == EARTH || (u.target_planet < 0 && u.affiliation == EARTH) {
-					count += 1
-				}
-			} else if u.target_planet == p {
-				count += 1
-			}
-		}
-	}
-	return count
-}
-
-// Player combat drones stationed at/assigned to planet p (matches inspector fighting drones count)
-planet_combat_drone_count :: proc(p: int) -> int {
-	count := 0
-	for i in 0..<unit_count {
-		u := &units[i]
-		if u.kind == .COMBAT && !u.enemy && u.affiliation == p {
-			count += 1
-		}
-	}
-	return count
-}
-
 // Calculates screen-space bounding rectangle for a conquered planet status overlay
 conquered_planet_overlay_rect :: proc(p: int, center_screen: rl.Vector2, screen_r: f32, is_selected: bool, viewport_w, screen_h: f32) -> rl.Rectangle {
 	def_lvl := orbital_defense_level[p]
@@ -5578,7 +5594,7 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 
 	// 1. Transparent glass background (strictly subtle, no red)
 	bg_alpha := u8(60.0 * alpha_factor)
-	rl.DrawRectangleRounded(rect, 0.16, 8, rl.Color{6, 16, 12, bg_alpha})
+	rl.DrawRectangleRounded(rect, 0.16, 4, rl.Color{6, 16, 12, bg_alpha})
 
 	// 2. Very subtle green border (strictly subtle, no red)
 	border_alpha := u8(160.0 * alpha_factor)
@@ -5586,7 +5602,7 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 	if is_selected {
 		border_col = rl.Color{65, 215, 130, u8(220.0 * alpha_factor)}
 	}
-	rl.DrawRectangleRoundedLinesEx(rect, 0.16, 8, 1.2, border_col)
+	rl.DrawRectangleRoundedLinesEx(rect, 0.16, 4, 1.2, border_col)
 
 	def_lvl := orbital_defense_level[p]
 	miners := planet_miner_drone_count(p)
@@ -7643,6 +7659,7 @@ deserialize_game_state :: proc(content: string) -> bool {
 	in_start_menu = false
 	game_paused = false
 	controls_overlay_open = false
+	planet_unit_cache_dirty = true
 	return true
 }
 
