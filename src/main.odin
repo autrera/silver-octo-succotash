@@ -1725,18 +1725,11 @@ earth_orbital_defense_y :: proc() -> f32 {
 		return SECTION_TOP
 	}
 	y: f32 = SECTION_TOP + BASE_BTN_H + 8
-	if base_build_planet == EARTH {
-		y += 4 + BAR_H
-	}
 	return y
 }
 
 earth_orbital_defense_bottom_y :: proc() -> f32 {
-	y := earth_orbital_defense_y() + BASE_BTN_H
-	if orbital_defense_building[EARTH] {
-		y += 4 + BAR_H
-	}
-	return y
+	return earth_orbital_defense_y() + BASE_BTN_H
 }
 
 outpost_orbital_defense_y :: proc(planet: int) -> f32 {
@@ -1748,11 +1741,7 @@ outpost_orbital_defense_y :: proc(planet: int) -> f32 {
 }
 
 outpost_orbital_defense_bottom_y :: proc(planet: int) -> f32 {
-	y := outpost_orbital_defense_y(planet) + BASE_BTN_H
-	if planet >= 0 && planet < PLANET_COUNT && orbital_defense_building[planet] {
-		y += 4 + BAR_H
-	}
-	return y
+	return outpost_orbital_defense_y(planet) + BASE_BTN_H
 }
 
 outpost_liberated_roster_y :: proc(planet: int) -> int {
@@ -1769,19 +1758,21 @@ orbital_defense_button_rect :: proc(panel_x: f32, planet: int) -> rl.Rectangle {
 
 draw_orbital_defense_inspector_section :: proc(x: f32, btn: rl.Rectangle, p: int) {
 	if orbital_defense_building[p] {
+		progress := orbital_defense_progress[p] / ORBITAL_DEFENSE_BUILD_TIME
 		draw_chamfered_panel(btn, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
+		fill_rect := rl.Rectangle{btn.x, btn.y, btn.width * progress, btn.height}
+		rl.DrawRectangleRec(fill_rect, rl.Color{0, 200, 120, 120})
 		draw_corner_brackets(btn, 2, 6, SCIFI_CYAN)
 		if orbital_defense_constructing_miners(p) < ORBITAL_DEFENSE_CONSTRUCT_MINERS {
-			rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", orbital_defense_constructing_miners(p), ORBITAL_DEFENSE_CONSTRUCT_MINERS), i32(btn.x + CARD_INSET), i32(btn.y + 12), 11, SCIFI_CYAN)
+			rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", orbital_defense_constructing_miners(p), ORBITAL_DEFENSE_CONSTRUCT_MINERS), i32(btn.x + CARD_INSET), i32(btn.y + 12), 11, rl.WHITE)
 		} else {
 			remaining := ORBITAL_DEFENSE_BUILD_TIME - orbital_defense_progress[p]
 			if orbital_defense_level[p] == 0 {
-				rl.DrawText(rl.TextFormat("BUILDING DEFENSE  %3.1fs", remaining), i32(btn.x + CARD_INSET), i32(btn.y + 11), 12, SCIFI_CYAN)
+				rl.DrawText(rl.TextFormat("BUILDING DEFENSE  %3.1fs", remaining), i32(btn.x + CARD_INSET), i32(btn.y + 11), 12, rl.WHITE)
 			} else {
-				rl.DrawText(rl.TextFormat("UPGRADE LVL %d (DISABLED)  %3.1fs", orbital_defense_level[p] + 1, remaining), i32(btn.x + CARD_INSET), i32(btn.y + 11), 12, SCIFI_CYAN)
+				rl.DrawText(rl.TextFormat("UPGRADE LVL %d (DISABLED)  %3.1fs", orbital_defense_level[p] + 1, remaining), i32(btn.x + CARD_INSET), i32(btn.y + 11), 12, rl.WHITE)
 			}
 		}
-		draw_progress({btn.x, btn.y + btn.height + 4, PANEL_CONTENT_W, BAR_H}, orbital_defense_progress[p] / ORBITAL_DEFENSE_BUILD_TIME, SCIFI_CYAN)
 	} else if orbital_defense_level[p] == 0 {
 		can_build := can_build_orbital_defense(p)
 		draw_button(btn, rl.TextFormat("[O] BUILD ORBITAL DEFENSE (%d)", ORBITAL_DEFENSE_COST), SCIFI_PANEL_SOLID, can_build)
@@ -4089,39 +4080,27 @@ draw_earth_inspector :: proc(x: f32) {
 	if base_button_visible() {
 		base_button := rl.Rectangle{x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, BASE_BTN_H}
 		if base_build_planet == EARTH {
+			progress := base_build_progress / BASE_CONSTRUCT_TIME
 			draw_chamfered_panel(base_button, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
+			// Construction progress now fills the button itself, left to right,
+			// instead of a separate bar beneath it. The text is drawn on top so
+			// it stays legible as the green fill advances.
+			fill_w := base_button.width * progress
+			fill_rect := rl.Rectangle{base_button.x, base_button.y, fill_w, base_button.height}
+			rl.DrawRectangleRec(fill_rect, rl.Color{0, 200, 120, 120})
 			draw_corner_brackets(base_button, 2, 6, SCIFI_CYAN)
 			if base_constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS {
-				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", base_constructing_miners(EARTH), BASE_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 12, 11, SCIFI_CYAN)
+				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", base_constructing_miners(EARTH), BASE_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 12, 11, rl.WHITE)
 			} else {
-				rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), i32(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 11, 13, SCIFI_CYAN)
+				rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), i32(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 11, 13, rl.WHITE)
 			}
-			// Construction progress runs in a segmented bar just below the button.
-			draw_progress({x + PANEL_PAD_X, BASE_PROGRESS_Y, PANEL_CONTENT_W, BAR_H}, base_build_progress / BASE_CONSTRUCT_TIME, SCIFI_CYAN)
 		} else {
 			can_build_base := minerals >= BASE_COST && base_counts[EARTH] < MAX_BASES && base_build_planet < 0 && planet_liberated(EARTH)
-			draw_button(base_button, "Command Base (500)", SCIFI_PANEL_SOLID, can_build_base)
+			draw_button(base_button, "Command Base (+1 parallel build) (500)", SCIFI_PANEL_SOLID, can_build_base)
 		}
 	}
 
 	draw_orbital_defense_inspector_section(x, orbital_defense_button_rect(x, EARTH), EARTH)
-
-	prod_title_y := production_title_y()
-	prod_first_y := production_first_y()
-	draw_section_header(x + PANEL_PAD_X, f32(prod_title_y), PANEL_CONTENT_W, "PRODUCTION MATRIX", SCIFI_CYAN)
-	for b := 0; b < base_counts[EARTH]; b += 1 {
-		line := production[EARTH][b]
-		y := f32(prod_first_y + b * PROD_PITCH)
-		if line.active {
-			name := "MINING DRONE"
-			total := drone_build_time(line.kind)
-			if line.kind == .COMBAT { name = "COMBAT DRONE" }
-			rl.DrawText(rl.TextFormat("BASE %d  %s", b + 1, name), i32(x + PANEL_PAD_X), i32(y), 12, SCIFI_TEXT)
-			draw_progress({x + PANEL_PAD_X, y + PROD_BAR_DY, PROD_BAR_W, BAR_H}, line.progress / total, SCIFI_CYAN)
-		} else {
-			rl.DrawText(rl.TextFormat("BASE %d  STANDBY", b + 1), i32(x + PANEL_PAD_X), i32(y), 12, SCIFI_MUTED)
-		}
-	}
 
 	orders_y := production_orders_y()
 	draw_section_header(x + PANEL_PAD_X, f32(orders_y - 23), PANEL_CONTENT_W, "FLEET REQUISITION", SCIFI_AMBER)
@@ -4151,8 +4130,9 @@ draw_earth_inspector :: proc(x: f32) {
 	for slot := 0; slot < queue_capacity; slot += 1 {
 		queued := slot < queue_total
 		kind := Unit_Type.MINING
-		if queued { kind = queue_kind_at(EARTH, slot) }
-		draw_queue_slot(queue_slot_rect(x, slot), queued, kind)
+		progress: f32 = -1
+		if queued { kind = queue_kind_at(EARTH, slot); progress = queue_progress_at(EARTH, slot) }
+		draw_queue_slot(queue_slot_rect(x, slot), queued, kind, progress)
 	}
 }
 
@@ -4308,7 +4288,7 @@ production_first_y :: proc() -> int {
 production_orders_y :: proc() -> int {
 	base_y := ORDERS_BASE_Y
 	if selected_planet == EARTH {
-		base_y = production_title_y() + 94
+		base_y = int(earth_orbital_defense_bottom_y()) + 44
 	}
 	return base_y + max(base_counts[selected_planet] - 1, 0) * PROD_PITCH
 }
@@ -4327,6 +4307,21 @@ queue_kind_at :: proc(planet, index: int) -> Unit_Type {
 		queue_index -= 1
 	}
 	return pending[planet][queue_index]
+}
+
+// Returns the build progress (0..1) for the queue slot at `index`, or -1 when
+// that slot is a pending (not-yet-building) unit.
+queue_progress_at :: proc(planet, index: int) -> f32 {
+	queue_index := index
+	for b := 0; b < base_counts[planet]; b += 1 {
+		if !production[planet][b].active { continue }
+		if queue_index == 0 {
+			total := drone_build_time(production[planet][b].kind)
+			return production[planet][b].progress / total
+		}
+		queue_index -= 1
+	}
+	return -1
 }
 
 unit_in_roster :: proc(index: int, kind: Unit_Type) -> bool {
@@ -5969,7 +5964,7 @@ draw_button :: proc(rect: rl.Rectangle, label: cstring, color: rl.Color = SCIFI_
 
 
 // High-tech build queue slot with chamfered edges and glowing symbols.
-draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type) {
+draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type, progress: f32 = -1) {
 	color := SCIFI_PANEL_SOLID
 	border := SCIFI_DIM
 	symbol: cstring = ""
@@ -5982,6 +5977,12 @@ draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type) {
 		if kind == .COMBAT { symbol = "C" }
 	}
 	draw_chamfered_panel(rect, 3, color, border)
+	if queued && progress >= 0 {
+		// Fill the unit slot green to show build progress for the unit
+		// currently being built, leaving the symbol legible on top.
+		fill_rect := rl.Rectangle{rect.x, rect.y, rect.width * progress, rect.height}
+		rl.DrawRectangleRec(fill_rect, rl.Color{0, 200, 120, 140})
+	}
 	if queued {
 		draw_corner_brackets(rect, 1, 3, border)
 		tw := f32(rl.MeasureText(symbol, 12))
