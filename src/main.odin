@@ -72,6 +72,11 @@ ENEMY_HQ_BASE_HP :: 500
 // 0.2s the 500-drone HQ siege and every dogfight resolves 5x faster than the
 // old 1s tick.
 COMBAT_TICK :: 0.2
+// Battles at the enemy HQ resolve 5x faster than battles on a planet.
+HQ_COMBAT_TICK :: COMBAT_TICK / 5
+COMBAT_TICK_HQ :: HQ_COMBAT_TICK
+ENEMY_HQ_COMBAT_TICK :: HQ_COMBAT_TICK
+COMBAT_TICK_ENEMY_HQ :: HQ_COMBAT_TICK
 // Uncontested enemy siege time per player command base on Earth: with no
 // defenders or miners left, one base falls every BASE_SIEGE_TIME seconds.
 BASE_SIEGE_TIME :: 2.0
@@ -2527,12 +2532,23 @@ launch_attack_wave :: proc() {
 	launch_wave()
 }
 
+// Combat tick for a sector: HQ battles resolve 5x faster than planet battles.
+combat_tick_for :: proc(p: int) -> f32 {
+	if p == ENEMY_HOME {
+		return HQ_COMBAT_TICK
+	}
+	return COMBAT_TICK
+}
+combat_tick :: combat_tick_for
+planet_combat_tick :: combat_tick_for
+
 update_planet_combat :: proc(dt: f32, p: int) {
+	tick := combat_tick_for(p)
 	players, enemies := planet_combatants(p)
 	if players > 0 && enemies > 0 {
 		combat_timer[p] += dt
-		for combat_timer[p] >= COMBAT_TICK {
-			combat_timer[p] -= COMBAT_TICK
+		for combat_timer[p] >= tick {
+			combat_timer[p] -= tick
 			if !kill_fighter(p, false) { break }
 			rem_players, _ := planet_combatants(p)
 			if rem_players == 0 {
@@ -2544,8 +2560,8 @@ update_planet_combat :: proc(dt: f32, p: int) {
 		combat_timer[p] = 0
 		if p < PLANET_COUNT && orbital_defense_level[p] > 0 {
 			miner_timer[p] += dt
-			for miner_timer[p] >= COMBAT_TICK {
-				miner_timer[p] -= COMBAT_TICK
+			for miner_timer[p] >= tick {
+				miner_timer[p] -= tick
 				orbital_defense_hp[p] -= enemies
 				if orbital_defense_hp[p] <= 0 {
 					destroy_orbital_defense(p)
@@ -2554,8 +2570,8 @@ update_planet_combat :: proc(dt: f32, p: int) {
 			}
 		} else {
 			miner_timer[p] += dt
-			for miner_timer[p] >= COMBAT_TICK {
-				miner_timer[p] -= COMBAT_TICK
+			for miner_timer[p] >= tick {
+				miner_timer[p] -= tick
 				if !kill_player_miner(p) { break }
 			}
 			if p < PLANET_COUNT && p != EARTH && !player_miners_at(p) {
@@ -2582,14 +2598,14 @@ update_planet_combat :: proc(dt: f32, p: int) {
 		// sweep the enemy mining drones, then bring down the enemy base.
 		if enemy_miner_count(p) > 0 {
 			miner_timer[p] += dt
-			for miner_timer[p] >= COMBAT_TICK {
-				miner_timer[p] -= COMBAT_TICK
+			for miner_timer[p] >= tick {
+				miner_timer[p] -= tick
 				if !kill_enemy_miner(p) { break }
 			}
 		} else if p == ENEMY_HOME && orbital_defense_level[p] > 0 {
 			miner_timer[p] += dt
-			for miner_timer[p] >= COMBAT_TICK {
-				miner_timer[p] -= COMBAT_TICK
+			for miner_timer[p] >= tick {
+				miner_timer[p] -= tick
 				orbital_defense_hp[p] -= players
 				if orbital_defense_hp[p] <= 0 {
 					destroy_orbital_defense(p)
@@ -2598,8 +2614,8 @@ update_planet_combat :: proc(dt: f32, p: int) {
 			}
 		} else if enemy_base_hp[p] > 0 {
 			base_timer[p] += dt
-			for base_timer[p] >= COMBAT_TICK {
-				base_timer[p] -= COMBAT_TICK
+			for base_timer[p] >= tick {
+				base_timer[p] -= tick
 				enemy_base_hp[p] = max(enemy_base_hp[p] - players, 0)
 				if enemy_base_hp[p] == 0 { break }
 			}

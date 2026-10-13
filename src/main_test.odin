@@ -1805,13 +1805,13 @@ enemy_hq_falls_after_garrison_trade :: proc(t: ^testing.T) {
 	// 10v6 trade: 6 ticks kill the garrison, 4 player fighters survive.
 	_, enemies := planet_combatants(ENEMY_HOME)
 	for enemies > 0 {
-		update_enemy_waves(f32(COMBAT_TICK))
+		update_enemy_waves(HQ_COMBAT_TICK)
 		_, enemies = planet_combatants(ENEMY_HOME)
 	}
 	players, _ := planet_combatants(ENEMY_HOME)
 	testing.expect(t, players == 4, "4 player fighters survive the HQ garrison trade")
 	// Survivors then breach the base: one HP per fighter per tick.
-	update_enemy_waves(f32(COMBAT_TICK))
+	update_enemy_waves(HQ_COMBAT_TICK)
 	testing.expect(t, enemy_base_hp[ENEMY_HOME] == 0, "HQ base takes damage per fighter per tick")
 	testing.expect(t, planet_liberated(ENEMY_HOME) && enemy_hq_destroyed(), "HQ falls once its HP hits 0")
 	// A destroyed HQ never launches another wave, ever - even fully armed
@@ -1916,7 +1916,8 @@ hq_garrison_trade_resolves_five_times_faster :: proc(t: ^testing.T) {
 	enemy_base_hp[ENEMY_HOME] = 0
 	for i in 0..<50 { add_guarding_fighter(ENEMY_HOME, false) }
 	for i in 0..<50 { add_guarding_fighter(ENEMY_HOME, true) }
-	// 50:1 trades, one per 0.2s tick: the full dogfight clears in 50 ticks.
+	// HQ battles resolve 5x faster than planets: 50 trades now clear in 10 ticks
+	// at 0.2s each (0.04s HQ tick).
 	ticks := 0
 	players, enemies := planet_combatants(ENEMY_HOME)
 	for players > 0 && enemies > 0 {
@@ -1925,7 +1926,7 @@ hq_garrison_trade_resolves_five_times_faster :: proc(t: ^testing.T) {
 		players, enemies = planet_combatants(ENEMY_HOME)
 	}
 	testing.expect(t, players == 0 && enemies == 0, "50v50 HQ dogfight fully trades")
-	testing.expect(t, ticks == 50, "50 trades at 0.2s each = 10s (was 50s at the old 1s tick)")
+	testing.expect(t, ticks == 10, "50 trades at 0.04s HQ tick clear in 10 x 0.2s steps")
 }
 
 // ---- Enemy HQ inspector & recall ---------------------------------------
@@ -2224,10 +2225,10 @@ step_simulation_resolves_combat_at_enemy_hq :: proc(t: ^testing.T) {
 	initialize_game()
 	for i in 0..<5 { add_guarding_fighter(ENEMY_HOME, false) }
 	players_before, enemies_before := planet_combatants(ENEMY_HOME)
-	step_simulation(f32(COMBAT_TICK))
+	step_simulation(HQ_COMBAT_TICK)
 	players, enemies := planet_combatants(ENEMY_HOME)
-	testing.expect(t, players == players_before - 1 && enemies == enemies_before - 1, "1:1 trade per tick at the HQ sector (garrison included)")
-	step_simulation(f32(COMBAT_TICK))
+	testing.expect(t, players == players_before - 1 && enemies == enemies_before - 1, "1:1 trade per HQ tick at the sector (garrison included)")
+	step_simulation(HQ_COMBAT_TICK)
 	players, enemies = planet_combatants(ENEMY_HOME)
 	testing.expect(t, players == players_before - 2 && enemies == enemies_before - 2, "HQ combat keeps ticking across steps")
 }
@@ -2945,7 +2946,7 @@ combat_nebula_intensity_transitions_and_hq_behavior :: proc(t: ^testing.T) {
 		units[unit_count] = Unit{kind = .COMBAT, state = .GUARDING, affiliation = ENEMY_HOME, enemy = false}
 		unit_count += 1
 	}
-	step_simulation(0.5)
+	step_simulation(0.3)
 	testing.expect(t, combat_nebula_intensity[ENEMY_HOME] > 0.85, "Enemy HQ nebula ramps toward 1.0 during active assault")
 
 	// 5. Enemy HQ destroyed: intensity ramps down to 0:
@@ -5543,7 +5544,7 @@ enemy_hq_combat_siege_progression :: proc(t: ^testing.T) {
 
 	// Phase 1: 3 ticks (0.6s) of combat - garrison defenders trade 1:1 with player fighters
 	for s := 0; s < 3; s += 1 {
-		update_enemy_waves(f32(COMBAT_TICK))
+		update_enemy_waves(HQ_COMBAT_TICK)
 	}
 	players, enemies := planet_combatants(ENEMY_HOME)
 	testing.expect(t, enemies == 0, "garrison fighters wiped out in Phase 1")
@@ -5554,7 +5555,7 @@ enemy_hq_combat_siege_progression :: proc(t: ^testing.T) {
 	// Phase 2: 4 ticks (0.8s) of combat - 5 player fighters assault the orbital defense
 	// (5 damage per tick * 4 ticks = 20 damage)
 	for s := 0; s < 4; s += 1 {
-		update_enemy_waves(f32(COMBAT_TICK))
+		update_enemy_waves(HQ_COMBAT_TICK)
 	}
 	testing.expect(t, orbital_defense_hp[ENEMY_HOME] == 0, "orbital defense destroyed in Phase 2")
 	testing.expect(t, orbital_defense_level[ENEMY_HOME] == 0, "orbital defense level becomes 0")
@@ -5563,7 +5564,7 @@ enemy_hq_combat_siege_progression :: proc(t: ^testing.T) {
 	// Phase 3: 2 ticks (0.4s) of combat - 5 player fighters breach the citadel base
 	// (5 damage per tick * 2 ticks = 10 damage)
 	for s := 0; s < 2; s += 1 {
-		update_enemy_waves(f32(COMBAT_TICK))
+		update_enemy_waves(HQ_COMBAT_TICK)
 	}
 	testing.expect(t, enemy_base_hp[ENEMY_HOME] == 0, "citadel base HP reduced to 0 in Phase 3")
 	testing.expect(t, planet_liberated(ENEMY_HOME), "Enemy HQ sector liberated")
