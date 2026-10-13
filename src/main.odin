@@ -7950,6 +7950,9 @@ victory_achieved :: proc() -> bool {
 restart_game :: proc() {
 	reset_world()
 	initialize_game()
+	camera_target = rl.Vector3{10, 0, 2}
+	camera.position = {camera_target.x, CAMERA_START_Y, camera_target.z + CAMERA_START_Y}
+	camera.target = camera_target
 }
 
 // Shared by the render and the click hitboxes so they cannot drift apart.
