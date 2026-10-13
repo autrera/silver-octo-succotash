@@ -4288,7 +4288,7 @@ production_first_y :: proc() -> int {
 production_orders_y :: proc() -> int {
 	base_y := ORDERS_BASE_Y
 	if selected_planet == EARTH {
-		base_y = int(earth_orbital_defense_bottom_y()) + 44
+		return int(earth_orbital_defense_bottom_y()) + 44
 	}
 	return base_y + max(base_counts[selected_planet] - 1, 0) * PROD_PITCH
 }
