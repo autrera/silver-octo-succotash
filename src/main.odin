@@ -2044,8 +2044,10 @@ earth_queue_y :: proc() -> int {
 // the cancel-click hitboxes so they cannot drift apart.
 queue_slot_rect :: proc(panel_x: f32, slot: int) -> rl.Rectangle {
 	queue_y := f32(earth_queue_y())
-	row := slot / MAX_BASES
-	column := slot % MAX_BASES
+	rows := base_counts[EARTH]
+	if rows < 1 { rows = 1 }
+	row := slot % rows
+	column := slot / rows
 	return rl.Rectangle{panel_x + PANEL_PAD_X + f32(column * (QUEUE_SLOT_W + QUEUE_SLOT_GAP)), queue_y + QUEUE_LABEL_GAP + f32(row * GRID_PITCH), QUEUE_SLOT_W, QUEUE_SLOT_H}
 }
 
