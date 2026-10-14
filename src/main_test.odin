@@ -632,7 +632,7 @@ representational_rendering_one_cube_per_ten :: proc(t: ^testing.T) {
 	testing.expect(t, rep_count(0) == 0, "empty fleet renders nothing")
 	for n in 1..=10 { testing.expect(t, rep_count(n) == 1, "1-10 render as 1 cube") }
 	for n in 11..=20 { testing.expect(t, rep_count(n) == 2, "11-20 render as 2 cubes") }
-	testing.expect(t, rep_count(GARRISON_FIGHTERS[JUPITER]) == 5, "45 garrison fighters render as 5 cubes")
+	testing.expect(t, rep_count(GARRISON_FIGHTERS[JUPITER]) == 8, "75 garrison fighters render as 8 cubes")
 	testing.expect(t, rep_count(GARRISON_FIGHTERS[NEPTUNE]) == 10, "95 garrison fighters render as 10 cubes")
 	testing.expect(t, rep_count(ENEMY_HQ_GARRISON) == 50, "500-fighter HQ garrison renders as 50 cubes")
 	testing.expect(t, rep_count(GARRISON_MINERS[JUPITER]) == 1, "10 garrison miners render as 1 drone")
@@ -717,12 +717,12 @@ all_non_earth_planets_start_occupied :: proc(t: ^testing.T) {
 	initialize_game()
 	// Exact spec: garrison fighters / miners / base HP per planet on a fixed
 	// occupation ladder (Venus easiest ... Neptune hardest).
-	testing.expect(t, GARRISON_FIGHTERS[VENUS] == 10 && GARRISON_MINERS[VENUS] == 4 && GARRISON_BASE_HP[VENUS] == 10, "Venus: ~10/4/10")
+	testing.expect(t, GARRISON_FIGHTERS[VENUS] == 15 && GARRISON_MINERS[VENUS] == 4 && GARRISON_BASE_HP[VENUS] == 10, "Venus: ~15/4/10")
 	testing.expect(t, GARRISON_FIGHTERS[MARS] == 20 && GARRISON_MINERS[MARS] == 6 && GARRISON_BASE_HP[MARS] == 15, "Mars: ~20/6/15")
 	testing.expect(t, GARRISON_FIGHTERS[MERCURY] == 30 && GARRISON_MINERS[MERCURY] == 8 && GARRISON_BASE_HP[MERCURY] == 20, "Mercury: ~30/8/20")
-	testing.expect(t, GARRISON_FIGHTERS[JUPITER] == 45 && GARRISON_MINERS[JUPITER] == 10 && GARRISON_BASE_HP[JUPITER] == 30, "Jupiter: ~45/10/30")
+	testing.expect(t, GARRISON_FIGHTERS[JUPITER] == 75 && GARRISON_MINERS[JUPITER] == 10 && GARRISON_BASE_HP[JUPITER] == 30, "Jupiter: ~75/10/30")
 	testing.expect(t, GARRISON_FIGHTERS[SATURN] == 60 && GARRISON_MINERS[SATURN] == 14 && GARRISON_BASE_HP[SATURN] == 40, "Saturn: ~60/14/40")
-	testing.expect(t, GARRISON_FIGHTERS[URANUS] == 75 && GARRISON_MINERS[URANUS] == 18 && GARRISON_BASE_HP[URANUS] == 50, "Uranus: ~75/18/50")
+	testing.expect(t, GARRISON_FIGHTERS[URANUS] == 45 && GARRISON_MINERS[URANUS] == 18 && GARRISON_BASE_HP[URANUS] == 50, "Uranus: ~45/18/50")
 	testing.expect(t, GARRISON_FIGHTERS[NEPTUNE] == 95 && GARRISON_MINERS[NEPTUNE] == 22 && GARRISON_BASE_HP[NEPTUNE] == 60, "Neptune: ~95/22/60")
 	// The spawned world matches the tables: every non-Earth planet holds its
 	// garrison fighters, garrison miners and an enemy base.

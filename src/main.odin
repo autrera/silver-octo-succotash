@@ -101,7 +101,7 @@ MINOR_WAVE_SIZE :: 10
 // miners and enemy base HP all scale up with distance from Earth
 // (Venus 10/4/10 ... Neptune 95/22/60; indexed by sector, with the enemy HQ
 // as the last, heaviest entry).
-GARRISON_FIGHTERS := [SECTOR_COUNT]int{30, 10, 0, 20, 45, 60, 75, 95, ENEMY_HQ_GARRISON}
+GARRISON_FIGHTERS := [SECTOR_COUNT]int{30, 15, 0, 20, 75, 60, 45, 95, ENEMY_HQ_GARRISON}
 GARRISON_MINERS := [SECTOR_COUNT]int{8, 4, 0, 6, 10, 14, 18, 22, 0}
 GARRISON_BASE_HP := [SECTOR_COUNT]int{20, 10, 0, 15, 30, 40, 50, 60, ENEMY_HQ_BASE_HP}
 // Drone production per command base line (mining 6s, combat 10s).
