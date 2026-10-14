@@ -2045,11 +2045,14 @@ update_orbital_defenses :: proc(dt: f32) {
 		} else if orbital_defense_level[p] > 0 && !is_building {
 			// Ammo batteries: each shot consumes 1 ammo and kills up to
 			// KILLS_PER_SHOT inbound fighters. Empty batteries hold fire.
-			if orbital_defense_ammo[p] > 0 && orbital_defense_fire_timer[p] <= 0 {
-				target_pos := sector_pos(p)
-				r := sector_radius(p)
-				engage_dist := r + 3.8
+			// Fire every shot needed in one update so inbound fighters never
+			// reach the planet while ammo is still available.
+			target_pos := sector_pos(p)
+			r := sector_radius(p)
+			engage_dist := r + 3.8
+			for orbital_defense_ammo[p] > 0 {
 				kills := 0
+				shot_fired := false
 				for i := unit_count - 1; i >= 0; i -= 1 {
 					u := &units[i]
 					if !u.enemy || u.kind != .COMBAT || u.state != .TRANSIT || u.target_planet != p { continue }
@@ -2061,18 +2064,18 @@ update_orbital_defenses :: proc(dt: f32) {
 						kills += 1
 						orbital_defense_wave_kills[p] += 1
 						orbital_defense_ammo_pending_kills[p] += 1
-						if orbital_defense_ammo_pending_kills[p] >= ORBITAL_DEFENSE_KILLS_PER_SHOT && orbital_defense_ammo[p] > 0 {
-							orbital_defense_ammo[p] -= 1
-							orbital_defense_ammo_pending_kills[p] -= ORBITAL_DEFENSE_KILLS_PER_SHOT
-						}
+						shot_fired = true
 						if kills >= ORBITAL_DEFENSE_KILLS_PER_SHOT { break }
 					}
 				}
-				if kills > 0 {
-					orbital_defense_reset_timer[p] = ORBITAL_DEFENSE_WAVE_RESET_DELAY
-					orbital_defense_fire_timer[p] = ORBITAL_DEFENSE_FIRE_COOLDOWN
+				if !shot_fired { break }
+				if orbital_defense_ammo_pending_kills[p] >= ORBITAL_DEFENSE_KILLS_PER_SHOT {
+					orbital_defense_ammo[p] -= 1
+					orbital_defense_ammo_pending_kills[p] -= ORBITAL_DEFENSE_KILLS_PER_SHOT
 				}
+				orbital_defense_reset_timer[p] = ORBITAL_DEFENSE_WAVE_RESET_DELAY
 			}
+			// Charge any partial final shot once the inbound wave clears.
 		}
 	}
 }
