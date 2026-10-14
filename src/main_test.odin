@@ -744,8 +744,8 @@ all_non_earth_planets_start_occupied :: proc(t: ^testing.T) {
 			"planet %d sits at its spec distance from Earth", p)
 		if i > 0 {
 			q := by_ladder[i - 1]
-			testing.expectf(t, GARRISON_FIGHTERS[p] > GARRISON_FIGHTERS[q] && GARRISON_MINERS[p] > GARRISON_MINERS[q] && GARRISON_BASE_HP[p] > GARRISON_BASE_HP[q],
-				"garrison escalates from planet %d to %d", q, p)
+			testing.expectf(t, GARRISON_MINERS[p] > GARRISON_MINERS[q] && GARRISON_BASE_HP[p] > GARRISON_BASE_HP[q],
+				"garrison miners/base HP escalate from planet %d to %d", q, p)
 		}
 	}
 }
@@ -2358,22 +2358,19 @@ bases_collapse_gap_when_five_bases_built :: proc(t: ^testing.T) {
 	reset_world()
 	selected_planet = EARTH
 	testing.expect(t, base_button_visible(), "base button visible with 1 base")
-	testing.expect(t, production_title_y() == PROD_TITLE_Y, "production title at normal PROD_TITLE_Y with 1 base")
-	testing.expect(t, production_first_y() == PROD_FIRST_Y, "production line 0 at PROD_FIRST_Y with 1 base")
-	testing.expect(t, production_orders_y() == ORDERS_BASE_Y, "orders at ORDERS_BASE_Y with 1 base")
+	testing.expect(t, production_orders_y() == int(earth_orbital_defense_bottom_y()) + 44, "orders anchored below orbital defense with 1 base")
 
 	// Set bases to 5 (cap)
 	base_counts[EARTH] = MAX_BASES
 	testing.expect(t, !base_button_visible(), "base button hidden with 5 bases")
-	testing.expect(t, production_title_y() == PROD_TITLE_Y - BASE_COLLAPSE_Y, "production title collapses up by BASE_COLLAPSE_Y with 5 bases")
-	testing.expect(t, production_first_y() == PROD_FIRST_Y - BASE_COLLAPSE_Y, "production first line collapses up with 5 bases")
-	testing.expect(t, production_orders_y() == ORDERS_BASE_Y - BASE_COLLAPSE_Y + 4 * PROD_PITCH, "orders collapse up to account for removed button")
+	testing.expect(t, production_orders_y() == int(earth_orbital_defense_bottom_y()) + 44, "orders stay anchored below orbital defense at cap")
 
-	// With base constructing at Earth, button is visible and positions dynamically shift down for progress bar
+	// With base constructing at Earth, button is visible and the in-button
+	// fill adds no extra spacing below.
 	base_counts[EARTH] = 4
 	base_build_planet = EARTH
 	testing.expect(t, base_button_visible(), "base button visible while constructing")
-	testing.expect(t, production_title_y() == PROD_TITLE_Y + 12, "production title shifts down by 12px for base progress bar")
+	testing.expect(t, production_orders_y() == int(earth_orbital_defense_bottom_y()) + 44, "orders do not shift while base is constructing")
 }
 
 @(test)
@@ -2409,8 +2406,7 @@ losing_base_from_cap_reopens_button_and_restores_positions :: proc(t: ^testing.T
 	destroy_player_base(EARTH)
 	testing.expect(t, base_counts[EARTH] == 4, "base count drops to 4")
 	testing.expect(t, base_button_visible(), "button visible again at 4 bases")
-	testing.expect(t, production_title_y() == PROD_TITLE_Y, "production title returns to PROD_TITLE_Y")
-	testing.expect(t, production_orders_y() == ORDERS_BASE_Y + 3 * PROD_PITCH, "orders return to normal expanded Y")
+	testing.expect(t, production_orders_y() == int(earth_orbital_defense_bottom_y()) + 44, "orders stay anchored below orbital defense")
 }
 
 @(test)
@@ -4045,25 +4041,23 @@ orbital_defense_timed_construction_and_crew :: proc(t: ^testing.T) {
 }
 
 @(test)
-orbital_defense_upgrades_up_to_level_10 :: proc(t: ^testing.T) {
+orbital_defense_has_no_upgrades_single_level_with_starting_ammo :: proc(t: ^testing.T) {
 	reset_world()
 	enemy_base_hp[VENUS] = 0
 	for i in 0..<10 { add_miner(VENUS) }
 
-	for lvl in 1..=10 {
-		minerals = 1000
-		testing.expect(t, can_build_orbital_defense(VENUS), "can upgrade to next level")
-		start_orbital_defense_construction(VENUS)
-		testing.expect(t, orbital_defense_building[VENUS], "upgrade started")
-		update_production(ORBITAL_DEFENSE_BUILD_TIME)
-		testing.expect(t, orbital_defense_level[VENUS] == lvl, "reached level")
-		testing.expect(t, orbital_defense_hp[VENUS] == lvl * 100, "HP scales to level * 100")
-	}
+	minerals = 1000
+	testing.expect(t, can_build_orbital_defense(VENUS), "can build the single defense level")
+	start_orbital_defense_construction(VENUS)
+	testing.expect(t, orbital_defense_building[VENUS], "construction started")
+	update_production(ORBITAL_DEFENSE_BUILD_TIME)
+	testing.expect(t, orbital_defense_level[VENUS] == 1, "defense built at level 1")
+	testing.expect(t, orbital_defense_hp[VENUS] == 100, "level 1 defense has 100 HP")
+	testing.expect(t, orbital_defense_ammo[VENUS] == ORBITAL_DEFENSE_START_AMMO, "new battery starts with 5/10 ammo")
 
-	// At level 10 (max), cannot upgrade further
+	// No upgrades: a built battery cannot start another defense construction.
 	minerals = 2000
-	testing.expect(t, orbital_defense_level[VENUS] == 10, "at max level 10")
-	testing.expect(t, !can_build_orbital_defense(VENUS), "cannot upgrade past level 10")
+	testing.expect(t, !can_build_orbital_defense(VENUS), "cannot build/upgrade past the single level")
 }
 
 @(test)
@@ -4291,9 +4285,10 @@ inspector_clicks_and_shortcut_build_concurrent_orbital_defense :: proc(t: ^testi
 @(test)
 orbital_defense_intercepts_inbound_fighters :: proc(t: ^testing.T) {
 	reset_world()
-	// Level 1 defense on Earth (can destroy 10 enemy fighters)
+	// Ammo battery on Earth with a single shot (kills up to 10 fighters)
 	orbital_defense_level[EARTH] = 1
 	orbital_defense_hp[EARTH] = 100
+	orbital_defense_ammo[EARTH] = 1
 
 	// Launch 15 enemy fighters from Venus to Earth
 	spawn_minor_wave(VENUS, EARTH, 15)
@@ -4316,9 +4311,10 @@ orbital_defense_intercepts_inbound_fighters :: proc(t: ^testing.T) {
 @(test)
 orbital_defense_destroys_all_fighters_if_under_cap :: proc(t: ^testing.T) {
 	reset_world()
-	// Level 1 defense on Earth (cap = 10)
+	// Ammo battery (1 shot kills up to 10)
 	orbital_defense_level[EARTH] = 1
 	orbital_defense_hp[EARTH] = 100
+	orbital_defense_ammo[EARTH] = 1
 
 	// Launch 5 enemy fighters (minor wave size)
 	spawn_minor_wave(VENUS, EARTH, 5)
@@ -4390,12 +4386,16 @@ friendly_fighters_defend_orbital_defense :: proc(t: ^testing.T) {
 @(test)
 orbital_defense_save_and_load_persistence :: proc(t: ^testing.T) {
 	reset_world()
-	orbital_defense_level[EARTH] = 3
-	orbital_defense_hp[EARTH] = 280
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_hp[EARTH] = 100
+	orbital_defense_ammo[EARTH] = 7
 	orbital_defense_level[MARS] = 1
 	orbital_defense_building[MARS] = true
 	orbital_defense_progress[MARS] = 25.5
 	orbital_defense_hp[MARS] = 100
+	orbital_defense_ammo[MARS] = 3
+	orbital_defense_ammo_building[MARS] = true
+	orbital_defense_ammo_progress[MARS] = 8.5
 
 	save_str := serialize_game_state()
 
@@ -4405,11 +4405,94 @@ orbital_defense_save_and_load_persistence :: proc(t: ^testing.T) {
 
 	ok := deserialize_game_state(save_str)
 	testing.expect(t, ok, "deserialization succeeded")
-	testing.expect(t, orbital_defense_level[EARTH] == 3, "Earth defense level 3 restored")
-	testing.expect(t, orbital_defense_hp[EARTH] == 280, "Earth defense HP restored")
+	testing.expect(t, orbital_defense_level[EARTH] == 1, "Earth defense level 1 restored")
+	testing.expect(t, orbital_defense_hp[EARTH] == 100, "Earth defense HP restored")
+	testing.expect(t, orbital_defense_ammo[EARTH] == 7, "Earth ammo restored")
 	testing.expect(t, orbital_defense_level[MARS] == 1, "Mars defense level 1 restored")
 	testing.expect(t, orbital_defense_building[MARS], "Mars building status restored")
 	testing.expect(t, abs(orbital_defense_progress[MARS] - 25.5) < 0.1, "Mars progress restored")
+	testing.expect(t, orbital_defense_ammo[MARS] == 3, "Mars ammo restored")
+	testing.expect(t, orbital_defense_ammo_building[MARS], "Mars ammo building status restored")
+	testing.expect(t, abs(orbital_defense_ammo_progress[MARS] - 8.5) < 0.1, "Mars ammo progress restored")
+}
+
+@(test)
+orbital_ammo_build_requirements :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[MARS] = 0
+	orbital_defense_level[MARS] = 1
+	orbital_defense_hp[MARS] = 100
+	orbital_defense_ammo[MARS] = ORBITAL_DEFENSE_AMMO_MAX - 1
+	minerals = 1000
+	// No miners on site: cannot start ammo.
+	testing.expect(t, !can_build_orbital_ammo(MARS), "cannot build ammo without a mining drone on site")
+	add_miner(MARS)
+	testing.expect(t, can_build_orbital_ammo(MARS), "can build ammo with 1 miner and 200+ minerals")
+	minerals = 199
+	testing.expect(t, !can_build_orbital_ammo(MARS), "cannot build ammo without 200 minerals")
+	minerals = 1000
+	orbital_defense_ammo[MARS] = ORBITAL_DEFENSE_AMMO_MAX - 1
+	orbital_defense_ammo_pending_count[MARS] = 1
+	testing.expect(t, !can_build_orbital_ammo(MARS), "cannot build ammo at the 10-shot cap")
+	orbital_defense_ammo[MARS] = 5
+	orbital_defense_level[MARS] = 0
+	testing.expect(t, !can_build_orbital_ammo(MARS), "cannot build ammo without a battery")
+}
+
+@(test)
+orbital_ammo_timed_construction_with_one_miner :: proc(t: ^testing.T) {
+	reset_world()
+	enemy_base_hp[MARS] = 0
+	orbital_defense_level[MARS] = 1
+	orbital_defense_hp[MARS] = 100
+	orbital_defense_ammo[MARS] = 5
+	add_miner(MARS)
+	minerals = 1000
+	start_orbital_ammo_construction(MARS)
+	testing.expect(t, orbital_defense_ammo_building[MARS], "ammo construction underway")
+	testing.expect(t, minerals == 800, "ammo deducts 200 minerals up front")
+	testing.expect(t, orbital_ammo_constructing_miners(MARS) == 1, "1 miner on the ammo crew")
+	update_production(ORBITAL_DEFENSE_AMMO_BUILD_TIME - 0.1)
+	testing.expect(t, orbital_defense_ammo_building[MARS], "ammo still building at 19.9s")
+	testing.expect(t, orbital_defense_ammo[MARS] == 5, "ammo count unchanged at 19.9s")
+	update_production(0.1)
+	testing.expect(t, !orbital_defense_ammo_building[MARS], "ammo construction completed")
+	testing.expect(t, orbital_defense_ammo[MARS] == 6, "ammo count rises to 6")
+}
+
+@(test)
+orbital_ammo_shot_kills_ten_fighters :: proc(t: ^testing.T) {
+	reset_world()
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_hp[EARTH] = 100
+	orbital_defense_ammo[EARTH] = 2
+	spawn_minor_wave(VENUS, EARTH, 10)
+	for s := 0; s < 70; s += 1 {
+		update_units(0.1)
+		update_enemy_waves(0.1)
+		if unit_count == 0 { break }
+	}
+	_, enemies := planet_combatants(EARTH)
+	testing.expect(t, enemies == 0, "10 inbound fighters destroyed by ammo volleys")
+	testing.expect(t, orbital_defense_ammo[EARTH] < 2, "ammo consumed firing")
+}
+
+@(test)
+orbital_defense_holds_fire_when_ammo_empty :: proc(t: ^testing.T) {
+	reset_world()
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_hp[EARTH] = 100
+	orbital_defense_ammo[EARTH] = 0
+	target_pos := sector_pos(EARTH)
+	units[0] = Unit{
+		kind = .COMBAT, state = .TRANSIT,
+		position = target_pos + rl.Vector3{0, 0, sector_radius(EARTH) + 3.0},
+		target_planet = EARTH, affiliation = EARTH, enemy = true,
+	}
+	unit_count = 1
+	update_orbital_defenses(0.5)
+	testing.expect(t, unit_count == 1, "empty battery holds fire")
+	testing.expect(t, !orbital_defense_blasts[0].active, "no blast fired with no ammo")
 }
 
 @(test)
@@ -4457,35 +4540,43 @@ outpost_orbital_defense_button_and_roster_have_no_ui_collisions :: proc(t: ^test
 	// 2. Dynamic shift when refinery is building
 	refinery_building[MARS] = true
 	def_btn_ref := orbital_defense_button_rect(panel_x, MARS)
-	testing.expect(t, def_btn_ref.y == 116, "defense button dynamically shifts down by 12px when refinery is building")
+	testing.expect(t, def_btn_ref.y == 104, "defense button stays put when refinery is building")
 	ref_bar_bottom := ref_btn.y + ref_btn.height + 4 + BAR_H
-	testing.expect(t, def_btn_ref.y - ref_bar_bottom == 8, "consistent 8px gap below refinery progress bar")
+	testing.expect(t, def_btn_ref.y - (ref_btn.y + ref_btn.height) == 8, "consistent 8px gap below refinery button")
 	mining_header_ref := f32(unit_tile_y(.MINING) - 23)
 	testing.expect(t, mining_header_ref - (def_btn_ref.y + def_btn_ref.height) == 10, "consistent 10px gap below shifted defense button")
-	testing.expect(t, unit_tile_y(.MINING) == 185, "mining tiles dynamically shift down by 12px for refinery progress bar")
+	testing.expect(t, unit_tile_y(.MINING) == 173, "mining tiles stay put when refinery is building")
 	refinery_building[MARS] = false
 
-	// 3. Dynamic shift when orbital defense is building
+	// 3. In-button fill while the defense is building: no extra gap below.
 	orbital_defense_building[MARS] = true
 	def_btn_def := orbital_defense_button_rect(panel_x, MARS)
 	testing.expect(t, def_btn_def.y == 104, "defense button sits at 104 when refinery idle")
-	def_bar_bottom := def_btn_def.y + def_btn_def.height + 4 + BAR_H
 	mining_header_def := f32(unit_tile_y(.MINING) - 23)
-	testing.expect(t, mining_header_def - def_bar_bottom == 10, "consistent 10px gap below defense progress bar")
-	testing.expect(t, unit_tile_y(.MINING) == 185, "mining tiles dynamically shift down by 12px for defense progress bar")
+	testing.expect(t, mining_header_def - (def_btn_def.y + def_btn_def.height) == 10, "consistent 10px gap below defense button while building")
+	testing.expect(t, unit_tile_y(.MINING) == 173, "mining tiles do not shift while defense builds in-button")
 
-	// 4. Dynamic shift when both are building
+	// 4. Refinery building still shifts the defense button down.
 	refinery_building[MARS] = true
 	def_btn_both := orbital_defense_button_rect(panel_x, MARS)
-	testing.expect(t, def_btn_both.y == 116, "defense button sits at 116 when refinery building")
-	def_bar_both := def_btn_both.y + def_btn_both.height + 4 + BAR_H
+	testing.expect(t, def_btn_both.y == 104, "defense button sits at 104 when refinery building")
+	def_bar_both := def_btn_both.y + def_btn_both.height
 	mining_header_both := f32(unit_tile_y(.MINING) - 23)
-	testing.expect(t, mining_header_both - def_bar_both == 10, "consistent 10px gap below defense progress bar when both building")
-	testing.expect(t, unit_tile_y(.MINING) == 197, "mining tiles dynamically shift down by 24px when both building")
+	testing.expect(t, mining_header_both - def_bar_both == 10, "consistent 10px gap below defense button when refinery building")
 	refinery_building[MARS] = false
 	orbital_defense_building[MARS] = false
 
-	// 5. Click accuracy on the orbital defense button
+	// 5. Built battery with ammo slots pushes the roster down.
+	orbital_defense_level[MARS] = 1
+	orbital_defense_ammo[MARS] = 5
+	ammo_bottom := outpost_orbital_defense_bottom_y(MARS)
+	testing.expect(t, ammo_bottom == def_btn.y + GRID_PITCH + QUEUE_SLOT_H, "ammo slots extend the defense section")
+	mining_header_ammo := f32(unit_tile_y(.MINING) - 23)
+	testing.expect(t, mining_header_ammo - ammo_bottom == 10, "consistent 10px gap below ammo slots")
+	orbital_defense_level[MARS] = 0
+	orbital_defense_ammo[MARS] = 0
+
+	// 6. Click accuracy on the orbital defense button
 	minerals = 1000
 	for _ in 0..<10 { add_miner(MARS) }
 	handle_inspector_click({def_btn.x + 10, def_btn.y + 10}, panel_x)
@@ -4505,52 +4596,53 @@ earth_orbital_defense_button_and_production_have_no_ui_collisions :: proc(t: ^te
 	header_bottom: f32 = 16 + 38
 	testing.expect(t, f32(SECTION_TOP) - header_bottom == 6, "consistent 6px vertical spacing between header box and base button")
 
-	// 2. Idle state: tight, consistent spacing below base button and above production matrix
+	// 2. Idle state: tight, consistent spacing below base button
 	testing.expect(t, def_btn.y == 104, "idle orbital defense button sits at 104")
 	testing.expect(t, def_btn.y - (base_btn.y + base_btn.height) == 8, "consistent 8px gap between base button and orbital defense button")
 	testing.expect(t, !rl.CheckCollisionRecs(base_btn, def_btn), "base button and orbital defense button do not overlap")
-	prod_y := f32(production_title_y())
-	testing.expect(t, prod_y == 150, "production matrix title at 150")
-	testing.expect(t, prod_y - (def_btn.y + def_btn.height) == 10, "consistent 10px gap between orbital defense and production matrix")
+	orders_y := f32(production_orders_y())
+	testing.expect(t, orders_y - (def_btn.y + def_btn.height) == 44, "fleet requisition anchored 44px below orbital defense")
 
-	// 3. Dynamic shift when base is constructing
+	// 3. No shift when base is constructing (in-button fill)
 	base_build_planet = EARTH
 	def_btn_base := orbital_defense_button_rect(panel_x, EARTH)
-	testing.expect(t, def_btn_base.y == 116, "defense button dynamically shifts down by 12px when base is constructing")
-	base_bar_bottom := base_btn.y + base_btn.height + 4 + BAR_H
-	testing.expect(t, def_btn_base.y - base_bar_bottom == 8, "consistent 8px gap below base progress bar")
-	prod_y_base := f32(production_title_y())
-	testing.expect(t, prod_y_base == 162, "production title dynamically shifts down by 12px for base progress bar")
-	testing.expect(t, prod_y_base - (def_btn_base.y + def_btn_base.height) == 10, "consistent 10px gap below defense button when base constructing")
+	testing.expect(t, def_btn_base.y == 104, "defense button stays at 104 when base is constructing")
+	orders_y_base := f32(production_orders_y())
+	testing.expect(t, orders_y_base == orders_y, "orders do not shift while base constructs in-button")
 	base_build_planet = -1
 
-	// 4. Dynamic shift when orbital defense is constructing
+	// 4. No shift when orbital defense is constructing (in-button fill)
 	orbital_defense_building[EARTH] = true
 	def_btn_def := orbital_defense_button_rect(panel_x, EARTH)
 	testing.expect(t, def_btn_def.y == 104, "defense button sits at 104 when base idle")
-	def_bar_bottom := def_btn_def.y + def_btn_def.height + 4 + BAR_H
-	prod_y_def := f32(production_title_y())
-	testing.expect(t, prod_y_def == 162, "production title dynamically shifts down by 12px for defense progress bar")
-	testing.expect(t, prod_y_def - def_bar_bottom == 10, "consistent 10px gap below defense progress bar")
+	orders_y_def := f32(production_orders_y())
+	testing.expect(t, orders_y_def == orders_y, "orders do not shift while defense builds in-button")
 
-	// 5. Dynamic shift when both are constructing
+	// 5. No shift when both are constructing
 	base_build_planet = EARTH
 	def_btn_both := orbital_defense_button_rect(panel_x, EARTH)
-	testing.expect(t, def_btn_both.y == 116, "defense button at 116 when base constructing")
-	def_bar_both := def_btn_both.y + def_btn_both.height + 4 + BAR_H
-	prod_y_both := f32(production_title_y())
-	testing.expect(t, prod_y_both == 174, "production title dynamically shifts down by 24px when both constructing")
-	testing.expect(t, prod_y_both - def_bar_both == 10, "consistent 10px gap below defense progress bar when both constructing")
+	testing.expect(t, def_btn_both.y == 104, "defense button stays at 104 when both constructing")
+	orders_y_both := f32(production_orders_y())
+	testing.expect(t, orders_y_both == orders_y, "orders do not shift when both construct in-button")
 	base_build_planet = -1
 	orbital_defense_building[EARTH] = false
 
-	// 6. Cap state (5 bases on Earth): base button disappears, defense collapses up to SECTION_TOP
+	// 6. Built battery with ammo slots extends the section.
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_ammo[EARTH] = 5
+	ammo_bottom := earth_orbital_defense_bottom_y()
+	testing.expect(t, ammo_bottom == def_btn.y + GRID_PITCH + QUEUE_SLOT_H, "ammo slots extend the defense section")
+	orders_y_ammo := f32(production_orders_y())
+	testing.expect(t, orders_y_ammo - ammo_bottom == 44, "orders stay 44px below ammo slots")
+	orbital_defense_level[EARTH] = 0
+	orbital_defense_ammo[EARTH] = 0
+
+	// 7. Cap state (5 bases on Earth): base button disappears, defense collapses up to SECTION_TOP
 	base_counts[EARTH] = MAX_BASES
 	def_btn_cap := orbital_defense_button_rect(panel_x, EARTH)
 	testing.expect(t, def_btn_cap.y == SECTION_TOP, "defense button collapses up to SECTION_TOP (60) when all bases built")
-	prod_y_cap := f32(production_title_y())
-	testing.expect(t, prod_y_cap == 106, "production title collapses up to 106")
-	testing.expect(t, prod_y_cap - (def_btn_cap.y + def_btn_cap.height) == 10, "consistent 10px gap below collapsed defense button")
+	orders_y_cap := f32(production_orders_y())
+	testing.expect(t, orders_y_cap - (def_btn_cap.y + def_btn_cap.height) == 44, "consistent 44px gap below collapsed defense button")
 
 	// 7. Fleet Requisition and Queue spacing
 	speed_rect := drone_speed_button_rect(panel_x)
@@ -4571,6 +4663,7 @@ orbital_defense_launches_laser_blast_at_close_range :: proc(t: ^testing.T) {
 	reset_world()
 	orbital_defense_level[EARTH] = 1
 	orbital_defense_hp[EARTH] = 100
+	orbital_defense_ammo[EARTH] = 10
 
 	r := sector_radius(EARTH)
 	target_pos := sector_pos(EARTH)
@@ -4616,24 +4709,23 @@ orbital_defense_launches_laser_blast_at_close_range :: proc(t: ^testing.T) {
 }
 
 @(test)
-orbital_defense_upgrade_disables_firing_until_complete :: proc(t: ^testing.T) {
+orbital_defense_construction_disables_firing_until_complete :: proc(t: ^testing.T) {
 	reset_world()
-	orbital_defense_level[EARTH] = 1
-	orbital_defense_hp[EARTH] = 100
+	enemy_base_hp[EARTH] = 0
 	minerals = 1000
 
 	// Provide 10 miners on Earth for construction crew
 	for _ in 0..<10 { add_miner(EARTH) }
 
-	// Begin upgrade to Level 2
-	testing.expect(t, can_build_orbital_defense(EARTH), "can initiate upgrade")
+	// Begin initial construction
+	testing.expect(t, can_build_orbital_defense(EARTH), "can initiate construction")
 	start_orbital_defense_construction(EARTH)
-	testing.expect(t, orbital_defense_building[EARTH], "orbital defense upgrade is in progress")
+	testing.expect(t, orbital_defense_building[EARTH], "orbital defense construction is in progress")
 	testing.expect(t, constructing_miners(EARTH) == 10, "10 miners assigned to construction crew on Earth")
 
-	// While upgrading, the gun is parked in maintenance position (16 degrees elevation)
+	// While building, the gun is parked in maintenance position (16 degrees elevation)
 	_, elev := orbital_defense_aim(EARTH)
-	testing.expect(t, abs(elev - (16.0 * rl.DEG2RAD)) < 0.001, "gun elevation parked at 16 degrees during upgrade")
+	testing.expect(t, abs(elev - (16.0 * rl.DEG2RAD)) < 0.001, "gun elevation parked at 16 degrees during construction")
 
 	// Spawn an enemy fighter in transit targeting Earth within engagement range (distance 6.4 <= 6.8)
 	target_pos := sector_pos(EARTH)
@@ -4651,15 +4743,16 @@ orbital_defense_upgrade_disables_firing_until_complete :: proc(t: ^testing.T) {
 	unit_count += 1
 	initial_unit_count := unit_count
 
-	// Update defenses: since defense is disabled during upgrade, it must NOT fire or destroy the fighter
+	// Update defenses: since defense is disabled during construction, it must NOT fire or destroy the fighter
 	update_orbital_defenses(0.05)
-	testing.expect(t, unit_count == initial_unit_count, "inbound fighter is NOT destroyed while defense is upgrading")
-	testing.expect(t, !orbital_defense_blasts[0].active, "no blast fired while defense is upgrading")
+	testing.expect(t, unit_count == initial_unit_count, "inbound fighter is NOT destroyed while defense is building")
+	testing.expect(t, !orbital_defense_blasts[0].active, "no blast fired while defense is building")
 
-	// Complete the upgrade
+	// Complete the construction
 	update_production(ORBITAL_DEFENSE_BUILD_TIME)
-	testing.expect(t, !orbital_defense_building[EARTH], "upgrade is now complete")
-	testing.expect(t, orbital_defense_level[EARTH] == 2, "defense reached Level 2")
+	testing.expect(t, !orbital_defense_building[EARTH], "construction is now complete")
+	testing.expect(t, orbital_defense_level[EARTH] == 1, "defense built at level 1")
+	testing.expect(t, orbital_defense_ammo[EARTH] == ORBITAL_DEFENSE_START_AMMO, "new battery holds 5 starting shots")
 
 	// Gun is now operational and aims at incoming hostiles
 	_, aim_el := orbital_defense_aim(EARTH)
@@ -4667,8 +4760,8 @@ orbital_defense_upgrade_disables_firing_until_complete :: proc(t: ^testing.T) {
 
 	// Defenses should now engage and destroy the incoming fighter from the muzzle tip
 	update_orbital_defenses(0.05)
-	testing.expect(t, unit_count == initial_unit_count - 1, "inbound fighter intercepted and destroyed after upgrade finishes")
-	testing.expect(t, orbital_defense_blasts[0].active, "blast fired after upgrade completes")
+	testing.expect(t, unit_count == initial_unit_count - 1, "inbound fighter intercepted and destroyed after construction finishes")
+	testing.expect(t, orbital_defense_blasts[0].active, "blast fired after construction completes")
 	expected_muzzle := orbital_defense_muzzle_pos_toward(EARTH, enemy_pos)
 	testing.expect(t, distance(orbital_defense_blasts[0].from, expected_muzzle) < 0.001, "blast launched from gun muzzle tip")
 }
@@ -4957,12 +5050,13 @@ enemy_wave_camera_pan_does_not_trigger_orbital_defense_upgrade :: proc(t: ^testi
 	orbital_defense_building[EARTH] = false
 	orbital_defense_progress[EARTH] = 0
 
-	// Player has 10 miners at Earth and 1000 minerals (meets all upgrade criteria)
+	// Player has 10 miners at Earth and 1000 minerals. With no upgrades, a
+	// built battery no longer qualifies for another defense construction.
 	minerals = 1000
 	for _ in 0..<10 { add_miner(EARTH) }
 	selected_planet = EARTH
 
-	testing.expect(t, can_build_orbital_defense(EARTH), "Earth qualifies for upgrade")
+	testing.expect(t, !can_build_orbital_defense(EARTH), "built battery does not qualify for another defense")
 
 	// Two liberated worlds arm the attack wave; Earth is closest to HQ
 	enemy_base_hp[MERCURY] = 0
@@ -4979,8 +5073,8 @@ enemy_wave_camera_pan_does_not_trigger_orbital_defense_upgrade :: proc(t: ^testi
 	update_camera(0.016)
 	update_input()
 
-	// Orbital defense must NOT trigger upgrade automatically
-	testing.expect(t, !orbital_defense_building[EARTH], "orbital defense must not start upgrade on camera pan")
+	// Orbital defense must NOT trigger construction automatically
+	testing.expect(t, !orbital_defense_building[EARTH], "orbital defense must not start construction on camera pan")
 	testing.expect(t, minerals == 1000, "minerals must not be deducted by camera movement")
 	testing.expect(t, orbital_defense_level[EARTH] == 1, "orbital defense remains at level 1")
 
@@ -5020,6 +5114,7 @@ orbital_defense_wave_kills_reset_after_10_second_inactivity_timer :: proc(t: ^te
 
 	orbital_defense_level[EARTH] = 1
 	orbital_defense_hp[EARTH] = 100
+	orbital_defense_ammo[EARTH] = 10
 
 	// 1. Minor wave: 5 enemy transit fighters arrive at Earth
 	target_pos := sector_pos(EARTH)
@@ -5076,15 +5171,20 @@ orbital_defense_wave_kills_reset_after_10_second_inactivity_timer :: proc(t: ^te
 	testing.expect(t, orbital_defense_reset_timer[EARTH] == 0, "reset timer expired after 10 seconds")
 	testing.expect(t, orbital_defense_wave_kills[EARTH] == 0, "wave kill count reset to 0 after 10s inactivity")
 
-	// Now move the 15 HQ wave fighters into engagement range of Earth
+	// Now move 10 of the 15 HQ wave fighters into engagement range of Earth
+	// (one ammo volley kills up to 10); the other 5 stay distant.
+	moved := 0
 	for i in 0..<unit_count {
 		if units[i].enemy && units[i].target_planet == EARTH {
-			units[i].position = target_pos + rl.Vector3{0, 4.0, 3.0}
+			if moved < 10 {
+				units[i].position = target_pos + rl.Vector3{0, 4.0, 3.0}
+				moved += 1
+			}
 		}
 	}
 
-	// Update defenses: Level 1 defense can now destroy its full capacity of 10 fighters from this new wave
-	for _ in 0..<20 {
+	// Update defenses: one ammo shot destroys the 10 fighters now in range
+	for _ in 0..<2 {
 		update_orbital_defenses(0.05)
 	}
 	testing.expect(t, orbital_defense_wave_kills[EARTH] == 10, "orbital defense destroyed full 10 fighters from HQ wave")
