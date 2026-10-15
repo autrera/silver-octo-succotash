@@ -12,256 +12,18 @@ import "core:time"
 import rl "vendor:raylib"
 import "vendor:raylib/rlgl"
 
-SCREEN_PANEL_WIDTH :: 330
-MAX_BASES :: 5
-// Standing garrisons number ~420 planetside plus the enemy HQ's 500
-// fighters, so the pool holds those plus a full late-game player fleet.
-MAX_UNITS :: 2560
-// The system in solar order: Earth - the player's only starter planet - sits
-// at index 2, so every hardcoded 0/1/2 planet index is gone.
-PLANET_COUNT :: 8
-MERCURY :: 0
-VENUS :: 1
-EARTH :: 2
-MARS :: 3
-JUPITER :: 4
-SATURN :: 5
-URANUS :: 6
-NEPTUNE :: 7
-
-// =========================================================================
-// Gameplay Configuration - Tweakable Setup, Costs & Waves
-// =========================================================================
-
 // ---- Starting Setup on Earth (Tweakable Globals) ------------------------
-// Starting units on Earth in a new game:
 STARTING_EARTH_MINERS := 5
 STARTING_EARTH_COMBAT := 0
-
-// Starting structures on Earth in a new game:
 STARTING_EARTH_BASES := 1
 STARTING_EARTH_ORBITAL_DEFENSE := 1
 STARTING_EARTH_REFINERY := true
 STARTING_HQ_ORBITAL_DEFENSE := 10
 
-// ---- Unit Requisition Costs (Tweakable Constants) -----------------------
-MINER_COST :: 50
-COMBAT_COST :: 125
-
-// Batch requisition affordance unlocked at 5 command bases on Earth.
-BATCH_BUILD_COUNT :: 5
-BATCH_MINER_COST :: MINER_COST * BATCH_BUILD_COUNT
-BATCH_COMBAT_COST :: COMBAT_COST * BATCH_BUILD_COUNT
-
-// Sectors extend the planet list by one: sector ENEMY_HOME is the enemy HQ
-// fortress (not a planet), so the per-planet combat tables (timers, base
-// HP) cover it too and the combat procs work on it unchanged.
-SECTOR_COUNT :: PLANET_COUNT + 1
-ENEMY_HOME :: PLANET_COUNT
-
-// The enemy HQ: a fortress at Neptune's ORIGINAL orbit {140, 5, 24} (before
-// the outer planets moved in), defended by 500 fighter drones with 500
-// structural HP and a Level 10 Orbital Defense battery. Every attack wave launches
-// from here; destroying it - plus liberating every planet - wins the game.
 ENEMY_HQ_POSITION := rl.Vector3{140, 5, 24}
-ENEMY_HQ_RADIUS :: 4.8
-ENEMY_HQ_GARRISON :: 500
-ENEMY_HQ_BASE_HP :: 500
-
-// Combat pacing: one 1:1 kill trade per side every COMBAT_TICK seconds. At
-// 0.2s the 500-drone HQ siege and every dogfight resolves 5x faster than the
-// old 1s tick.
-COMBAT_TICK :: 0.2
-// Battles at the enemy HQ resolve 5x faster than battles on a planet.
-HQ_COMBAT_TICK :: COMBAT_TICK / 5
-COMBAT_TICK_HQ :: HQ_COMBAT_TICK
-ENEMY_HQ_COMBAT_TICK :: HQ_COMBAT_TICK
-COMBAT_TICK_ENEMY_HQ :: HQ_COMBAT_TICK
-// Uncontested enemy siege time per player command base on Earth: with no
-// defenders or miners left, one base falls every BASE_SIEGE_TIME seconds.
-BASE_SIEGE_TIME :: 2.0
-// Enemy attack waves: first at the 3-minute mark, then every 3 minutes. The
-// clock advances while the player has liberated WAVE_MIN_LIBERATED_PLANETS
-// (2) or more worlds (Earth + at least one other).
-WAVE_FIRST_DELAY :: 180
-WAVE_INTERVAL :: 180
-// Attacks only occur once the player liberates at least this many worlds.
-WAVE_MIN_LIBERATED_PLANETS :: 2
-WAVE_MIN_MINING_PLANETS :: 2
-// Wave size scales with liberation: (liberated planets - 1) * 15 fighters -
-// 3 liberated planets send 30 fighters. Earth starts liberated, so the first
-// wave only bites once a second world falls.
-WAVE_FIGHTERS_PER_LIBERATED :: 15
-
-// Minor attack waves: every 75s unliberated planets launch combat drones (10 per wave)
-// against liberated planets. Independent of mined planets.
-MINOR_WAVE_INTERVAL :: 75.0
-MINOR_WAVE_SIZE :: 10
-// Every planet except Earth opens occupied: garrison fighters, garrison
-// miners and enemy base HP all scale up with distance from Earth
-// (Venus 10/4/10 ... Neptune 95/22/60; indexed by sector, with the enemy HQ
-// as the last, heaviest entry).
 GARRISON_FIGHTERS := [SECTOR_COUNT]int{30, 15, 0, 20, 75, 60, 45, 95, ENEMY_HQ_GARRISON}
 GARRISON_MINERS := [SECTOR_COUNT]int{8, 4, 0, 6, 10, 14, 18, 22, 0}
 GARRISON_BASE_HP := [SECTOR_COUNT]int{20, 10, 0, 15, 30, 40, 50, 60, ENEMY_HQ_BASE_HP}
-// Drone production per command base line (mining 6s, combat 10s).
-MINER_BUILD_TIME :: 4.0
-COMBAT_BUILD_TIME :: 8.0
-// Command base construction price, deducted up front when the build queues.
-BASE_COST :: 500
-// Drone build-speed upgrade: 5000 minerals per level; each level builds
-// drones 20% faster (compounding), five levels max (~33% of base time).
-DRONE_SPEED_UPGRADE_COST :: 5000
-DRONE_SPEED_UPGRADE_MAX :: 5
-DRONE_SPEED_UPGRADE_FACTOR :: 0.8
-// A command base needs 5 mining drones present at the planet and takes one
-// full minute to build; those drones stop mining until it completes.
-BASE_CONSTRUCT_MINERS :: 5
-BASE_CONSTRUCT_TIME :: 60.0
-// Transit speeds run at 25% of the pre-warpace pace: slow enough that
-// dispatches are commitments. Mining transit dropped a further 25%
-// (1.75 -> 1.3125) in the war-economy rebalance.
-COMBAT_TRANSIT_SPEED :: 2.5
-MINING_TRANSIT_SPEED :: 1.3125
-// Mining drone cycle timing (shared by the simulation and the MPS forecast).
-// On-site mining takes 4s (up 33% from 3s), for ~25% slower mining overall.
-MINING_DURATION :: 4.0
-DEPOSIT_DURATION :: 0.5
-// Scout survival: garrison defenses hold fire this long against a miner
-// freshly pinned at an occupied planet (.IDLE progress doubles as the clock).
-SCOUT_SURVIVAL :: 3.5
-// Combat vision linger: when the player's last fighting drone at a planet is
-// destroyed in combat, vision of that planet persists for this many seconds
-// before falling back under fog of war.
-COMBAT_VISION_LINGER :: 3.0
-// Flying laser bolts: flight speed along the shooter->target ray and the
-// visible bolt length.
-LASER_BOLT_SPEED :: 14.0
-LASER_BOLT_LEN :: 0.65
-
-Unit_Type :: enum {MINING, COMBAT}
-Unit_State :: enum {IDLE, TRANSIT, MINING, RETURNING, DEPOSITING, GUARDING, CONSTRUCTING}
-Build_Target :: enum {NONE, BASE, REFINERY, ORBITAL_DEFENSE, ORBITAL_DEFENSE_AMMO}
-
-Planet :: struct {
-	name: cstring,
-	position: rl.Vector3,
-	radius: f32,
-	color: rl.Color,
-}
-
-Production :: struct {
-	kind: Unit_Type,
-	progress: f32,
-	active: bool,
-}
-
-// Last-known intel snapshot, recorded while a planet is lit; shown under fog
-// once the planet has been scouted at least once. The per-unit roster feeds
-// the dimmed ghost inspector view drawn while the planet is dark.
-INTEL_UNIT_CAP :: 200
-Intel_Unit :: struct {
-	kind: Unit_Type,
-	state: Unit_State,
-	enemy: bool,
-}
-Intel :: struct {
-	fighters: int,
-	miners: int,
-	base_hp: int,
-	units: [INTEL_UNIT_CAP]Intel_Unit,
-	unit_count: int,
-}
-
-MAX_PENDING :: 25
-TILE_SIZE :: 20
-TILE_GAP :: 10
-TILES_PER_ROW :: 10
-
-// ---- Sci-Fi Cyberpunk HUD Palette ---------------------------------------
-// Vibrant teal/cyan HUD vector interface style matching reference:
-// dark teal-black glass panels, razor-sharp cyan frames, amber tactical accents.
-SCIFI_CYAN       :: rl.Color{0, 240, 216, 255}    // Primary vibrant laser cyan (#00F0D8)
-SCIFI_MINT       :: rl.Color{140, 255, 235, 255}  // Bright highlight & glow (#8CFFEB)
-SCIFI_BLUE       :: rl.Color{0, 200, 245, 255}    // Combat / wing blue (#00C8F5)
-SCIFI_AMBER      :: rl.Color{255, 128, 36, 255}   // Tactical amber / warning accent (#FF8024)
-SCIFI_AMBER_DIM  :: rl.Color{140, 65, 18, 255}    // Dim amber (#8C4112)
-SCIFI_RED        :: rl.Color{255, 60, 75, 255}    // Hostile / alert red (#FF3C4B)
-SCIFI_RED_DIM    :: rl.Color{120, 30, 40, 255}    // Dim hostile red (#781E28)
-SCIFI_STEEL      :: rl.Color{18, 110, 122, 255}   // Active framing & border (#126E7A)
-SCIFI_DIM        :: rl.Color{6, 58, 68, 255}      // Inactive grid & frames (#063A44)
-SCIFI_PANEL      :: rl.Color{6, 16, 22, 240}      // Translucent deep teal glass (#061016)
-SCIFI_PANEL_SOLID:: rl.Color{8, 22, 30, 255}      // Solid dark teal backing (#08161E)
-SCIFI_TEXT       :: rl.Color{215, 245, 245, 255}  // Primary crisp text (#D7F5F5)
-SCIFI_MUTED      :: rl.Color{85, 145, 155, 255}   // Secondary muted tech text (#55919B)
-
-
-// ---- Inspector layout ---------------------------------------------------
-// One horizontal grid for the whole side panel: headers, cards, buttons,
-// production lines and rosters all align to PANEL_PAD_X with content width
-// PANEL_CONTENT_W. Section tops flow from SECTION_TOP through ORDERS_BASE_Y
-// into the queue/roster procs below. Render procs and click hitboxes share
-// every constant, so graphics and hitboxes cannot drift apart.
-PANEL_PAD_X :: 20
-PANEL_CONTENT_W :: SCREEN_PANEL_WIDTH - 2 * PANEL_PAD_X
-CARD_INSET :: 10
-BTN_GAP :: 12
-BUILD_BTN_W :: 139
-BUILD_BTN_H :: 36
-BASE_BTN_H :: 36
-QUEUE_SLOT_W :: 50
-QUEUE_SLOT_H :: 20
-QUEUE_SLOT_GAP :: 10
-GRID_PITCH :: 24
-PROD_PITCH :: 34
-PANEL_SUB_Y :: 60
-OUTPOST_CARD_Y :: PANEL_SUB_Y
-SECTION_TOP :: PANEL_SUB_Y
-CARD_H :: 54
-CARD_LINE_1 :: OUTPOST_CARD_Y + 14
-CARD_LINE_2 :: OUTPOST_CARD_Y + 33
-REFINERY_BTN_Y :: SECTION_TOP
-ORBITAL_DEFENSE_BTN_Y :: 104
-BASE_PROGRESS_Y :: SECTION_TOP + BASE_BTN_H + 4
-PROD_TITLE_Y :: 150
-PROD_FIRST_Y :: 173
-PROD_BAR_DY :: 16
-ORDERS_BASE_Y :: 244
-BASE_COLLAPSE_Y :: BASE_BTN_H + 8
-UPGRADE_DY :: 48
-UPGRADE_H :: 36
-QUEUE_DY :: 108
-QUEUE_LABEL_GAP :: 23
-DIALOG_PAD :: 28
-DIALOG_BTN_H :: 44
-HUD_PAD :: 16
-BADGE_PAD :: 8
-BADGE_GAP :: 8
-BADGE_Y :: 72
-BADGE_H :: 20
-BOTTOM_DOCK_H :: 36
-ROSTER_BASE_Y :: 150
-ROSTER_BELOW_QUEUE :: 206
-SECTION_PAD_Y :: 26
-PROD_BAR_W :: PANEL_CONTENT_W
-BAR_H :: 8
-
-Unit :: struct {
-	kind: Unit_Type,
-	state: Unit_State,
-	position: rl.Vector3,
-	home_planet: int,
-	affiliation: int,
-	target_planet: int,
-	enemy: bool,
-	progress: f32,
-	orbit_angle: f32,
-	// Control-group assignment: 0 = none, 1..9 = squad number. Living on the
-	// unit itself keeps squads pruned as units are destroyed and shifted.
-	squad: int,
-	build_target: Build_Target,
-	mining_active: bool,
-}
 
 planets := [PLANET_COUNT]Planet{
 	{name = "MERCURY", position = {-30, 2, 8}, radius = 1.6, color = rl.Color{150, 148, 145, 255}},
@@ -274,25 +36,12 @@ planets := [PLANET_COUNT]Planet{
 	{name = "NEPTUNE", position = {35, 5, 24}, radius = 2.9, color = rl.Color{80, 110, 220, 255}},
 }
 
-// ---- Planet visuals -----------------------------------------------------
-// Procedural textured planet models: each planet gets a 128x128 perlin-noise
-// texture tinted to its base color (bands for gas giants, blobs for rocky
-// worlds), mapped onto a sphere mesh so DrawModelEx can spin it slowly.
-// Initialized once after InitWindow (needs a GL context); draw_world falls
-// back to flat DrawSphere until ready (headless tests never init).
+// Procedural textured planet models
 planet_models: [PLANET_COUNT]rl.Model
 planet_textures: [PLANET_COUNT]rl.Texture2D
 planet_visuals_ready := false
-// Slow per-planet spin angle (radians); advanced in step_simulation so spin
-// freezes on pause. Outer giants turn a touch faster for visible motion.
 planet_spin: [PLANET_COUNT]f32
 
-Drone_Model_Kind :: enum {
-	PLAYER_MINER,
-	ENEMY_MINER,
-	PLAYER_FIGHTER,
-	ENEMY_FIGHTER,
-}
 drone_models: [Drone_Model_Kind]rl.Model
 drone_visuals_ready := false
 
@@ -306,52 +55,21 @@ planet_unit_cache_dirty := true
 selected_planet := EARTH
 minerals := 350
 mineral_accumulator: f32 = 0
-// Drone build-speed upgrade level (0..DRONE_SPEED_UPGRADE_MAX).
 drone_speed_level := 0
-Auto_Build_Mode :: enum {
-	OFF,
-	MINERS,
-	COMBAT,
-}
 auto_build_mode: Auto_Build_Mode = .OFF
 auto_build_last_mode: Auto_Build_Mode = .MINERS
 autobuild_retry_timer: f32 = 0
-// Player command bases exist only on Earth; set by initialize_game/reset_world.
 base_counts: [PLANET_COUNT]int
 production: [PLANET_COUNT][MAX_BASES]Production
 pending: [PLANET_COUNT][MAX_PENDING]Unit_Type
 pending_count: [PLANET_COUNT]int
 base_build_progress: f32
 base_build_planet := -1
-REFINERY_BUILD_TIME :: 60.0
-REFINERY_CONSTRUCT_MINERS :: 10
+
 refinery_built: [PLANET_COUNT]bool
 refinery_building: [PLANET_COUNT]bool
 refinery_progress: [PLANET_COUNT]f32
-ORBITAL_DEFENSE_COST :: 1000
-ORBITAL_DEFENSE_MAX_LEVEL :: 10
-ORBITAL_DEFENSE_BUILD_TIME :: 60.0
-ORBITAL_DEFENSE_CONSTRUCT_MINERS :: 10
-ORBITAL_DEFENSE_HP_PER_LEVEL :: 100
-ORBITAL_DEFENSE_KILLS_PER_LEVEL :: 10
-ORBITAL_DEFENSE_SCAN_SPEED :: 0.8
-ORBITAL_DEFENSE_TRACK_SPEED :: 3.8
-ORBITAL_DEFENSE_ELEV_SPEED :: 2.4
-ORBITAL_DEFENSE_IDLE_ELEV :: 38.0 * rl.DEG2RAD
-ORBITAL_DEFENSE_PARK_ELEV :: 16.0 * rl.DEG2RAD
-ORBITAL_DEFENSE_TARGET_RANGE :: 6.0
-ORBITAL_DEFENSE_WAVE_RESET_DELAY :: 10.0
-// Orbital defense ammunition: no upgrades - a single battery holds up to
-// AMMO_MAX shots, starts at START_AMMO, each shot kills KILLS_PER_SHOT
-// fighters. Ammo costs AMMO_COST minerals, takes AMMO_BUILD_TIME seconds
-// with AMMO_CONSTRUCT_MINERS mining drones on the crew.
-ORBITAL_DEFENSE_AMMO_MAX :: 10
-ORBITAL_DEFENSE_START_AMMO :: 5
-ORBITAL_DEFENSE_AMMO_COST :: 200
-ORBITAL_DEFENSE_AMMO_BUILD_TIME :: 20.0
-ORBITAL_DEFENSE_AMMO_CONSTRUCT_MINERS :: 1
-ORBITAL_DEFENSE_KILLS_PER_SHOT :: 10
-ORBITAL_DEFENSE_FIRE_COOLDOWN :: 0.5
+
 orbital_defense_level: [SECTOR_COUNT]int
 orbital_defense_building: [SECTOR_COUNT]bool
 orbital_defense_progress: [SECTOR_COUNT]f32
@@ -372,43 +90,19 @@ refinery_build_order: [PLANET_COUNT]int
 orbital_defense_build_order: [SECTOR_COUNT]int
 base_build_order: [PLANET_COUNT]int
 
-Orbital_Defense_Blast :: struct {
-	active: bool,
-	planet: int,
-	from: rl.Vector3,
-	to: rl.Vector3,
-	elapsed: f32,
-	duration: f32,
-}
-
-MAX_ORBITAL_BLASTS :: 32
 orbital_defense_blasts: [MAX_ORBITAL_BLASTS]Orbital_Defense_Blast
 camera: rl.Camera3D
-// Framing: center of the planet extents (X -30..50, Z -20..24) after the
-// Earth-centered repositioning; pan/zoom covers the far-off enemy HQ.
 camera_target := rl.Vector3{10, 0, 2}
-// Startup altitude: 200 - 185*0.60 so zoom_percent() opens at exactly 60% -
-// high enough to frame the whole Earth-centered system (X -30..50, Z -20..24)
-// beside the 330px inspector panel (all eight planets on screen at open).
-CAMERA_START_Y :: 200.0 - 185.0 * 0.60
 inspector_drag_start: rl.Vector2
 inspector_drag_active: bool
-DOUBLE_CLICK_TIME :: 0.35 // seconds: maximum time interval between clicks to register a double-click
 last_unit_click_time: time.Tick
 last_unit_clicked_index := -1
 last_unit_clicked_planet := -1
 
-// Enemy occupation: per-sector base HP. Every planet except Earth starts
-// with an enemy command base; a planet is liberated once its base is
-// destroyed (and, by the combat rules, all enemy drones are gone). The last
-// entry is the enemy HQ's structural HP. Initialized from GARRISON_BASE_HP
-// by initialize_game and reset_world.
 enemy_base_hp: [SECTOR_COUNT]int
 enemy_wave_timer: f32
 wave_started: bool
 minor_wave_timer: f32
-// Per-planet combat pacing: 1:1 fighter trades, miner sweeps and base damage
-// all tick on COMBAT_TICK.
 combat_timer: [SECTOR_COUNT]f32
 miner_timer: [SECTOR_COUNT]f32
 base_timer: [SECTOR_COUNT]f32
@@ -417,40 +111,17 @@ combat_vision_timer: [SECTOR_COUNT]f32
 game_paused := false
 controls_overlay_open := false
 quit_requested := false
-// Victory: latched once every planet is liberated AND the enemy HQ falls;
-// freezes the sim behind the victory overlay until restart.
 victory := false
-// Defeat: latched once no command base AND no player unit remains; freezes
-// the sim behind the game-over overlay until restart.
 defeated := false
-// Earth rally point: NO_RALLY (-1) means no rally set. (Earth used to double
-// as the 0 sentinel before the planet reindex.)
-NO_RALLY :: -1
 earth_rally := NO_RALLY
-// Fog-of-war intel memory: per-planet snapshot plus a scouted-at-least-once bit.
 last_known_intel: [PLANET_COUNT]Intel
 intel_recorded: [PLANET_COUNT]bool
-// Game-clock accumulator driving laser bolt flight; frozen while paused.
 laser_anim_time: f32
-// Visual intensity of the red palpitating combat nebula per sector [0..SECTOR_COUNT-1].
-// Planets flare up when drones are actively fighting there; enemy HQ maintains an
-// ominous background presence that surges to maximum intensity during an assault.
 combat_nebula_intensity: [SECTOR_COUNT]f32
-// Visual intensity of the yellow pulsating nebula aura on the attack source planet before minor wave.
 minor_wave_source_nebula_intensity: [SECTOR_COUNT]f32
 sector_combat_state: [SECTOR_COUNT]bool
-// Pre-allocated sector rendering spots for draw_world representation pass
-World_Sector_Spots :: struct {
-	player_combat: [256]rl.Vector3,
-	enemy_combat:  [256]rl.Vector3,
-	player_miners: [256]rl.Vector3,
-	enemy_miners:  [256]rl.Vector3,
-	pc:  int,
-	ec:  int,
-	pmc: int,
-	emc: int,
-}
 world_sector_spots: [SECTOR_COUNT]World_Sector_Spots
+
 // Visual intensity of Earth's manufacturing industry lights [0..1]: flares up
 // when units or bases are being constructed on Earth, turning surface lights on and off.
 earth_industry_intensity: f32
