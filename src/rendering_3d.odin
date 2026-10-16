@@ -8,8 +8,6 @@ import "vendor:raylib/rlgl"
 
 draw_world :: proc() {
 	viewport_w := rl.GetScreenWidth() - SCREEN_PANEL_WIDTH
-	// Stars and combat nebulae project to screen space before the 3D pass,
-	// so they sit in the background behind every planet and fortress.
 	draw_starfield()
 	draw_combat_nebulae()
 	rl.BeginMode3D(camera)
@@ -18,28 +16,22 @@ draw_world :: proc() {
 		lit := has_vision(p)
 		surface := planet.color
 		if !lit {
-			// Fog of war: planets the player has no presence at render shadowed.
 			surface = rl.Color{58, 62, 74, 255}
 		}
 		if planet_visuals_ready {
-			// Textured, slowly spinning sphere; fogged worlds tint grey.
 			tint := rl.WHITE
 			if !lit { tint = rl.Color{110, 116, 130, 255} }
 			rl.DrawModelEx(planet_models[p], planet.position, {0, 1, 0}, planet_spin[p] * 57.29578, {1, 1, 1}, tint)
 		} else {
 			rl.DrawSphere(planet.position, planet.radius, surface)
 		}
-		// Atmosphere shell: faint planet-tinted halo for depth.
 		atmo := rl.Color{planet.color.r, planet.color.g, planet.color.b, 255}
 		if !lit { atmo = rl.Color{70, 76, 90, 255} }
 		rl.DrawSphereEx(planet.position, planet.radius * 1.09, 12, 24, rl.Fade(atmo, 0.16))
-		// Sun glint: small bright dot toward the fixed light direction.
 		glint_dir := rl.Vector3Normalize({-0.45, 0.75, -0.35})
 		glint_pos := planet.position + glint_dir * (planet.radius * 0.82)
 		rl.DrawSphereEx(glint_pos, planet.radius * 0.10, 6, 8, rl.Color{255, 255, 255, 70})
-		// Drone orbit path: faint ring showing the guard orbit.
 		rl.DrawCircle3D(planet.position + {0, 1.0, 0}, planet.radius + 1.5, {0, 1, 0}, 90, rl.Fade(atmo, 0.30))
-		// Saturn's rings: two tilted bands.
 		if p == SATURN {
 			ring_col := rl.Color{225, 205, 155, 255}
 			if !lit { ring_col = rl.Color{70, 76, 90, 255} }
@@ -48,10 +40,8 @@ draw_world :: proc() {
 		}
 		if p == selected_planet {
 			pulse := 0.75 + 0.25 * math.sin(laser_anim_time * 3.0)
-			// Concentric tactical rings with segmented arcs
 			rl.DrawCircle3D(planet.position, planet.radius + 0.35, {0, 1, 0}, 90, rl.Fade(SCIFI_CYAN, pulse))
 			rl.DrawCircle3D(planet.position, planet.radius + 0.70, {0, 1, 0}, 90, SCIFI_DIM)
-			// Cardinal radial ticks
 			for a in 0..<4 {
 				ang := f32(a) * math.PI / 2.0 + laser_anim_time * 0.4
 				p_in := planet.position + rl.Vector3{math.cos(ang) * (planet.radius + 0.35), 0, math.sin(ang) * (planet.radius + 0.35)}
@@ -59,15 +49,12 @@ draw_world :: proc() {
 				rl.DrawLine3D(p_in, p_out, SCIFI_CYAN)
 			}
 		}
-		// Orbital Defense: cyberpunk sand-colored Flak 88 battery on the planet surface at the north pole
 		if orbital_defense_level[p] > 0 {
 			draw_cyberpunk_flak88(p)
 		} else if orbital_defense_building[p] {
 			draw_cyberpunk_flak88_construction_site(p)
 		}
 	}
-	// The enemy HQ fortress at Neptune's old orbit: layered battlestation -
-	// dark red hull (bright once scouted), a dead grey husk once destroyed.
 	hq_color := rl.Color{96, 34, 40, 255}
 	hq_trim := rl.Color{150, 55, 62, 255}
 	hq_glow := rl.Color{255, 90, 90, 255}
@@ -85,11 +72,6 @@ draw_world :: proc() {
 	}
 	draw_rally_flag()
 
-	// Drones render representationally per side and group: one drone
-	// model per up-to-10 drones (ceil(count/10)), so a 5-drone wave in
-	// transit shows as one drone and the 40-strong Jupiter garrison as
-	// four. This applies in orbit / on-site and in transit (per target
-	// planet). Rosters, tracking and selection still use the real unit list.
 	sector_vis: [SECTOR_COUNT]bool
 	for p in 0..<SECTOR_COUNT {
 		sector_vis[p] = has_vision(p)
@@ -103,7 +85,6 @@ draw_world :: proc() {
 	miner_transit_counts: [SECTOR_COUNT][2]int
 	miner_return_counts: [SECTOR_COUNT][2]int
 
-	// Pass 1: selection rings, stationed unit spots, and transit counts.
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if selected_units[i] {
@@ -150,7 +131,6 @@ draw_world :: proc() {
 		}
 	}
 
-	// Draw stationed drones and lasers per sector.
 	for p in 0..<SECTOR_COUNT {
 		if !sector_vis[p] { continue }
 		s := &world_sector_spots[p]
@@ -177,7 +157,6 @@ draw_world :: proc() {
 		}
 	}
 
-	// Pass 2: draw transit units and transit lines in a single pass.
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.state == .TRANSIT {
@@ -225,19 +204,16 @@ draw_world :: proc() {
 	draw_refinery_mineral_beams()
 	draw_orbital_defense_blasts()
 	rl.EndMode3D()
-	// Luminous industrial manufacturing lights on Earth when units are being created
 	draw_earth_industry_lights()
 	if in_start_menu {
 		return
 	}
 
-	// Overlay labels and optical reticles anchored to 3D celestial positions.
 	for p in 0..<PLANET_COUNT {
 		pos := rl.GetWorldToScreen(planets[p].position, camera)
 		if pos.x < f32(viewport_w) && pos.x > 0 && pos.y > 0 && pos.y < f32(rl.GetScreenHeight()) {
 			label := planets[p].name
 			if p == selected_planet {
-				// Optical aim reticle over the selected planet
 				draw_optical_reticle_2d(pos, planets[p].radius * 5.0, SCIFI_CYAN, label)
 			} else {
 				rl.DrawText(label, c.int(pos.x - 28 + 1), c.int(pos.y - planets[p].radius * 5 - 14 + 1), 14, rl.Color{0, 0, 0, 170})
@@ -245,7 +221,6 @@ draw_world :: proc() {
 			}
 		}
 	}
-	// Enemy HQ label / reticle
 	hq_screen := rl.GetWorldToScreen(ENEMY_HQ_POSITION, camera)
 	if hq_screen.x < f32(viewport_w) && hq_screen.x > 0 && hq_screen.y > 0 && hq_screen.y < f32(rl.GetScreenHeight()) {
 		hq_label: cstring = "ENEMY HQ"
@@ -257,46 +232,37 @@ draw_world :: proc() {
 		}
 	}
 
-	// Conquered planet overlays (planetary defense level, miners current/cap, combat drone count)
 	draw_conquered_planet_overlays(f32(viewport_w), f32(rl.GetScreenHeight()))
 
-	// Top bar: minerals plus global MPS and drone speed upgrade level
-	// Two-tier aerospace winged HUD dock (inspired by Star Fox Zero top-left UI)
 	tl_dock_w: f32 = 400.0
 	tl_dock_h: f32 = 50.0
 	tl_rect := rl.Rectangle{f32(HUD_PAD), f32(HUD_PAD), tl_dock_w, tl_dock_h}
 	draw_winged_panel_left(tl_rect, 6, 20, SCIFI_PANEL, SCIFI_CYAN)
 
-	// Column 1: Minerals (static 104px column to fit up to 999999 minerals without shifting)
 	col1_x: f32 = f32(HUD_PAD + 16)
 	rl.DrawText("MINERALS", i32(col1_x), i32(HUD_PAD + 7), 10, SCIFI_MINT)
 	min_val := rl.TextFormat("%d", minerals)
 	rl.DrawText(min_val, i32(col1_x), i32(HUD_PAD + 20), 22, SCIFI_AMBER)
 
-	// Divider 1 (completely static position)
 	div1_x: f32 = col1_x + 104.0
 	rl.DrawLineV({div1_x, HUD_PAD + 10}, {div1_x, HUD_PAD + 40}, SCIFI_DIM)
 	draw_diamond(div1_x, HUD_PAD + 25, 2.5, SCIFI_CYAN)
 
-	// Column 2: MPS (static 92px column)
 	col2_x: f32 = div1_x + 16.0
 	rl.DrawText("PRODUCTION", i32(col2_x), i32(HUD_PAD + 7), 10, SCIFI_MUTED)
 	mps_val := rl.TextFormat("+%.1f/s", global_mps())
 	rl.DrawText(mps_val, i32(col2_x), i32(HUD_PAD + 22), 17, SCIFI_CYAN)
 
-	// Divider 2 (completely static position)
 	div2_x: f32 = col2_x + 92.0
 	rl.DrawLineV({div2_x, HUD_PAD + 10}, {div2_x, HUD_PAD + 40}, SCIFI_DIM)
 	draw_diamond(div2_x, HUD_PAD + 25, 2.5, SCIFI_CYAN)
 
-	// Column 3: Drone Speed (completely static position)
 	col3_x: f32 = div2_x + 16.0
 	rl.DrawText("DRONE SPEED", i32(col3_x), i32(HUD_PAD + 7), 10, SCIFI_MUTED)
 	speed_val := rl.TextFormat("LVL %d/%d", drone_speed_level, DRONE_SPEED_UPGRADE_MAX)
 	rl.DrawText(speed_val, i32(col3_x), i32(HUD_PAD + 24), 11, SCIFI_MINT)
 	draw_segmented_meter({col3_x + 58, HUD_PAD + 24, 48, 12}, f32(drone_speed_level) / f32(DRONE_SPEED_UPGRADE_MAX), 5, SCIFI_MINT, SCIFI_DIM)
 
-	// Save notification chip (if active)
 	if hud_save_notification_timer > 0 {
 		saved_lbl: cstring = "GAME SAVED"
 		saved_w := f32(rl.MeasureText(saved_lbl, 11))
@@ -305,11 +271,9 @@ draw_world :: proc() {
 		rl.DrawText(saved_lbl, i32(saved_x), i32(HUD_PAD + 18), 11, SCIFI_AMBER)
 	}
 
-	// Bottom: standalone Controls button
 	ctrl_rect := controls_button_rect()
 	draw_button(ctrl_rect, "Controls", SCIFI_PANEL_SOLID, true)
 
-	// Bottom right of viewport: telemetry readout (ALT, ZOOM, FPS) in plain white text
 	telemetry_cam := rl.TextFormat("ALT %.0f   ZOOM %d%%   %d FPS", camera.position.y, zoom_percent(), rl.GetFPS())
 	tel_font_size: i32 = 12
 	tel_w := rl.MeasureText(telemetry_cam, tel_font_size)
@@ -343,7 +307,6 @@ draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
 
 	up := rl.Vector3{0, 1, 0}
 
-	// 1. Ventral Keel & Fusion Core
 	rl.DrawCylinderEx(center - up * 0.6, center - up * 1.5, 2.6, 1.9, 6, dark)
 	rl.DrawCylinderEx(center - up * 1.5, center - up * 2.3, 1.9, 1.0, 6, gunmetal)
 
@@ -362,7 +325,6 @@ draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
 		rl.DrawLine3D(f_top - ftan * 0.08, f_bot - ftan * 0.08, eff_glow)
 	}
 
-	// 2. Main Bastion Citadel Platform (Layered Octagonal Hull)
 	draw_oriented_box(center - up * 0.35, 3.2, 0.35, 3.2, {1, 0, 0}, up, {0, 0, 1}, dark)
 	draw_oriented_box(center - up * 0.35, 2.26, 0.36, 2.26, {0.707, 0, 0.707}, up, {-0.707, 0, 0.707}, dark)
 
@@ -381,7 +343,6 @@ draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
 		draw_oriented_box(b_pos + up * 0.18, 0.08, 0.06, 1.2, cdir, up, ctan, trim)
 		rl.DrawLine3D(b_pos - ctan * 1.3 - up * 0.15, b_pos + ctan * 1.3 - up * 0.15, eff_glow)
 
-		// VLS missile silo cell grid on cardinal decks
 		vls_center := center + up * 0.72 + cdir * 2.15
 		draw_oriented_box(vls_center, 0.35, 0.02, 0.55, cdir, up, ctan, gunmetal)
 		for vr in -1..=1 {
@@ -393,7 +354,6 @@ draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
 		}
 	}
 
-	// 3. Four Outrigger Fighter Hangar Bastions
 	for d_idx in 0..<4 {
 		ang := f32(d_idx) * (math.PI / 2.0) + (math.PI / 4.0)
 		b_dir := rl.Vector3{math.cos(ang), 0, math.sin(ang)}
@@ -443,7 +403,6 @@ draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
 		rl.DrawSphere(tip_r, 0.07, rl.Fade(strobe_col, 1.0 - strobe_p))
 	}
 
-	// 4. Mid-Deck Superstructure & Command Citadel
 	draw_oriented_box(center + up * 1.1, 1.9, 0.40, 2.1, {1, 0, 0}, up, {0, 0, 1}, dark)
 	draw_oriented_box(center + up * 1.5, 1.5, 0.38, 1.7, {1, 0, 0}, up, {0, 0, 1}, hull)
 
@@ -459,7 +418,6 @@ draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
 		rl.DrawCylinderEx(blister_p + up * 0.26, blister_p + up * 0.85, 0.02, 0.01, 4, steel_lit)
 	}
 
-	// 5. Integrated Level 10 Orbital Defense Battery
 	battery_mount := center + up * 1.95 + rl.Vector3{0.3, 0, 0}
 	rl.DrawCylinderEx(battery_mount, battery_mount + up * 0.28, 1.4, 1.3, 16, gunmetal)
 	rl.DrawCylinderEx(battery_mount + up * 0.25, battery_mount + up * 0.29, 1.35, 1.35, 16, eff_glow)
@@ -559,7 +517,6 @@ draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
 	collimator_e := pivot + barrel_dir * 2.80
 	rl.DrawLine3D(collimator_s, collimator_e, eff_glow)
 
-	// 6. Sensor Mast, Rotating Radar & Command Spire
 	mast_root := center + up * 2.0 - rl.Vector3{1.1, 0, 0}
 	rl.DrawCylinderEx(mast_root, mast_root + up * 2.2, 0.26, 0.14, 6, gunmetal)
 	rl.DrawCylinderEx(mast_root + up * 2.2, mast_root + up * 4.2, 0.14, 0.05, 4, steel_lit)
@@ -580,15 +537,12 @@ draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
 	}
 }
 
-// Orbit tangent used as a fighter's forward vector while guarding.
 drone_heading :: proc(pos, center: rl.Vector3) -> rl.Vector3 {
 	t := rl.Vector3{-(pos.z - center.z), 0, pos.x - center.x}
 	if rl.Vector3Length(t) < 0.001 { return {1, 0, 0} }
 	return rl.Vector3Normalize(t)
 }
 
-// Procedural drone models: baked once into GPU VRAM at startup and drawn via
-// DrawModelEx (1 draw call per drone instead of dozens of immediate-mode calls).
 add_triangle :: proc(
 	verts: ^[dynamic]f32, norms: ^[dynamic]f32, cols: ^[dynamic]u8,
 	v1, v2, v3: rl.Vector3, color: rl.Color,
@@ -638,7 +592,6 @@ add_cylinder :: proc(
 		t1 := end + n1 * r_end
 		t2 := end + n2 * r_end
 
-		// Side quad (2 triangles)
 		append(verts, b1.x, b1.y, b1.z,  b2.x, b2.y, b2.z,  t1.x, t1.y, t1.z)
 		append(norms, n1.x, n1.y, n1.z,  n2.x, n2.y, n2.z,  n1.x, n1.y, n1.z)
 		append(cols, color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a)
@@ -647,14 +600,12 @@ add_cylinder :: proc(
 		append(norms, n2.x, n2.y, n2.z,  n2.x, n2.y, n2.z,  n1.x, n1.y, n1.z)
 		append(cols, color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a)
 
-		// Start cap
 		if r_start > 0 {
 			append(verts, start.x, start.y, start.z,  b2.x, b2.y, b2.z,  b1.x, b1.y, b1.z)
 			append(norms, -d.x, -d.y, -d.z,  -d.x, -d.y, -d.z,  -d.x, -d.y, -d.z)
 			append(cols, color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a)
 		}
 
-		// End cap
 		if r_end > 0 {
 			append(verts, end.x, end.y, end.z,  t1.x, t1.y, t1.z,  t2.x, t2.y, t2.z)
 			append(norms, d.x, d.y, d.z,  d.x, d.y, d.z,  d.x, d.y, d.z)
@@ -698,12 +649,10 @@ add_sphere :: proc(
 			p10 := center + n10 * radius
 			p11 := center + n11 * radius
 
-			// Triangle 1
 			append(verts, p00.x, p00.y, p00.z,  p10.x, p10.y, p10.z,  p01.x, p01.y, p01.z)
 			append(norms, n00.x, n00.y, n00.z,  n10.x, n10.y, n10.z,  n01.x, n01.y, n01.z)
 			append(cols, color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a)
 
-			// Triangle 2
 			append(verts, p01.x, p01.y, p01.z,  p10.x, p10.y, p10.z,  p11.x, p11.y, p11.z)
 			append(norms, n01.x, n01.y, n01.z,  n10.x, n10.y, n10.z,  n11.x, n11.y, n11.z)
 			append(cols, color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a)
@@ -768,13 +717,11 @@ build_miner_model :: proc(enemy: bool) -> rl.Model {
 	side := rl.Vector3{0, 0, 1}
 	pos := rl.Vector3{0, 0, 0}
 
-	// 1. Central Heavy Flatbed Chassis
 	deck_f := pos + h * 0.16 - up * 0.02
 	deck_b := pos - h * 0.22 - up * 0.02
 	add_cylinder(&verts, &norms, &cols, deck_b, deck_f, 0.22, 0.20, 6, frame_dark)
 	add_cylinder(&verts, &norms, &cols, deck_b + up * 0.04, deck_f + up * 0.04, 0.18, 0.16, 6, hull_main)
 
-	// 2. Giant Spherical Ore Tank (Mounted High at the Rear)
 	tank_pos := pos - h * 0.14 + up * 0.24
 	tank_r: f32 = 0.24
 	add_sphere(&verts, &norms, &cols, tank_pos, tank_r, 8, 10, tank_mesh)
@@ -787,17 +734,14 @@ build_miner_model :: proc(enemy: bool) -> rl.Model {
 	}
 	add_cylinder(&verts, &norms, &cols, pos - h * 0.22 + up * 0.04, tank_pos - h * 0.16 + up * 0.04, 0.035, 0.025, 4, hull_plate)
 
-	// 3. Operator Cabin with Visor (Front-Left Deck)
 	cab_pos := pos + h * 0.14 + up * 0.08 - side * 0.07
 	add_cylinder(&verts, &norms, &cols, cab_pos - h * 0.08, cab_pos + h * 0.08, 0.09, 0.07, 5, hull_main)
 	add_cylinder(&verts, &norms, &cols, cab_pos + h * 0.05, cab_pos + h * 0.09, 0.06, 0.045, 5, SCIFI_CYAN)
 
-	// 4. Heavy Halogen Work Floodlight (Front-Right Deck)
 	light_pos := pos + h * 0.22 + up * 0.06 + side * 0.08
 	add_cylinder(&verts, &norms, &cols, light_pos - h * 0.04, light_pos, 0.040, 0.040, 4, frame_dark)
 	add_sphere(&verts, &norms, &cols, light_pos + h * 0.015, 0.030, 4, 4, light_glow)
 
-	// 5. Four Articulated Hydraulic Outrigger Legs (Spider Stabilizers)
 	leg_offsets := [4][2]f32{ {0.12, 0.18}, {0.12, -0.18}, {-0.16, 0.20}, {-0.16, -0.20} }
 	leg_targets := [4][2]f32{ {0.26, 0.36}, {0.26, -0.36}, {-0.28, 0.38}, {-0.28, -0.38} }
 
@@ -811,14 +755,12 @@ build_miner_model :: proc(enemy: bool) -> rl.Model {
 		add_cylinder(&verts, &norms, &cols, foot, foot - up * 0.035, 0.032, 0.028, 4, frame_dark)
 	}
 
-	// 6. Ventral Excavation Drill / Rotary Cutter Tool
 	drill_base := pos + h * 0.08 - up * 0.12
 	drill_tip  := pos + h * 0.22 - up * 0.40
 	add_cylinder(&verts, &norms, &cols, drill_base, drill_base - up * 0.06, 0.05, 0.05, 5, frame_dark)
 	add_cylinder(&verts, &norms, &cols, drill_base - up * 0.05, drill_tip, 0.05, 0.012, 5, metal_trim)
 	add_sphere(&verts, &norms, &cols, drill_tip, 0.032, 4, 4, light_glow)
 
-	// 7. Twin Rear Hover / Transit Thrusters
 	for s in s_signs {
 		nozzle_f := pos - h * 0.22 + side * (s * 0.12) - up * 0.04
 		nozzle_b := nozzle_f - h * 0.08
@@ -866,7 +808,6 @@ build_fighter_model :: proc(enemy: bool) -> rl.Model {
 	side := rl.Vector3{0, 0, 1}
 	pos := rl.Vector3{0, 0, 0}
 
-	// 1. Central Core & Armored Dorsal Cowling
 	core_f := pos + h * 0.18
 	core_b := pos - h * 0.28
 	add_cylinder(&verts, &norms, &cols, core_b, core_f, 0.20, 0.18, 6, armor_dark)
@@ -886,18 +827,15 @@ build_fighter_model :: proc(enemy: bool) -> rl.Model {
 		add_triangle(&verts, &norms, &cols, hood_b, sh_f, sh_tip, armor_main)
 	}
 
-	// 2. Central Circular Ocular Sensor (The "Eye")
 	eye_pos := pos + h * 0.22
 	add_cylinder(&verts, &norms, &cols, eye_pos, eye_pos + h * 0.04, 0.14, 0.13, 6, metal_trim)
 	add_sphere(&verts, &norms, &cols, eye_pos + h * 0.045, 0.075, 6, 6, energy_glow)
 	add_sphere(&verts, &norms, &cols, eye_pos + h * 0.070, 0.035, 4, 4, energy_core)
 
-	// Forward chin sensor probe / needle
 	probe_base := pos + h * 0.18 - up * 0.11
 	probe_tip  := pos + h * 0.52 - up * 0.20
 	add_cylinder(&verts, &norms, &cols, probe_base, probe_tip, 0.025, 0.008, 4, metal_trim)
 
-	// 3. Ventral Stabilizer Mandibles / Struts
 	for s_sign in s_signs {
 		s_vec := side * s_sign
 		strut_top := pos - h * 0.06 - up * 0.10 + s_vec * 0.14
@@ -905,7 +843,6 @@ build_fighter_model :: proc(enemy: bool) -> rl.Model {
 		add_cylinder(&verts, &norms, &cols, strut_top, strut_tip, 0.030, 0.014, 4, metal_trim)
 	}
 
-	// 4. Outboard Twin Heavy Weapon Sponsons (Flanking Railguns)
 	for s_sign in s_signs {
 		s_vec := side * s_sign
 		pod_pos := pos + s_vec * 0.40 - up * 0.02
@@ -925,7 +862,6 @@ build_fighter_model :: proc(enemy: bool) -> rl.Model {
 		add_cylinder(&verts, &norms, &cols, pod_pos + h * 0.07, pod_pos + h * 0.38, 0.014, 0.014, 4, energy_glow)
 	}
 
-	// 5. Rear Propulsion & Thruster Flare
 	engine_pos := pos - h * 0.32
 	add_cylinder(&verts, &norms, &cols, pos - h * 0.24, engine_pos, 0.12, 0.09, 6, armor_dark)
 	add_cylinder(&verts, &norms, &cols, engine_pos, engine_pos - h * 0.04, 0.09, 0.07, 6, metal_trim)
@@ -1009,14 +945,10 @@ draw_fighter_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector
 	rl.DrawModelEx(model, position, axis, angle, {1, 1, 1}, rl.WHITE)
 }
 
-// Visible laser fire during battles: short flying bolts from each shooter
-// toward its target (player fire neon cyan, enemy fire RED), mirroring the
-// update_planet_combat rules - dogfights, miner sweeps and base sieges.
 draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, ec: int, player_miner_spots, enemy_miner_spots: []rl.Vector3, pmc, emc: int) {
 	num_p := min(pc, rep_count(pc))
 	num_e := min(ec, rep_count(ec))
 	if num_p > 0 && num_e > 0 {
-		// Dogfight: visible fighters trade fire.
 		for i in 0..<num_p { draw_laser_bolt(player_spots[i], enemy_spots[i % num_e], f32(i) * 2.3, SCIFI_CYAN) }
 		for j in 0..<num_e { draw_laser_bolt(enemy_spots[j], player_spots[j % num_p], f32(j) * 2.3 + 1.1, rl.RED) }
 	} else if num_e > 0 {
@@ -1026,7 +958,6 @@ draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, 
 				draw_laser_bolt(enemy_spots[j], def_pos, f32(j) * 2.3, rl.RED)
 			}
 		} else {
-			// Enemy fighters strafing unescorted player miners (kill_player_miner).
 			num_tc := min(pmc, rep_count(pmc))
 			for j in 0..<num_e {
 				if num_tc == 0 { break }
@@ -1034,8 +965,6 @@ draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, 
 			}
 		}
 	} else if num_p > 0 {
-		// Player fighters sweeping enemy miners (kill_enemy_miner), then
-		// besieging the enemy base itself.
 		if emc > 0 {
 			num_tc := min(emc, rep_count(emc))
 			for i in 0..<num_p { draw_laser_bolt(player_spots[i], enemy_miner_spots[i % num_tc], f32(i) * 2.3, SCIFI_CYAN) }
@@ -1049,10 +978,6 @@ draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, 
 	}
 }
 
-// A short laser bolt flying along the shooter->target ray: its head advances
-// at LASER_BOLT_SPEED on the game clock (laser_anim_time, frozen on pause)
-// with a per-shooter phase offset, wrapping at the target. Two half-cycle
-// phased bolts per ray read as sustained fire.
 draw_laser_bolt :: proc(from, to: rl.Vector3, offset: f32, color: rl.Color) {
 	diff := rl.Vector3{to.x - from.x, to.y - from.y, to.z - from.z}
 	dist := rl.Vector3Length(diff)
@@ -1065,11 +990,8 @@ draw_laser_bolt :: proc(from, to: rl.Vector3, offset: f32, color: rl.Color) {
 	}
 }
 
-// One rendered cube per up-to-10 units: ceil(count / 10).
 rep_count :: proc(count: int) -> int { return (count + 9) / 10 }
 
-// Fighting drones in transit to a planet, grouped by side - the unit side of
-// the transit representational rendering.
 transit_fighters_at :: proc(target_planet: int, enemy: bool) -> int {
 	count := 0
 	for i := 0; i < unit_count; i += 1 {
@@ -1079,8 +1001,6 @@ transit_fighters_at :: proc(target_planet: int, enemy: bool) -> int {
 	return count
 }
 
-// Mining drones in transit to a planet, grouped by side - the unit side of
-// the transit representational rendering.
 transit_miners_at :: proc(target_planet: int, enemy: bool = false) -> int {
 	count := 0
 	for i := 0; i < unit_count; i += 1 {
@@ -1090,7 +1010,6 @@ transit_miners_at :: proc(target_planet: int, enemy: bool = false) -> int {
 	return count
 }
 
-// Mining drones returning from a planet to Earth.
 returning_miners_at :: proc(target_planet: int, enemy: bool = false) -> int {
 	count := 0
 	for i := 0; i < unit_count; i += 1 {
@@ -1100,7 +1019,6 @@ returning_miners_at :: proc(target_planet: int, enemy: bool = false) -> int {
 	return count
 }
 
-// Planet a stationed (non-transit) miner is physically located at.
 miner_stationed_planet :: proc(u: ^Unit) -> int {
 	if u.state == .TRANSIT || u.state == .RETURNING { return -1 }
 	if u.state == .DEPOSITING { return EARTH }
@@ -1110,7 +1028,6 @@ miner_stationed_planet :: proc(u: ^Unit) -> int {
 	return EARTH
 }
 
-// Stationed mining drones at a planet, grouped by side.
 stationed_miners_at :: proc(p: int, enemy: bool) -> int {
 	count := 0
 	for i := 0; i < unit_count; i += 1 {
@@ -1132,7 +1049,6 @@ draw_selection_ring :: proc(center: rl.Vector3, radius: f32) {
 			{center.x + math.cos(b) * radius, center.y - 0.25, center.z + math.sin(b) * radius},
 			rl.Fade(SCIFI_CYAN, pulse),
 		)
-		// Outer halo ring for depth.
 		or_ := radius + 0.22
 		rl.DrawLine3D(
 			{center.x + math.cos(a) * or_, center.y - 0.25, center.z + math.sin(a) * or_},
@@ -1141,8 +1057,6 @@ draw_selection_ring :: proc(center: rl.Vector3, radius: f32) {
 		)
 	}
 }
-
-// ---- Planet visuals -------------------------------------------------------
 
 planet_spin_speed :: proc(p: int) -> f32 {
 	switch p {
@@ -1161,7 +1075,6 @@ update_planet_spin :: proc(dt: f32) {
 	}
 }
 
-// Linear blend between two opaque colors (t = 0 keeps a, t = 1 takes b).
 mix_color :: proc(a, b: rl.Color, t: f32) -> rl.Color {
 	return rl.Color{
 		u8(f32(a.r) * (1 - t) + f32(b.r) * t),
@@ -1173,14 +1086,8 @@ mix_color :: proc(a, b: rl.Color, t: f32) -> rl.Color {
 
 PLANET_TEX_SIZE :: 128
 
-// One deterministic surface blob (center + radius, in texels).
 planet_blob :: struct { x, y, r: f32 }
 
-// Build one procedural surface texture per planet. Deterministic per planet
-// (offsets derive from the index), independent of the gameplay RNG. The whole
-// pipeline is RGBA from the first pixel: the base image is GenImageColor and
-// every texel is shaded in code from the perlin luminance, so no grayscale
-// image op can ever drop the hue (which rendered as grey surface gores).
 init_planet_visuals :: proc() {
 	if planet_visuals_ready { return }
 	for p in 0..<PLANET_COUNT {
@@ -1188,7 +1095,6 @@ init_planet_visuals :: proc() {
 		img := rl.GenImageColor(PLANET_TEX_SIZE, PLANET_TEX_SIZE, base)
 		noise := rl.GenImagePerlinNoise(PLANET_TEX_SIZE, PLANET_TEX_SIZE, c.int(p * 17 + 3), c.int(p * 29 + 7), 6.0)
 		lum := rl.LoadImageColors(noise)
-		// Deterministic blotches via a tiny LCG (no gameplay RNG use).
 		seed := u32(0x9E3779B9 + u32(p) * 0x85EBCA6B)
 		next := proc(seed: ^u32) -> f32 {
 			seed^ = seed^ * 1664525 + 1013904223
@@ -1215,9 +1121,6 @@ init_planet_visuals :: proc() {
 					255,
 				}
 				if p >= JUPITER {
-					// Planetary latitude cloud bands for gas giants.
-					// In par_shapes sphere, x is latitude (0 = North Pole, 127 = South Pole).
-					// Subtle perlin perturbation (l) adds atmospheric turbulence.
 					x_lat := f32(x) + (l - 0.5) * 5.0
 					band_freq: f32 = 0.38
 					band_phase: f32 = f32(p * 13)
@@ -1298,7 +1201,6 @@ init_planet_visuals :: proc() {
 							break
 						}
 					}
-					// Earth oceans: deep-blue patches over the marble.
 					if p == EARTH {
 						for b in 0..<6 {
 							dx, dy := fx - oceans[b].x, fy - oceans[b].y
@@ -1343,17 +1245,12 @@ unload_planet_visuals :: proc() {
 	planet_visuals_ready = false
 }
 
-// ---- Starfield ----------------------------------------------------------
-
 STAR_COUNT :: 280
 
 stars: [STAR_COUNT]rl.Vector3
 star_sizes: [STAR_COUNT]f32
 star_alphas: [STAR_COUNT]f32
 
-// Deterministic sky: a wide disc well below the play plane, so panning and
-// zooming parallax-scrolls it. A tiny LCG keeps the starfield identical every
-// run and independent of the gameplay RNG.
 generate_stars :: proc() {
 	seed := u32(0x5F3759DF)
 	for i in 0..<STAR_COUNT {
@@ -1371,11 +1268,6 @@ generate_stars :: proc() {
 	}
 }
 
-// Cool-tinted pixel stars in screen space, drawn before the 3D pass so they
-// stay behind everything. Every 4th star carries a faint cyan tint for a
-// colder deep-space feel; the tint derives from the star index so the field
-// stays deterministic. The >= bounds form also discards NaN projections of
-// points behind the camera.
 draw_starfield :: proc() {
 	w := f32(rl.GetScreenWidth())
 	h := f32(rl.GetScreenHeight())
@@ -1388,12 +1280,6 @@ draw_starfield :: proc() {
 	}
 }
 
-// Red palpitating combat nebula in screen space behind planets with active combat
-// and behind the enemy HQ, plus yellow pulsating nebula aura behind the minor wave
-// attack source planet. Rendered before BeginMode3D so 3D textured planet
-// spheres and fortress models occlude the nebula core, creating an organic backlit
-// cosmic warzone atmosphere. Uses additive blending for luminous gas clouds.
-// Size scaled down by half for a tighter, more focused warzone halo.
 draw_combat_nebulae :: proc() {
 	has_any := false
 	for s in 0..<SECTOR_COUNT {
@@ -1439,8 +1325,6 @@ draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, is_yellow: b
 	limb_screen := rl.GetWorldToScreen(limb_3d, camera)
 	base_r := max(rl.Vector2Distance(screen_pos, limb_screen), 14.0)
 
-	// Palpitating rhythm: organic multi-frequency heartbeat pulse
-	// Combines fundamental throb with secondary harmonic for an authentic heart-palpitation cadence
 	t := laser_anim_time
 	pulse_speed: f32 = in_combat ? 3.8 : 2.4
 	pulse1 := math.sin(t * pulse_speed + f32(s) * 1.8)
@@ -1450,8 +1334,6 @@ draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, is_yellow: b
 
 	effective_intensity := clamp(intensity * palpitation, 0.0, 1.6)
 
-	// 1. Grand Outer Ambient Nebula Shroud (deep cosmic space haze)
-	// Scaled down by half for a cleaner, tighter atmospheric halo
 	grand_r := max(base_r * 5.5, 120.0) * radius_pulse
 	grand_alpha := u8(clamp(75.0 * effective_intensity, 0, 255))
 
@@ -1466,8 +1348,6 @@ draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, is_yellow: b
 		rl.DrawCircleGradient(screen_pos, grand_r, rl.Color{170, 150, 15, grand_alpha}, rl.Color{0, 0, 0, 0})
 		rl.DrawCircleGradient(secondary_grand_pos, secondary_r, rl.Color{195, 170, 20, secondary_alpha}, rl.Color{0, 0, 0, 0})
 
-		// 2. Multi-tiered Asymmetric Billowing Gas Clouds (12 organic lobes across 3 tiers)
-		// Tier 1: Outer billowing wisps (4 lobes)
 		for i in 0..<4 {
 			fi := f32(i)
 			ang := fi * (math.PI * 0.5) + math.sin(t * 0.35 + fi * 1.7 + f32(s)) * 0.45 + f32(s) * 0.8
@@ -1478,7 +1358,6 @@ draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, is_yellow: b
 			rl.DrawCircleGradient(center, r, rl.Color{205, 185, 20, alpha}, rl.Color{0, 0, 0, 0})
 		}
 
-		// Tier 2: Mid-range turbulent cloud banks (5 lobes)
 		for i in 0..<5 {
 			fi := f32(i)
 			ang := fi * (2.0 * math.PI / 5.0) + math.sin(t * 0.45 + fi * 1.5 + f32(s)) * 0.38 + f32(s) * 1.3
@@ -1492,7 +1371,6 @@ draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, is_yellow: b
 			rl.DrawCircleGradient(center, r, rl.Color{r_val, g_val, b_val, alpha}, rl.Color{0, 0, 0, 0})
 		}
 
-		// Tier 3: Dense inner plasma clouds (3 lobes)
 		for i in 0..<3 {
 			fi := f32(i)
 			ang := fi * (2.0 * math.PI / 3.0) + math.sin(t * 0.5 + fi * 2.1 + f32(s)) * 0.3 + f32(s) * 0.4
@@ -1503,17 +1381,14 @@ draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, is_yellow: b
 			rl.DrawCircleGradient(center, r, rl.Color{255, 225, 30, alpha}, rl.Color{0, 0, 0, 0})
 		}
 
-		// 3. Hot Inner Corona & Shockwave Disc (backlighting the body silhouette)
 		corona_r := max(base_r * 1.4, 22.5) * radius_pulse
 		corona_alpha := u8(clamp(135.0 * effective_intensity, 0, 255))
 		rl.DrawCircleGradient(screen_pos, corona_r, rl.Color{255, 230, 30, corona_alpha}, rl.Color{0, 0, 0, 0})
 
-		// Scorching inner core ring right behind planet edge
 		inner_core_r := max(base_r * 1.2, 16.0) * (0.95 + 0.1 * palpitation)
 		inner_alpha := u8(clamp(115.0 * effective_intensity, 0, 255))
 		rl.DrawCircleGradient(screen_pos, inner_core_r, rl.Color{255, 245, 90, inner_alpha}, rl.Color{0, 0, 0, 0})
 
-		// 4. Ionization Tendrils / Plasma Streamers (fine drifting filaments)
 		for k in 0..<8 {
 			fk := f32(k)
 			spark_angle := fk * 0.785 + t * 0.55 + f32(s) * 1.4
@@ -1530,8 +1405,6 @@ draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, is_yellow: b
 		rl.DrawCircleGradient(screen_pos, grand_r, rl.Color{160, 12, 35, grand_alpha}, rl.Color{0, 0, 0, 0})
 		rl.DrawCircleGradient(secondary_grand_pos, secondary_r, rl.Color{190, 20, 50, secondary_alpha}, rl.Color{0, 0, 0, 0})
 
-		// 2. Multi-tiered Asymmetric Billowing Gas Clouds (12 organic lobes across 3 tiers)
-		// Tier 1: Outer billowing wisps (4 lobes)
 		for i in 0..<4 {
 			fi := f32(i)
 			ang := fi * (math.PI * 0.5) + math.sin(t * 0.35 + fi * 1.7 + f32(s)) * 0.45 + f32(s) * 0.8
@@ -1542,7 +1415,6 @@ draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, is_yellow: b
 			rl.DrawCircleGradient(center, r, rl.Color{195, 18, 42, alpha}, rl.Color{0, 0, 0, 0})
 		}
 
-		// Tier 2: Mid-range turbulent cloud banks (5 lobes)
 		for i in 0..<5 {
 			fi := f32(i)
 			ang := fi * (2.0 * math.PI / 5.0) + math.sin(t * 0.45 + fi * 1.5 + f32(s)) * 0.38 + f32(s) * 1.3
@@ -1556,7 +1428,6 @@ draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, is_yellow: b
 			rl.DrawCircleGradient(center, r, rl.Color{r_val, g_val, b_val, alpha}, rl.Color{0, 0, 0, 0})
 		}
 
-		// Tier 3: Dense inner plasma clouds (3 lobes)
 		for i in 0..<3 {
 			fi := f32(i)
 			ang := fi * (2.0 * math.PI / 3.0) + math.sin(t * 0.5 + fi * 2.1 + f32(s)) * 0.3 + f32(s) * 0.4
@@ -1567,17 +1438,14 @@ draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, is_yellow: b
 			rl.DrawCircleGradient(center, r, rl.Color{255, 60, 32, alpha}, rl.Color{0, 0, 0, 0})
 		}
 
-		// 3. Hot Inner Combat Corona & Shockwave Disc (backlighting the body silhouette)
 		corona_r := max(base_r * 1.4, 22.5) * radius_pulse
 		corona_alpha := u8(clamp(135.0 * effective_intensity, 0, 255))
 		rl.DrawCircleGradient(screen_pos, corona_r, rl.Color{255, 55, 28, corona_alpha}, rl.Color{0, 0, 0, 0})
 
-		// Scorching inner core ring right behind planet edge
 		inner_core_r := max(base_r * 1.2, 16.0) * (0.95 + 0.1 * palpitation)
 		inner_alpha := u8(clamp(115.0 * effective_intensity, 0, 255))
 		rl.DrawCircleGradient(screen_pos, inner_core_r, rl.Color{255, 125, 45, inner_alpha}, rl.Color{0, 0, 0, 0})
 
-		// 4. Ionization Tendrils / Plasma Streamers (fine drifting filaments)
 		for k in 0..<8 {
 			fk := f32(k)
 			spark_angle := fk * 0.785 + t * 0.55 + f32(s) * 1.4
@@ -1593,13 +1461,10 @@ draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, is_yellow: b
 	}
 }
 
-// ---- Earth industrial manufacturing indicator ----------------------------
-
-// Surface coordinates for major industrial complexes across Earth's continents.
 Earth_Industry_Hub :: struct {
 	lat: f32,
 	lon: f32,
-	theme: int, // 0 = foundry/forge, 1 = assembly/shipyard, 2 = laser/welding
+	theme: int,
 }
 
 EARTH_INDUSTRY_HUBS := [10]Earth_Industry_Hub{
@@ -1615,11 +1480,6 @@ EARTH_INDUSTRY_HUBS := [10]Earth_Industry_Hub{
 	{lat = -32.0, lon = 60.0,  theme = 1},
 }
 
-// Indicator on Earth when units are being created: industrial manufacturing
-// complexes light up across Earth's surface with lights turning on and off,
-// rhythmic assembly bay shifts, high-frequency robotic welding sparks, hazard
-// strobes, and vertical shipyard gantry beacons, rotating naturally with the planet.
-// Rendered in screen space with additive blending for pure radiant luminous glow.
 draw_earth_industry_lights :: proc() {
 	if earth_industry_intensity <= 0.005 { return }
 
@@ -1632,14 +1492,12 @@ draw_earth_industry_lights :: proc() {
 	viewport_w := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
 	screen_h := f32(rl.GetScreenHeight())
 
-	// Earth projected silhouette radius in screen space
 	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
 	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
 	earth_screen := rl.GetWorldToScreen(earth.position, camera)
 	limb_screen := rl.GetWorldToScreen(earth.position + cam_right * earth.radius, camera)
 	screen_r := max(rl.Vector2Distance(earth_screen, limb_screen), 12.0)
 
-	// Active lines scale the number of active manufacturing hubs
 	active_lines := 0
 	for b in 0..<base_counts[EARTH] {
 		if production[EARTH][b].active { active_lines += 1 }
@@ -1661,7 +1519,6 @@ draw_earth_industry_lights :: proc() {
 			math.cos(lat_rad) * math.sin(lon_rad),
 		}
 
-		// Rotate with Earth's planetary spin
 		hub_rot := rl.Vector3{
 			hub_u.x * cos_s - hub_u.z * sin_s,
 			hub_u.y,
@@ -1670,7 +1527,6 @@ draw_earth_industry_lights :: proc() {
 
 		hub_3d := earth.position + hub_rot * (earth.radius * 1.002)
 
-		// Occlusion check against Earth globe: hide lights on the far hemisphere
 		cam_to_hub := camera.position - hub_3d
 		cam_dist := rl.Vector3Length(cam_to_hub)
 		if cam_dist <= 0.01 { continue }
@@ -1685,7 +1541,6 @@ draw_earth_industry_lights :: proc() {
 			continue
 		}
 
-		// Local tangent vectors for spreading out facilities across each industrial zone
 		up := rl.Vector3{0, 1, 0}
 		if abs(hub_rot.y) > 0.90 { up = rl.Vector3{1, 0, 0} }
 		tangent_u := rl.Vector3Normalize(rl.Vector3CrossProduct(up, hub_rot))
@@ -1693,23 +1548,19 @@ draw_earth_industry_lights :: proc() {
 
 		fh := f32(h)
 
-		// Radii scaled to projected planet radius with minimum visibility clamps
 		core_r := max(screen_r * 0.045, 2.2)
 		glow_r := max(screen_r * 0.12, 5.5)
 
-		// 1. Soft industrial city / factory light bloom spill
 		halo_r := max(screen_r * 0.22, 10.0)
 		halo_alpha := u8(clamp(95.0 * net_intensity, 0, 255))
 		halo_col := hub.theme == 1 ? rl.Color{0, 230, 215, halo_alpha} : rl.Color{255, 140, 25, halo_alpha}
 		rl.DrawCircleGradient(hub_screen, halo_r, halo_col, rl.Color{0, 0, 0, 0})
 
-		// 2. Main Foundry Core / Forge Furnace (warm golden-amber pulsing heart)
 		foundry_pulse := 0.65 + 0.35 * math.sin(t * 3.0 + fh * 1.5)
 		foundry_alpha := u8(clamp(foundry_pulse * 255.0 * net_intensity, 0, 255))
 		rl.DrawCircleGradient(hub_screen, glow_r, rl.Color{255, 145, 20, foundry_alpha}, rl.Color{0, 0, 0, 0})
 		rl.DrawCircleV(hub_screen, core_r, rl.Color{255, 225, 120, foundry_alpha})
 
-		// Tangent screen offsets for satellite industrial nodes
 		pos1_3d := hub_3d + tangent_u * 0.28 + tangent_v * 0.14
 		pos1_screen := rl.GetWorldToScreen(pos1_3d, camera)
 
@@ -1722,7 +1573,6 @@ draw_earth_industry_lights :: proc() {
 		pos4_3d := hub_3d + tangent_u * 0.18 + tangent_v * -0.24
 		pos4_screen := rl.GetWorldToScreen(pos4_3d, camera)
 
-		// 3. Automated Assembly Bay (electric cyan - turning on and off in distinct shift cycles)
 		bay_cycle := math.mod(t * 1.4 + fh * 0.85, 2.0)
 		bay_on := bay_cycle < 1.25
 		bay_bright: f32 = bay_on ? (0.85 + 0.15 * math.sin(t * 9.0 + fh)) : 0.0
@@ -1732,7 +1582,6 @@ draw_earth_industry_lights :: proc() {
 			rl.DrawCircleV(pos1_screen, core_r * 0.9, rl.Color{200, 255, 245, bay_alpha})
 		}
 
-		// Secondary assembly bay node (alternating shift)
 		bay2_cycle := math.mod(t * 1.2 + fh * 1.4 + 0.8, 1.8)
 		bay2_on := bay2_cycle < 1.05
 		bay2_bright: f32 = bay2_on ? (0.80 + 0.20 * math.sin(t * 8.0 + fh * 2.0)) : 0.0
@@ -1742,7 +1591,6 @@ draw_earth_industry_lights :: proc() {
 			rl.DrawCircleV(pos2_screen, core_r * 0.85, rl.Color{220, 255, 240, bay2_alpha})
 		}
 
-		// 4. Robotic Arc Welding / Laser Fabrication (high-frequency brilliant white-blue sparks)
 		weld_cycle := math.mod(t * 1.6 + fh * 1.9, 2.3)
 		weld_bright: f32 = 0.0
 		if weld_cycle < 1.15 {
@@ -1757,7 +1605,6 @@ draw_earth_industry_lights :: proc() {
 			rl.DrawCircleV(pos3_screen, core_r * 0.95, rl.Color{255, 255, 255, weld_alpha})
 		}
 
-		// 5. Strobe Hazard Beacon (sharp periodic warning flash)
 		strobe_cycle := math.mod(t * 1.5 + fh * 0.4, 1.0)
 		strobe_bright: f32 = strobe_cycle < 0.18 ? (1.0 - (strobe_cycle / 0.18) * 0.85) : 0.0
 		strobe_alpha := u8(clamp(strobe_bright * 255.0 * net_intensity, 0, 255))
@@ -1766,14 +1613,12 @@ draw_earth_industry_lights :: proc() {
 			rl.DrawCircleV(pos4_screen, core_r * 0.75, rl.Color{255, 240, 140, strobe_alpha})
 		}
 
-		// 6. Shipyard Gantry Spire / Launch Laser Beam (rising above surface)
 		spire_3d := hub_3d + hub_rot * (earth.radius * 0.25)
 		spire_screen := rl.GetWorldToScreen(spire_3d, camera)
 		beam_alpha := u8(clamp(190.0 * net_intensity, 0, 255))
 		beam_col := hub.theme == 1 ? rl.Color{0, 245, 220, beam_alpha} : rl.Color{255, 160, 40, beam_alpha}
 		rl.DrawLineEx(hub_screen, spire_screen, max(screen_r * 0.03, 1.8), beam_col)
 
-		// Pulsing tip beacon at the top of the gantry tower
 		beacon_on := math.mod(t * 2.2 + fh * 0.5, 1.0) < 0.25
 		beacon_alpha := u8(clamp((beacon_on ? 255.0 : 40.0) * net_intensity, 0, 255))
 		rl.DrawCircleV(spire_screen, max(screen_r * 0.04, 2.2), rl.Color{255, 60, 50, beacon_alpha})

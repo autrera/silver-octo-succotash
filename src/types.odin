@@ -4,10 +4,6 @@ import "core:c"
 import "core:time"
 import rl "vendor:raylib"
 
-// =========================================================================
-// Layout & UI Metrics
-// =========================================================================
-
 SCREEN_PANEL_WIDTH :: 330
 PANEL_PAD_X        :: 20
 PANEL_CONTENT_W    :: SCREEN_PANEL_WIDTH - 2 * PANEL_PAD_X
@@ -58,32 +54,23 @@ MAX_PENDING        :: 25
 TILE_SIZE          :: 20
 TILE_GAP           :: 10
 TILES_PER_ROW      :: 10
-DOUBLE_CLICK_TIME  :: 0.35 // seconds: maximum time interval between clicks to register a double-click
+DOUBLE_CLICK_TIME  :: 0.35
 
-// Camera framing
 CAMERA_START_Y     :: 200.0 - 185.0 * 0.60
 
-// =========================================================================
-// Sci-Fi Cyberpunk HUD Palette
-// =========================================================================
-
-SCIFI_CYAN        :: rl.Color{0, 240, 216, 255}    // Primary vibrant laser cyan (#00F0D8)
-SCIFI_MINT        :: rl.Color{140, 255, 235, 255}  // Bright highlight & glow (#8CFFEB)
-SCIFI_BLUE        :: rl.Color{0, 200, 245, 255}    // Combat / wing blue (#00C8F5)
-SCIFI_AMBER       :: rl.Color{255, 128, 36, 255}   // Tactical amber / warning accent (#FF8024)
-SCIFI_AMBER_DIM   :: rl.Color{140, 65, 18, 255}    // Dim amber (#8C4112)
-SCIFI_RED         :: rl.Color{255, 60, 75, 255}    // Hostile / alert red (#FF3C4B)
-SCIFI_RED_DIM     :: rl.Color{120, 30, 40, 255}    // Dim hostile red (#781E28)
-SCIFI_STEEL       :: rl.Color{18, 110, 122, 255}   // Active framing & border (#126E7A)
-SCIFI_DIM         :: rl.Color{6, 58, 68, 255}      // Inactive grid & frames (#063A44)
-SCIFI_PANEL       :: rl.Color{6, 16, 22, 240}      // Translucent deep teal glass (#061016)
-SCIFI_PANEL_SOLID :: rl.Color{8, 22, 30, 255}      // Solid dark teal backing (#08161E)
-SCIFI_TEXT        :: rl.Color{215, 245, 245, 255}  // Primary crisp text (#D7F5F5)
-SCIFI_MUTED       :: rl.Color{85, 145, 155, 255}   // Secondary muted tech text (#55919B)
-
-// =========================================================================
-// System & Sector Topology Constants
-// =========================================================================
+SCIFI_CYAN        :: rl.Color{0, 240, 216, 255}
+SCIFI_MINT        :: rl.Color{140, 255, 235, 255}
+SCIFI_BLUE        :: rl.Color{0, 200, 245, 255}
+SCIFI_AMBER       :: rl.Color{255, 128, 36, 255}
+SCIFI_AMBER_DIM   :: rl.Color{140, 65, 18, 255}
+SCIFI_RED         :: rl.Color{255, 60, 75, 255}
+SCIFI_RED_DIM     :: rl.Color{120, 30, 40, 255}
+SCIFI_STEEL       :: rl.Color{18, 110, 122, 255}
+SCIFI_DIM         :: rl.Color{6, 58, 68, 255}
+SCIFI_PANEL       :: rl.Color{6, 16, 22, 240}
+SCIFI_PANEL_SOLID :: rl.Color{8, 22, 30, 255}
+SCIFI_TEXT        :: rl.Color{215, 245, 245, 255}
+SCIFI_MUTED       :: rl.Color{85, 145, 155, 255}
 
 MAX_BASES   :: 5
 MAX_UNITS   :: 2560
@@ -124,10 +111,6 @@ Sector_Index :: enum {
 	NEPTUNE  = 7,
 	ENEMY_HQ = 8,
 }
-
-// =========================================================================
-// Gameplay Configuration & Wave Constants
-// =========================================================================
 
 MINER_COST          :: 50
 COMBAT_COST         :: 125
@@ -201,10 +184,6 @@ ORBITAL_DEFENSE_FIRE_COOLDOWN         :: 0.5
 
 MAX_ORBITAL_BLASTS :: 32
 
-// =========================================================================
-// Core Domain Enums
-// =========================================================================
-
 Unit_Type :: enum {
 	MINING,
 	COMBAT,
@@ -240,10 +219,6 @@ Auto_Build_Mode :: enum {
 	MINERS,
 	COMBAT,
 }
-
-// =========================================================================
-// Domain Structs
-// =========================================================================
 
 Planet :: struct {
 	name:     cstring,
@@ -308,10 +283,6 @@ World_Sector_Spots :: struct {
 	pmc:           int,
 	emc:           int,
 }
-
-// =========================================================================
-// Sector Safety Helpers
-// =========================================================================
 
 is_valid_planet :: proc(p: int) -> bool {
 	return p >= 0 && p < PLANET_COUNT

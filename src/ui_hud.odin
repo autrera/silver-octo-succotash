@@ -4,12 +4,8 @@ import "core:c"
 import "core:math"
 import rl "vendor:raylib"
 
-// ---- Control-group squads ------------------------------------------------
-
 SQUAD_COUNT :: 9
 
-// Save the current selection as control group `group` (1..9), releasing the
-// group's previous members. Saving with nothing selected clears the group.
 save_squad :: proc(group: int) {
 	for i := 0; i < unit_count; i += 1 {
 		if units[i].squad == group { units[i].squad = 0 }
@@ -17,9 +13,6 @@ save_squad :: proc(group: int) {
 	}
 }
 
-// Recall a control group: replaces the selection with the group's living
-// members (dead members were pruned on removal). Returns the selected count;
-// 0 means an empty/dead squad cleanly selects nothing.
 recall_squad :: proc(group: int) -> int {
 	clear_selection()
 	count := 0
@@ -40,7 +33,6 @@ squad_count :: proc(group: int) -> int {
 	return count
 }
 
-// Global HUD squad badges: `[n:count]` per assigned squad, under the top bar.
 draw_squad_hud :: proc() {
 	counts: [SQUAD_COUNT + 1]int
 	for i := 0; i < unit_count; i += 1 {
@@ -63,15 +55,10 @@ draw_squad_hud :: proc() {
 	}
 }
 
-// ---- Pause menu ----------------------------------------------------------
-
-// P or F10 toggles the pause menu (ESC is the build-cancel key).
 pause_key_pressed :: proc() -> bool {
 	return rl.IsKeyPressed(.P) || rl.IsKeyPressed(.F10)
 }
 
-// Keyboard focus for the pause menu: 0 = CONTINUE, 1 = SAVE GAME, 2 = LOAD GAME, 3 = NEW GAME, 4 = QUIT.
-// Reopening the menu always resets focus to CONTINUE.
 PAUSE_MENU_OPTIONS :: 5
 pause_menu_selection := 0
 
@@ -83,12 +70,10 @@ toggle_pause :: proc() {
 	}
 }
 
-// Arrow-key focus movement: dir -1 = up, +1 = down, wrapping around.
 advance_pause_selection :: proc(dir: int) {
 	pause_menu_selection = (pause_menu_selection + dir + PAUSE_MENU_OPTIONS) % PAUSE_MENU_OPTIONS
 }
 
-// ENTER/KP_ENTER on the focused option - the same actions the mouse path takes.
 activate_pause_selection :: proc() {
 	switch pause_menu_selection {
 	case 0:
@@ -109,8 +94,6 @@ activate_pause_selection :: proc() {
 	}
 }
 
-// Small diamond glyph for the resource dock: four thin lines (the default
-// raylib font lacks a unicode gem character, which rendered as '?').
 draw_diamond :: proc(cx, cy, r: f32, color: rl.Color) {
 	rl.DrawLineV({cx, cy - r}, {cx + r, cy}, color)
 	rl.DrawLineV({cx + r, cy}, {cx, cy + r}, color)
@@ -118,8 +101,6 @@ draw_diamond :: proc(cx, cy, r: f32, color: rl.Color) {
 	rl.DrawLineV({cx - r, cy}, {cx, cy - r}, color)
 }
 
-// One unpaused simulation tick. The main loop skips this entirely while the
-// pause menu is open, freezing camera, input, production and units.
 step_simulation :: proc(dt: f32) {
 	if hud_save_notification_timer > 0 {
 		hud_save_notification_timer -= dt
@@ -131,9 +112,7 @@ step_simulation :: proc(dt: f32) {
 	update_enemy_waves(dt)
 	update_planet_spin(dt)
 	update_intel()
-	// Wrapping the laser clock keeps f32 precision stable across long sessions.
 	laser_anim_time = math.mod(laser_anim_time + dt, 3600.0)
-	// Earth manufacturing activity indicator: smooth ramp-up when units are in production, graceful fade-out when idle.
 	is_earth_producing := false
 	for b in 0..<base_counts[EARTH] {
 		if production[EARTH][b].active {
@@ -147,18 +126,10 @@ step_simulation :: proc(dt: f32) {
 		earth_industry_intensity = max(earth_industry_intensity - dt * 1.8, 0.0)
 	}
 	update_combat_nebula_intensity(dt)
-	// Victory latch: every planet liberated AND the enemy HQ destroyed.
 	if !victory && victory_achieved() { victory = true }
-	// Defeat latch (edge-triggered; reset_world clears it): no bases AND no units.
 	if !victory && !defeated && defeat_condition() { defeated = true }
 }
 
-// Smooth transition of combat nebula intensity: rapid flare-up in battle,
-// graceful fade-out on victory, and warning red glow at half battle intensity
-// starting 3 seconds before launch and persisting through enemy transit until
-// the battle begins (transitioning smoothly from warning glare to battle glare).
-// In addition, the source planet of an impending minor wave receives a yellow
-// aura at half battle intensity starting 3 seconds before launch.
 update_combat_nebula_intensity :: proc(dt: f32) {
 	for s in 0..<SECTOR_COUNT {
 		in_combat := sector_in_combat(s)
@@ -185,9 +156,6 @@ update_combat_nebula_intensity :: proc(dt: f32) {
 	}
 }
 
-// Fog-of-war intel memory: while a planet is lit, keep snapshotting its
-// enemy fighters, enemy miners and base HP. Once it goes dark the outpost
-// inspector shows the last snapshot (last_known_intel) instead of nothing.
 update_intel :: proc() {
 	vis: [PLANET_COUNT]bool
 	any_vis := false
@@ -345,14 +313,11 @@ draw_pause_menu :: proc() {
 	draw_pause_focus(focused_rect)
 }
 
-// Keyboard focus highlight: outer corner brackets and subtle glow ring
 draw_pause_focus :: proc(rect: rl.Rectangle) {
 	if rect.width <= 0 { return }
 	draw_corner_brackets(rect, 4, 8, SCIFI_CYAN)
 	rl.DrawRectangleLinesEx({rect.x - 2, rect.y - 2, rect.width + 4, rect.height + 4}, 1, rl.Fade(SCIFI_CYAN, 0.45))
 }
-
-// ---- Controls overlay ---------------------------------------------------
 
 open_controls_overlay :: proc() {
 	controls_overlay_open = true
@@ -416,7 +381,6 @@ draw_controls_overlay :: proc() {
 	col1_x := box.x + 32
 	col2_x := box.x + 376
 
-	// Column 1: Camera & Fleet Management
 	cy1 := box.y + 84
 	rl.DrawText("CAMERA AND NAVIGATION", c.int(col1_x), c.int(cy1), 13, SCIFI_AMBER)
 	cy1 += 20
@@ -450,7 +414,6 @@ draw_controls_overlay :: proc() {
 	cy1 += 18
 	draw_control_row(col1_x, cy1, "O / CLICK", "Build / Upgrade Orbital Defense")
 
-	// Column 2: Requisition, Simulation & Sensors
 	cy2 := box.y + 84
 	rl.DrawText("EARTH BASE REQUISITION", c.int(col2_x), c.int(cy2), 13, SCIFI_AMBER)
 	cy2 += 20
@@ -492,8 +455,6 @@ draw_controls_overlay :: proc() {
 
 	draw_button(close_btn, "[C] RESUME GAME", SCIFI_PANEL_SOLID, true)
 }
-
-// ---- Start game menu ----------------------------------------------------
 
 start_menu_options_count :: proc(has_save: bool) -> int {
 	return has_save ? 3 : 2
@@ -646,21 +607,14 @@ draw_start_menu :: proc() {
 	rl.DrawText(footer, c.int(box.x + (box.width - footer_w) / 2), c.int(box.y + box.height - 22), 10, SCIFI_MUTED)
 }
 
-// ---- Victory & restart --------------------------------------------------
-
-// The enemy HQ falls once its structural HP hits 0 (planet_liberated covers
-// planets; the HQ is a separate sector).
 enemy_hq_destroyed :: proc() -> bool { return enemy_base_hp[ENEMY_HOME] <= 0 }
 
-// The game is won once every planet is liberated AND the enemy HQ falls.
 victory_achieved :: proc() -> bool {
 	if !enemy_hq_destroyed() { return false }
 	for p in 0..<PLANET_COUNT { if !planet_liberated(p) { return false } }
 	return true
 }
 
-// Full clean restart: reset_world zeroes every global, initialize_game
-// rebuilds the starting layout (Earth drones, garrisons, enemy HQ).
 restart_game :: proc() {
 	reset_world()
 	initialize_game()
@@ -669,8 +623,6 @@ restart_game :: proc() {
 	camera.target = camera_target
 }
 
-// Shared by the render and the click hitboxes so they cannot drift apart.
-// play = [R] PLAY AGAIN, quit = [Q] QUIT.
 victory_button_rects :: proc() -> (play, quit: rl.Rectangle) {
 	cy := f32(rl.GetScreenHeight() / 2 + 66)
 	play = rl.Rectangle{f32(rl.GetScreenWidth() / 2 - 144), cy, 140, 44}
@@ -678,14 +630,10 @@ victory_button_rects :: proc() -> (play, quit: rl.Rectangle) {
 	return
 }
 
-// Q / ESC on the victory overlay request a clean exit (ESC is the build-cancel
-// key during play, but the sim is frozen on victory so it is free to bind here).
 victory_quit_key_pressed :: proc() -> bool {
 	return rl.IsKeyPressed(.Q) || rl.IsKeyPressed(.ESCAPE)
 }
 
-// R / ENTER restart; Q / ESC quit. Clicks hit whichever button is under the
-// cursor (a miss is a no-op so a stray click cannot end the run).
 update_victory_overlay :: proc() {
 	if rl.IsKeyPressed(.R) || rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) { restart_game(); return }
 	if victory_quit_key_pressed() { quit_requested = true; return }
@@ -729,11 +677,6 @@ draw_victory_overlay :: proc() {
 	draw_button(quit_rect, "[Q] QUIT", SCIFI_PANEL_SOLID)
 }
 
-// ---- Game over -----------------------------------------------------------
-
-// Defeat: no command base left on the map AND no player unit left anywhere
-// (enemy garrisons and waves do not count). Pure so the test suite can drive
-// it directly.
 defeat_condition :: proc() -> bool {
 	for i := 0; i < unit_count; i += 1 {
 		if !units[i].enemy { return false }
@@ -744,8 +687,6 @@ defeat_condition :: proc() -> bool {
 	return true
 }
 
-// R / ENTER restart; Q / ESC quit. Clicks hit whichever button is under the
-// cursor (same layout as the victory overlay).
 update_game_over_overlay :: proc() {
 	if rl.IsKeyPressed(.R) || rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) { restart_game(); return }
 	if rl.IsKeyPressed(.Q) || rl.IsKeyPressed(.ESCAPE) { quit_requested = true; return }

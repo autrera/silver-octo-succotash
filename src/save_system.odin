@@ -7,8 +7,6 @@ import "core:strconv"
 import "core:path/filepath"
 import rl "vendor:raylib"
 
-// ---- Save & Load system -------------------------------------------------
-
 save_game_path :: proc(custom_path: string = "", allocator := context.temp_allocator) -> string {
 	if len(custom_path) > 0 {
 		return custom_path
@@ -354,7 +352,6 @@ deserialize_game_state :: proc(content: string) -> bool {
 				camera.position = {x, y, z}
 			}
 		case "PLANET_MINERALS":
-			// Ignored: planets have infinite minerals in Starfall Command.
 		case "BASE_COUNT":
 			if len(fields) >= 3 {
 				p, _ := strconv.parse_int(fields[1])

@@ -55,16 +55,6 @@ odin build src -out:bin/debug/odin-raylib-test -debug
 odin build src -out:bin/release/odin-raylib-test -o:speed
 ```
 
-### Running Tests
-
-Unit and logic tests live in `src/main_test.odin` and can be run via:
-
-```sh
-odin test src -define:ODIN_TEST_THREADS=1
-```
-
-*(Single-threaded execution is required as tests mutate shared simulation state).*
-
 ## Platform Notes
 
 ### Windows
@@ -114,8 +104,16 @@ Starfall Command is an RTS prototype where you manage planetary mining operation
 
 ## Project Structure
 
-- `src/main.odin`: Game simulation, rendering, audio, UI, and save system
-- `src/main_test.odin`: Logic and regression test suite
+- `src/main.odin`: Entry point, top-level config globals and game state, main loop
+- `src/types.odin`: Domain types, enums, layout metrics, palette, and tuning constants
+- `src/simulation.odin`: World setup and reset, unit spawning, camera and input, fog of war, intel
+- `src/combat.odin`: Enemy waves, dogfights, sieges, orbital defense
+- `src/economy.odin`: Mining income, refineries, base and defense construction, production
+- `src/rendering_3d.odin`: 3D world, procedural planet and drone models, laser bolts
+- `src/ui_primitives.odin`: Vector HUD drawing primitives and the planet overlay
+- `src/ui_hud.odin`: HUD, squad badges, pause and start menus, simulation stepping
+- `src/ui_inspector.odin`: Planet inspector and unit rosters
+- `src/save_system.odin`: Save and load serialization
 - `Makefile`: Hand-written cross-platform build script for Odin
 - `build-MinGW-W64.bat`: Windows batch launcher for `make`
 - `savegame.txt`: Saved game state file (gitignored)

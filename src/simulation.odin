@@ -50,11 +50,7 @@ orbital_defense_ammo_pending_kills = {}
 		}
 		unit_count += 1
 	}
-	// Space backdrop: deterministic starfield (independent of the wave RNG).
 	generate_stars()
-	// Every non-Earth sector opens occupied: the GARRISON_* tables form the
-	// fixed occupation ladder (Venus easiest ... Neptune hardest, HQ last) -
-	// after the Earth-centered repositioning this no longer tracks distance.
 	for p in 0..<SECTOR_COUNT {
 		if p == EARTH { continue }
 		spawn_garrison(p, GARRISON_FIGHTERS[p], GARRISON_MINERS[p])
@@ -62,9 +58,6 @@ orbital_defense_ammo_pending_kills = {}
 	combat_nebula_intensity[ENEMY_HOME] = 0.65
 }
 
-// Clean-slate reset shared by the victory-restart path and the test suite
-// (tests call it to isolate scenarios). initialize_game rebuilds the world
-// on top of this zeroed state.
 reset_world :: proc() {
 	unit_count = 0
 	for i := 0; i < MAX_UNITS; i += 1 {
@@ -140,10 +133,6 @@ orbital_defense_ammo_pending_kills = {}
 	rl.SetRandomSeed(7)
 }
 
-// Each occupied planet opens with standing fighting and mining drones
-// orbiting it, plus an enemy base. Enemy miners are static garrison units;
-// they mine nothing.
-// ponytail: no enemy economy, revisit if waves should scale with looted minerals
 spawn_garrison :: proc(p, fighters, miners: int) {
 	for i in 0..<fighters {
 		angle := f32(i) * (2 * math.PI / f32(fighters))
@@ -165,8 +154,6 @@ spawn_garrison :: proc(p, fighters, miners: int) {
 	}
 }
 
-// Position on the guarding orbit ring around any sector center (a planet
-// or the enemy HQ).
 sector_pos :: proc(s: int) -> rl.Vector3 {
 	if s == ENEMY_HOME { return ENEMY_HQ_POSITION }
 	return planets[s].position
@@ -205,9 +192,7 @@ update_camera :: proc(dt: f32) {
 }
 
 update_input :: proc() {
-	// ESC cancels the most recently queued unit and refunds it.
 	if rl.IsKeyPressed(.ESCAPE) { cancel_last_queued() }
-	// Build shortcuts use the same validation path as the inspector buttons.
 	if rl.IsKeyPressed(.M) {
 		if shift_down() && can_build_5_miners() {
 			queue_5_miners()
@@ -222,45 +207,33 @@ update_input :: proc() {
 			queue_unit(.COMBAT)
 		}
 	}
-	// [N] queues +5 mining drones (Earth only, unlocked at 5 bases).
 	if !ctrl_down() && rl.IsKeyPressed(.N) {
 		if can_build_5_miners() {
 			queue_5_miners()
 		}
 	}
-	// [X] queues +5 combat fighters (Earth only, unlocked at 5 bases).
 	if rl.IsKeyPressed(.X) {
 		if can_build_5_combat() {
 			queue_5_combat()
 		}
 	}
-	// [T] toggles autobuilder mode (Earth only, unlocked at 5 bases).
 	if rl.IsKeyPressed(.T) && can_use_autobuilder() {
 		toggle_autobuild_mode()
 	}
-	// [U] buys the next drone build-speed upgrade level (Earth only).
 	if rl.IsKeyPressed(.U) { purchase_drone_speed_upgrade() }
-	// [B] builds a refinery on the selected liberated planet.
 	if rl.IsKeyPressed(.B) {
 		if selected_planet != EARTH && selected_planet != ENEMY_HOME && can_build_refinery(selected_planet) {
 			start_refinery_construction(selected_planet)
 		}
 	}
-	// [O] builds or upgrades orbital defense on the selected planet.
 	if orbital_defense_key_pressed() {
 		trigger_selected_orbital_defense()
 	}
-	// Spacebar is a shortcut to select Earth in the inspector;
-	// pressing it again when Earth is already selected centers the camera at Earth.
 	if rl.IsKeyPressed(.SPACE) { select_earth() }
-	// Squad control groups: Shift+digit saves the selection, digit recalls it.
-	// IsKeyPressed is edge-triggered, so held-key repeat never re-triggers.
 	if group := squad_key_pressed(); group > 0 {
 		if shift_down() { save_squad(group) } else { recall_squad(group) }
 	}
-	// Debug: force the next enemy wave immediately with Ctrl+N (verify combat without waiting 3 minutes).
 	if ctrl_down() && rl.IsKeyPressed(.N) { spawn_enemy_wave() }
-	// F5 quick-saves the game.
 	if rl.IsKeyPressed(.F5) {
 		if save_game() {
 			hud_save_notification_timer = 2.0
@@ -275,8 +248,6 @@ update_input :: proc() {
 			return
 		}
 		if mouse.x >= panel_x {
-			// Sidebar presses start a potential drag; click vs box-select is
-			// decided on release. World selection never sees sidebar input.
 			inspector_drag_start = mouse
 			inspector_drag_active = true
 		} else {
@@ -315,8 +286,6 @@ ctrl_down :: proc() -> bool {
 	return rl.IsKeyDown(.LEFT_CONTROL) || rl.IsKeyDown(.RIGHT_CONTROL)
 }
 
-// Horizontal world-space offset so Earth projects to the center of the visible
-// viewport beside the right-docked planet inspector (SCREEN_PANEL_WIDTH).
 earth_camera_offset_x :: proc() -> f32 {
 	screen_h := f32(rl.GetScreenHeight() > 0 ? rl.GetScreenHeight() : 760)
 	zoom_y := camera.position.y > 0 ? camera.position.y : CAMERA_START_Y
@@ -331,8 +300,6 @@ center_camera_on_earth :: proc() {
 	camera.target = camera_target
 }
 
-// SPACE in update_input jumps the inspector straight to Earth;
-// pressing it again when Earth is already selected centers the camera at Earth.
 select_earth :: proc() {
 	if selected_planet == EARTH {
 		center_camera_on_earth()
@@ -342,7 +309,6 @@ select_earth :: proc() {
 	}
 }
 
-// Digit keys 1..9 map to control groups; 0 = no squad key this frame.
 squad_key_pressed :: proc() -> int {
 	for k in rl.KeyboardKey.ONE..=rl.KeyboardKey.NINE {
 		if rl.IsKeyPressed(k) { return int(k) - int(rl.KeyboardKey.ONE) + 1 }
@@ -355,9 +321,6 @@ clear_selection :: proc() {
 }
 
 handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
-	// The two production buttons and base button are deliberately ordinary rectangles,
-	// keeping the inspector usable even when raygui styles are unavailable.
-	// Base construction and unit production exist only on Earth.
 	if selected_planet == EARTH {
 		if base_button_visible() && rl.CheckCollisionPointRec(mouse, {panel_x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, BASE_BTN_H}) {
 			last_unit_clicked_index = -1
@@ -415,7 +378,6 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 			purchase_drone_speed_upgrade()
 			return
 		}
-		// Clicking an occupied build-queue slot cancels that unit (refund included).
 		for slot := 0; slot < queued_count(EARTH); slot += 1 {
 			if rl.CheckCollisionPointRec(mouse, queue_slot_rect(panel_x, slot)) {
 				last_unit_clicked_index = -1
@@ -442,8 +404,6 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 	if !ctrl_down() { clear_selection() }
 }
 
-// A press in the inspector is a click when released with little movement,
-// otherwise it becomes a drag box-select across unit tiles.
 handle_inspector_release :: proc(mouse: rl.Vector2, panel_x: f32) {
 	if rl.Vector2Distance(mouse, inspector_drag_start) < 4 {
 		handle_inspector_click(mouse, panel_x)
@@ -452,11 +412,8 @@ handle_inspector_release :: proc(mouse: rl.Vector2, panel_x: f32) {
 	box_select(mouse, panel_x)
 }
 
-// Every unit tile intersecting the drag rectangle is selected on release.
-// Plain drag replaces the selection, Shift adds to it, Ctrl toggles each tile.
 box_select :: proc(mouse: rl.Vector2, panel_x: f32) {
 	last_unit_clicked_index = -1
-	// Ghost tiles are a frozen snapshot, not live units: nothing to select.
 	if ghost_view() { return }
 	rect := rect_between(inspector_drag_start, mouse)
 	replace := !ctrl_down() && !shift_down()
@@ -486,9 +443,6 @@ shift_down :: proc() -> bool {
 	return rl.IsKeyDown(.LEFT_SHIFT) || rl.IsKeyDown(.RIGHT_SHIFT)
 }
 
-// Clicking a unit tile selects that unit; holding Ctrl toggles it.
-// Double-clicking a unit tile selects all units of that type on the planet;
-// holding Ctrl keeps other selected units and adds all units of that type.
 click_unit_tiles :: proc(mouse: rl.Vector2, panel_x: f32, kind: Unit_Type) -> bool {
 	if ghost_view() { return false }
 	ordinal := 0
@@ -541,8 +495,6 @@ update_combat_vision :: proc(dt: f32) {
 	}
 }
 
-// Shift-left removal keeps unit indices stable, so is_effective_miner ranks and
-// selection flags stay consistent for the survivors.
 remove_unit_at :: proc(index: int) {
 	if last_unit_clicked_index == index {
 		last_unit_clicked_index = -1
@@ -557,10 +509,6 @@ remove_unit_at :: proc(index: int) {
 	planet_unit_cache_dirty = true
 }
 
-// Right-click on a planet is disambiguated by selection: with units selected
-// it is a move order (the Earth rally point is left untouched); with nothing
-// selected and Earth as the selected planet it (re)sets the Earth rally point
-// - right-clicking Earth itself clears the rally back to 0.
 handle_planet_right_click :: proc(planet: int) {
 	if selection_count() > 0 {
 		issue_group_order(planet)
@@ -572,8 +520,6 @@ handle_planet_right_click :: proc(planet: int) {
 issue_group_order :: proc(planet: int) {
 	for i := 0; i < unit_count; i += 1 {
 		if !selected_units[i] { continue }
-		// The enemy HQ is a combat target only: mining drones never sortie
-		// there (nothing to mine, and the sector is not a planet).
 		if units[i].kind == .MINING && planet == ENEMY_HOME { continue }
 		units[i].target_planet = planet
 		units[i].affiliation = planet
@@ -635,24 +581,18 @@ refresh_planet_unit_cache :: proc() {
 	planet_unit_cache_dirty = false
 }
 
-// Player miners assigned/targeting planet p (matches inspector live roster logic)
 planet_miner_drone_count :: proc(p: int) -> int {
 	if p < 0 || p >= PLANET_COUNT { return 0 }
 	if planet_unit_cache_dirty { refresh_planet_unit_cache() }
 	return planet_miner_counts[p]
 }
 
-// Player combat drones stationed at/assigned to planet p (matches inspector fighting drones count)
 planet_combat_drone_count :: proc(p: int) -> int {
 	if p < 0 || p >= PLANET_COUNT { return 0 }
 	if planet_unit_cache_dirty { refresh_planet_unit_cache() }
 	return planet_combat_counts[p]
 }
 
-// ---- Fog of war ----------------------------------------------------------
-
-// True if the player has a structure on planet p (operational or under construction):
-// refinery, orbital defense, or command base.
 has_player_structure :: proc(p: int) -> bool {
 	if p < 0 || p >= PLANET_COUNT { return false }
 	if refinery_built[p] || refinery_building[p] { return true }
@@ -661,12 +601,6 @@ has_player_structure :: proc(p: int) -> bool {
 	return false
 }
 
-// Dynamic vision: a planet is visible while the player has a structure on it
-// (refinery, orbital defense, command base), or at least one player unit is
-// in or near the planet - stationed in orbit, mining, guarding, constructing,
-// idle on site, or passing within radius + 2.0. Earth is always lit. When the
-// last player fighting drone at a planet is destroyed in combat, vision lingers
-// for COMBAT_VISION_LINGER seconds before the planet falls back under fog.
 has_vision :: proc(p: int) -> bool {
 	if p < 0 || p >= SECTOR_COUNT { return false }
 	if p == EARTH { return true }
@@ -688,9 +622,6 @@ has_vision :: proc(p: int) -> bool {
 	return false
 }
 
-// Per-unit fog gate for rendering: player units are always visible; enemy
-// units are concealed while the player has no vision of the planet they are
-// at (guarding/stationed) or heading to (transit).
 is_concealed :: proc(u: ^Unit) -> bool {
 	if !u.enemy { return false }
 	p := u.affiliation
@@ -698,41 +629,27 @@ is_concealed :: proc(u: ^Unit) -> bool {
 	return !has_vision(p)
 }
 
-// ---- Earth rally point ---------------------------------------------------
-
-// Right-clicking Earth itself clears the rally: rallying to the home world
-// is the same as having no rally at all. The enemy HQ is never a rally
-// point (drones produced there would have nothing to do).
 set_earth_rally :: proc(target: int) {
 	if target == EARTH { earth_rally = NO_RALLY } else if target != ENEMY_HOME { earth_rally = target }
 }
 
-// Planet the rally flag flies over; 0 = no rally point set.
 rally_flag_planet :: proc() -> int { return earth_rally }
 
-// 3D rally flag (pole + pennant) above the rally world.
 draw_rally_flag :: proc() {
 	if earth_rally == NO_RALLY { return }
 	p := planets[earth_rally]
 	base := rl.Vector3{p.position.x, p.position.y + p.radius, p.position.z}
 	top := rl.Vector3{p.position.x, p.position.y + p.radius + 3.4, p.position.z}
 	rl.DrawCylinderEx(base, top, 0.07, 0.07, 6, rl.Color{205, 208, 218, 255})
-	// Pennant: two windings so it reads from either side.
 	tip := rl.Vector3{p.position.x + 1.7, top.y - 0.55, p.position.z}
 	rl.DrawTriangle3D({p.position.x, top.y, p.position.z}, {p.position.x, top.y - 1.3, p.position.z}, tip, SCIFI_CYAN)
 	rl.DrawTriangle3D({p.position.x, top.y - 1.3, p.position.z}, {p.position.x, top.y, p.position.z}, tip, SCIFI_CYAN)
 }
 
-// ---- Camera zoom ---------------------------------------------------------
-
-// camera.position.y spans [15, 200] (clamped in update_camera); 15 = 100%.
 zoom_percent :: proc() -> int {
 	return int(clamp((200 - camera.position.y) / 185.0 * 100.0, 0, 100))
 }
 
-// Ray-sphere hit test for the enemy HQ (pick_planet covers planets only).
-// Left-click selects the HQ sector in the inspector; right-click issues
-// orders to it.
 hq_picked :: proc(mouse: rl.Vector2) -> bool {
 	ray := rl.GetScreenToWorldRay(mouse, camera)
 	oc := rl.Vector3{ray.position.x - ENEMY_HQ_POSITION.x, ray.position.y - ENEMY_HQ_POSITION.y, ray.position.z - ENEMY_HQ_POSITION.z}

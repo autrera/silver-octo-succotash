@@ -23,8 +23,6 @@ trigger_selected_orbital_defense :: proc() -> bool {
 	return false
 }
 
-// ---- Orbital Defense ---------------------------------------------------
-
 orbital_defense_max_hp :: proc(planet: int) -> int {
 	if planet < 0 || planet >= SECTOR_COUNT { return 0 }
 	return orbital_defense_level[planet] * ORBITAL_DEFENSE_HP_PER_LEVEL
@@ -52,7 +50,6 @@ closest_approaching_enemy :: proc(planet: int) -> (^Unit, bool) {
 
 	for i in 0..<unit_count {
 		u := &units[i]
-		// Strictly target approaching combat fighters in transit; never target units that have already reached orbit (.GUARDING)
 		is_target := (planet == ENEMY_HOME) ? (!u.enemy) : (u.enemy)
 		if !is_target || u.kind != .COMBAT || u.state != .TRANSIT || u.target_planet != planet { continue }
 		d := distance(u.position, target_pos)
@@ -131,7 +128,6 @@ advance_orbital_defense_aim :: proc(planet_idx: int, dt: f32) {
 	if planet_idx < 0 || planet_idx >= SECTOR_COUNT { return }
 	if orbital_defense_level[planet_idx] <= 0 { return }
 
-	// If upgrading (planets only), hold azimuth and park elevation in maintenance cradle (16 deg)
 	if planet_idx < PLANET_COUNT && orbital_defense_building[planet_idx] {
 		target_el: f32 = ORBITAL_DEFENSE_PARK_ELEV
 		el_diff := target_el - orbital_defense_elevation[planet_idx]
@@ -146,7 +142,6 @@ advance_orbital_defense_aim :: proc(planet_idx: int, dt: f32) {
 
 	enemy, has_enemy := closest_approaching_enemy(planet_idx)
 	if has_enemy {
-		// Active tracking: smoothly rotate azimuth and pitch elevation toward enemy
 		target_az, target_el := orbital_defense_aim_toward(planet_idx, enemy.position)
 
 		az_diff := shortest_angle_diff(target_az, orbital_defense_angle[planet_idx])
@@ -165,10 +160,8 @@ advance_orbital_defense_aim :: proc(planet_idx: int, dt: f32) {
 			orbital_defense_elevation[planet_idx] += math.sign(el_diff) * max_el
 		}
 	} else {
-		// Idle scan: continue rotating forward from current azimuth without warping back
 		orbital_defense_angle[planet_idx] += ORBITAL_DEFENSE_SCAN_SPEED * dt
 
-		// Smoothly return elevation to idle resting angle
 		target_el: f32 = ORBITAL_DEFENSE_IDLE_ELEV
 		el_diff := target_el - orbital_defense_elevation[planet_idx]
 		max_el := ORBITAL_DEFENSE_ELEV_SPEED * dt
@@ -179,7 +172,6 @@ advance_orbital_defense_aim :: proc(planet_idx: int, dt: f32) {
 		}
 	}
 
-	// Normalize azimuth to [-PI, PI)
 	for orbital_defense_angle[planet_idx] < -math.PI {
 		orbital_defense_angle[planet_idx] += 2 * math.PI
 	}
@@ -275,7 +267,6 @@ draw_orbital_defense_blasts :: proc() {
 		glow_alpha := u8(clamp(180.0 * fade, 0, 255))
 		shock_alpha := u8(clamp(200.0 * fade, 0, 255))
 
-		// Distinct palettes: Crimson/amber for Enemy HQ, cyan/mint for Player Planets
 		beam_color := rl.Color{0, 240, 255, glow_alpha}
 		core_color := rl.Color{255, 255, 255, alpha}
 		line_color := rl.Color{210, 255, 255, alpha}
@@ -290,35 +281,27 @@ draw_orbital_defense_blasts :: proc() {
 			spark_color = rl.Color{255, 160, 80, alpha}
 		}
 
-		// 1. Big Laser Blast Beam (from orbital defense station to target fighter)
 		core_r := 0.22 * fade + 0.04
 		rl.DrawCylinderEx(b.from, b.to, core_r, core_r * 0.75, 8, core_color)
 
-		// Outer glowing plasma cylinder: wide luminous aura
 		glow_r := 0.65 * fade + 0.12
 		rl.DrawCylinderEx(b.from, b.to, glow_r, glow_r * 0.75, 8, beam_color)
 
-		// Central accelerator beam core line
 		rl.DrawLine3D(b.from, b.to, line_color)
 
-		// 2. Muzzle Flash & Discharge at Orbital Defense Station (b.from)
 		flash_r := 0.55 * fade + 0.08
 		rl.DrawSphere(b.from, flash_r * 0.6, core_color)
 		rl.DrawSphereEx(b.from, flash_r, 8, 12, beam_color)
 		rl.DrawCircle3D(b.from, 0.5 + t * 1.0, {0, 1, 0}, 90, beam_color)
 
-		// 3. Vaporization Impact & Explosion at the Enemy Fighter (b.to)
 		burst_r := 0.40 + 1.5 * math.sqrt(t)
 		rl.DrawSphere(b.to, 0.30 * fade, core_color)
 		rl.DrawSphereEx(b.to, burst_r * 0.75, 8, 12, beam_color)
 
-		// Expanding vector wireframe sphere shockwave
 		shock_r := 0.45 + 2.4 * t
 		rl.DrawSphereWires(b.to, shock_r, 6, 8, shock_color)
-		// Expanding horizontal planar tactical shockwave ring
 		rl.DrawCircle3D(b.to, shock_r * 1.2, {0, 1, 0}, 90, beam_color)
 
-		// High-energy plasma sparks and debris radiating outward from the blast
 		spark_dist := t * 3.4
 		for k in 0..<8 {
 			ang := f32(k) * (math.PI / 4.0)
@@ -388,7 +371,6 @@ start_orbital_defense_construction :: proc(planet: int) {
 	construction_seq_counter += 1
 	orbital_defense_build_order[planet] = construction_seq_counter
 
-	// Pass 1: recruit idle miners first
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.kind == .MINING && !u.enemy && u.state == .IDLE {
@@ -411,7 +393,6 @@ start_orbital_defense_construction :: proc(planet: int) {
 		}
 	}
 
-	// Pass 2: recruit active miners (mining or depositing) if crew still needed
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.kind == .MINING && !u.enemy && u.state != .CONSTRUCTING && u.state != .IDLE {
@@ -629,10 +610,6 @@ update_orbital_defenses :: proc(dt: f32) {
 				}
 			}
 		} else if orbital_defense_level[p] > 0 && !is_building {
-			// Ammo batteries: each shot consumes 1 ammo and kills up to
-			// KILLS_PER_SHOT inbound fighters. Empty batteries hold fire.
-			// Fire every shot needed in one update so inbound fighters never
-			// reach the planet while ammo is still available.
 			target_pos := sector_pos(p)
 			r := sector_radius(p)
 			engage_dist := r + 3.8
@@ -661,7 +638,6 @@ update_orbital_defenses :: proc(dt: f32) {
 				}
 				orbital_defense_reset_timer[p] = ORBITAL_DEFENSE_WAVE_RESET_DELAY
 			}
-			// Charge any partial final shot once the inbound wave clears.
 		}
 	}
 }
@@ -674,10 +650,6 @@ update_enemy_waves :: proc(dt: f32) {
 	for p in 0..<SECTOR_COUNT { update_planet_combat(dt, p) }
 }
 
-// Minor wave: every 75 seconds, concurrent minor waves launch against liberated planets.
-// Every liberated planet is attacked from the closest not liberated planet.
-// Each not liberated planet only attacks one liberated planet, its closest.
-// These attacks run independently of the 180s wave.
 update_minor_wave :: proc(dt: f32) {
 	minor_wave_timer += dt
 	if minor_wave_timer >= MINOR_WAVE_INTERVAL {
@@ -685,11 +657,6 @@ update_minor_wave :: proc(dt: f32) {
 	}
 }
 
-// Computes the minor wave attack pairs for all liberated planets.
-// Pairs unliberated planets with liberated planets greedily by distance:
-// each liberated planet is attacked from the closest available unliberated planet,
-// and each unliberated planet attacks at most one liberated planet (its closest
-// available liberated planet).
 collect_minor_wave_attacks :: proc() -> (sources: [PLANET_COUNT]int, targets: [PLANET_COUNT]int, count: int) {
 	Pair :: struct {
 		u: int,
@@ -710,7 +677,6 @@ collect_minor_wave_attacks :: proc() -> (sources: [PLANET_COUNT]int, targets: [P
 		}
 	}
 
-	// Sort pairs ascending by distance (insertion sort on at most 16 pairs)
 	for i in 1..<pair_count {
 		key := pairs[i]
 		j := i - 1
@@ -746,8 +712,6 @@ launch_minor_wave :: proc() {
 	}
 }
 
-// Warning before minor wave: 3 seconds before launch, targeted planets
-// receive an ominous red glow at half battle intensity.
 planet_is_minor_wave_target :: proc(p: int) -> bool {
 	if p < 0 || p >= PLANET_COUNT { return false }
 	if minor_wave_timer < MINOR_WAVE_INTERVAL - 3.0 { return false }
@@ -758,8 +722,6 @@ planet_is_minor_wave_target :: proc(p: int) -> bool {
 	return false
 }
 
-// Warning before minor wave: 3 seconds before launch, attacking source planets
-// receive an ominous yellow aura at half battle intensity.
 planet_is_minor_wave_source :: proc(p: int) -> bool {
 	if p < 0 || p >= PLANET_COUNT { return false }
 	if minor_wave_timer < MINOR_WAVE_INTERVAL - 3.0 { return false }
@@ -794,16 +756,11 @@ minor_wave_source_warning_planet :: proc() -> int {
 	return minor_wave_warning_source_planet()
 }
 
-// A planet is the source of an impending minor wave within 3s of launching.
 planet_attack_source_warning :: proc(p: int) -> bool {
 	if p < 0 || p >= PLANET_COUNT { return false }
 	return planet_is_minor_wave_source(p)
 }
 
-// A planet is under attack warning if an impending minor wave is within 3s
-// of launching against it, or if enemy combat drones are currently in transit
-// toward it. The warning red glow persists during transit and transitions to
-// full battle glow once combat begins.
 planet_under_attack_warning :: proc(p: int) -> bool {
 	if p < 0 || p >= PLANET_COUNT { return false }
 	if planet_is_minor_wave_target(p) { return true }
@@ -901,7 +858,6 @@ spawn_minor_wave :: proc(source, target: int, count: int = MINOR_WAVE_SIZE) {
 	}
 }
 
-// Wave: every 180 seconds, advancing while 2+ worlds are liberated.
 update_wave :: proc(dt: f32) {
 	if liberated_planet_count() >= WAVE_MIN_LIBERATED_PLANETS {
 		enemy_wave_timer += dt
@@ -913,10 +869,6 @@ update_wave :: proc(dt: f32) {
 	}
 }
 
-// One attack cycle: a single wave of attack_wave_size() fighters. While the
-// player presses an assault on a weakened HQ the wave musters there as
-// guarding defenders instead; otherwise it sorties against the liberated
-// planet closest to the enemy HQ. A destroyed HQ launches nothing, ever.
 launch_wave :: proc() {
 	size := attack_wave_size()
 	enemy_wave_timer = 0
@@ -934,7 +886,6 @@ launch_attack_wave :: proc() {
 	launch_wave()
 }
 
-// Combat tick for a sector: HQ battles resolve 5x faster than planet battles.
 combat_tick_for :: proc(p: int) -> f32 {
 	if p == ENEMY_HOME {
 		return HQ_COMBAT_TICK
@@ -981,8 +932,6 @@ update_planet_combat :: proc(dt: f32, p: int) {
 				refinery_building[p] = false
 				refinery_progress[p] = 0
 			}
-			// Earth siege: once no defenders or miners are left, the occupying
-			// fighters tear down the command bases, one per BASE_SIEGE_TIME.
 			if p == EARTH && !player_miners_at(p) {
 				base_timer[p] += dt
 				for base_timer[p] >= BASE_SIEGE_TIME {
@@ -996,8 +945,6 @@ update_planet_combat :: proc(dt: f32, p: int) {
 		}
 	} else if players > 0 {
 		combat_timer[p] = 0
-		// Occupation cleanup: with the garrison fighters gone, player fighters
-		// sweep the enemy mining drones, then bring down the enemy base.
 		if enemy_miner_count(p) > 0 {
 			miner_timer[p] += dt
 			for miner_timer[p] >= tick {
@@ -1032,22 +979,16 @@ update_planet_combat :: proc(dt: f32, p: int) {
 	}
 }
 
-// Attack wave size: (liberated planets - 1) * WAVE_FIGHTERS_PER_LIBERATED
-// fighters (3 liberated worlds send 30). Earth starts liberated, so the
-// result is 0 until a second world falls - the wave musters nothing.
 attack_wave_size :: proc() -> int {
 	return (liberated_planet_count() - 1) * WAVE_FIGHTERS_PER_LIBERATED
 }
 
-// Liberated worlds (planets only - the HQ sector is not a planet).
 liberated_planet_count :: proc() -> int {
 	count := 0
 	for p in 0..<PLANET_COUNT { if planet_liberated(p) { count += 1 } }
 	return count
 }
 
-// The liberated planet closest to the enemy HQ - the wave's fixed target.
-// Earth starts liberated, so there is always at least one candidate.
 closest_liberated_planet_to_hq :: proc() -> int {
 	best := EARTH
 	best_d := distance(planets[EARTH].position, ENEMY_HQ_POSITION)
@@ -1059,8 +1000,6 @@ closest_liberated_planet_to_hq :: proc() -> int {
 	return best
 }
 
-// True while player fighters press the HQ: stationed there (affiliation) or
-// already inbound (transit with the HQ as target).
 player_attacking_hq :: proc() -> bool {
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
@@ -1071,8 +1010,6 @@ player_attacking_hq :: proc() -> bool {
 	return false
 }
 
-// Muster `count` fighters as guarding defenders of the HQ (capped by free
-// unit slots), placed on the guard orbit like the opening garrison.
 spawn_hq_defenders :: proc(count: int) {
 	if enemy_hq_destroyed() { return }
 	spawn_count := min(count, MAX_UNITS - unit_count)
@@ -1087,18 +1024,12 @@ spawn_hq_defenders :: proc(count: int) {
 	}
 }
 
-// Debug: force the next attack wave immediately (verify combat without
-// waiting 3 minutes).
 spawn_enemy_wave :: proc() { launch_attack_wave() }
 
-// Spawns `count` enemy fighters (capped by free unit slots) lifting off from
-// the enemy HQ toward `target`. A destroyed HQ launches nothing, ever.
 spawn_n_enemies_to :: proc(target: int, count: int) {
 	if enemy_hq_destroyed() { return }
 	spawn_count := min(count, MAX_UNITS - unit_count)
 	if spawn_count <= 0 { return }
-	// Every wave lifts off from the enemy HQ (the old Neptune orbit) - no
-	// longer from Jupiter space.
 	for i in 0..<spawn_count {
 		angle := f32(i) * 1.26
 		pos := ENEMY_HQ_POSITION + rl.Vector3{math.cos(angle) * 1.5, 0.5, math.sin(angle) * 1.5}
@@ -1111,13 +1042,10 @@ spawn_n_enemies_to :: proc(target: int, count: int) {
 	}
 }
 
-// A planet is liberated once its enemy base is destroyed (the combat rules
-// only damage the base after every enemy drone there is gone).
 planet_liberated :: proc(p: int) -> bool {
 	return enemy_base_hp[p] <= 0
 }
 
-// Counts of guarding fighters at a planet: player units vs enemy units.
 planet_combatants :: proc(p: int) -> (players, enemies: int) {
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
@@ -1138,10 +1066,6 @@ kill_fighter :: proc(p: int, enemy_side: bool) -> bool {
 	return false
 }
 
-// Garrison defenses only engage miners physically at the planet: transit
-// across space is safe. A scout freshly pinned at an occupied planet keeps
-// a SCOUT_SURVIVAL grace window (its .IDLE progress) before it becomes a
-// target, so the player can peek at the garrison before losing the drone.
 kill_player_miner :: proc(p: int) -> bool {
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
@@ -1153,8 +1077,6 @@ kill_player_miner :: proc(p: int) -> bool {
 	return false
 }
 
-// Any player mining drone physically at p (transit legs are elsewhere and
-// safe). Mirrors kill_player_miner's target set without killing anything.
 player_miners_at :: proc(p: int) -> bool {
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
@@ -1164,8 +1086,6 @@ player_miners_at :: proc(p: int) -> bool {
 	return false
 }
 
-// Enemy siege tears down one command base: drop its production line (the
-// highest-index line), then redistribute pending items across the survivors.
 destroy_player_base :: proc(p: int) {
 	if base_counts[p] <= 0 { return }
 	production[p][base_counts[p] - 1] = Production{}
@@ -1192,7 +1112,6 @@ kill_enemy_miner :: proc(p: int) -> bool {
 	return false
 }
 
-// Drones actively fighting at sector s (dogfight, miner sweep, or base siege).
 sector_in_combat :: proc(s: int) -> bool {
 	players := 0
 	enemies := 0
@@ -1231,7 +1150,6 @@ update_combat :: proc(u: ^Unit, dt: f32) {
 	}
 }
 
-// Procedural 3D oriented quad (double-wound so it renders from front and back).
 draw_quad_3d :: proc(v1, v2, v3, v4: rl.Vector3, col: rl.Color) {
 	rl.DrawTriangle3D(v1, v2, v3, col)
 	rl.DrawTriangle3D(v1, v3, v4, col)
@@ -1239,7 +1157,6 @@ draw_quad_3d :: proc(v1, v2, v3, v4: rl.Vector3, col: rl.Color) {
 	rl.DrawTriangle3D(v4, v3, v1, col)
 }
 
-// Procedural 3D oriented box aligned to an arbitrary orthonormal basis (fwd, up, right).
 draw_oriented_box :: proc(
 	center: rl.Vector3,
 	half_w, half_h, half_l: f32,
@@ -1255,33 +1172,22 @@ draw_oriented_box :: proc(
 	p6 := center + right * half_w + up * half_h + fwd * half_l
 	p7 := center - right * half_w + up * half_h + fwd * half_l
 
-	// Rear face (-fwd)
 	draw_quad_3d(p0, p1, p2, p3, col)
-	// Front face (+fwd)
 	draw_quad_3d(p4, p5, p6, p7, col)
-	// Bottom face (-up)
 	draw_quad_3d(p0, p1, p5, p4, col)
-	// Top face (+up)
 	draw_quad_3d(p3, p2, p6, p7, col)
-	// Left face (-right)
 	draw_quad_3d(p0, p3, p7, p4, col)
-	// Right face (+right)
 	draw_quad_3d(p1, p2, p6, p5, col)
 }
 
-// Pulsating red emergency hazard lights (ambulance-style alternating dual strobes)
-// used for orbital defenses undergoing construction or upgrade refits.
 draw_ambulance_hazard_lights :: proc(p_left, p_right: rl.Vector3, s: f32) {
-	// Alternating high-cadence strobe pulse (ambulance emergency light bar effect)
 	t := laser_anim_time * 12.0
 	phase := math.sin(t)
 	pulse_l := clamp((phase - 0.1) * 2.2, 0.0, 1.0)
 	pulse_r := clamp((-phase - 0.1) * 2.2, 0.0, 1.0)
 
-	// Crossbar bracket connecting the lights
 	rl.DrawCylinderEx(p_left, p_right, 0.016 * s, 0.016 * s, 6, rl.Color{45, 48, 55, 255})
 
-	// Left red strobe
 	rl.DrawCylinderEx(p_left - {0, 0.05 * s, 0}, p_left, 0.026 * s, 0.024 * s, 6, rl.Color{35, 38, 44, 255})
 	if pulse_l > 0.05 {
 		rl.DrawSphere(p_left, 0.038 * s, rl.Color{255, 245, 245, 255})
@@ -1291,7 +1197,6 @@ draw_ambulance_hazard_lights :: proc(p_left, p_right: rl.Vector3, s: f32) {
 		rl.DrawSphere(p_left, 0.032 * s, rl.Color{110, 20, 25, 255})
 	}
 
-	// Right red strobe
 	rl.DrawCylinderEx(p_right - {0, 0.05 * s, 0}, p_right, 0.026 * s, 0.024 * s, 6, rl.Color{35, 38, 44, 255})
 	if pulse_r > 0.05 {
 		rl.DrawSphere(p_right, 0.038 * s, rl.Color{255, 245, 245, 255})
@@ -1302,8 +1207,6 @@ draw_ambulance_hazard_lights :: proc(p_left, p_right: rl.Vector3, s: f32) {
 	}
 }
 
-// Cyberpunk space version of a sand-colored Flak 88 battery mounted on the
-// planet surface at the north pole.
 draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 	if planet_idx < 0 || planet_idx >= PLANET_COUNT { return }
 	planet := planets[planet_idx]
@@ -1312,11 +1215,8 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 	level := orbital_defense_level[planet_idx]
 	is_upgrading := orbital_defense_building[planet_idx]
 
-	// Scale subtly with planet radius for consistent planetary presence
 	s: f32 = 0.84 + clamp(planet.radius * 0.07, 0.11, 0.32)
 
-	// Azimuth and elevation dynamically track approaching enemies when active,
-	// or scan gracefully when idle, or park in maintenance cradle when upgrading.
 	azimuth, elev := orbital_defense_aim(planet_idx)
 	cos_az := math.cos(azimuth)
 	sin_az := math.sin(azimuth)
@@ -1331,7 +1231,6 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 	barrel_dir := fwd * cos_el + up * sin_el
 	barrel_normal := -fwd * sin_el + up * cos_el
 
-	// Palette: sand military armor contrasted with gunmetal chassis & cyan energy
 	sand_base    := rl.Color{214, 182, 134, 255}
 	sand_dark    := rl.Color{160, 132, 92, 255}
 	sand_light   := rl.Color{240, 215, 175, 255}
@@ -1353,12 +1252,10 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 		mint_core = rl.Color{70, 130, 120, 200}
 		amber_lens = rl.Color{120, 70, 30, 200}
 	} else if is_upgrading {
-		// Powered-down coils and dark energy conduits while disabled during upgrade
 		cyan_glow = rl.Color{55, 50, 45, 255}
 		mint_core = rl.Color{80, 70, 60, 255}
 	}
 
-	// 1. Kreuzlafette: Central base collar & 4 cruciform outrigger legs on surface
 	base_b := pole + up * (0.01 * s)
 	base_m := pole + up * (0.12 * s)
 	base_t := pole + up * (0.22 * s)
@@ -1371,16 +1268,13 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 		l_start := pole + up * (0.08 * s) + ldir * (0.30 * s)
 		l_end   := pole + up * (0.05 * s) + ldir * (0.80 * s)
 
-		// Tapered girder outrigger
 		rl.DrawCylinderEx(l_start, l_end, 0.085 * s, 0.060 * s, 6, sand_base)
 		rl.DrawCylinderEx(l_start, l_start + ldir * (0.10 * s), 0.095 * s, 0.090 * s, 6, gunmetal)
 
-		// Conduit line along the top spine of each leg
 		c_s := l_start + up * (0.065 * s)
 		c_e := l_end + up * (0.045 * s)
 		rl.DrawLine3D(c_s, c_e, cyan_glow)
 
-		// Outrigger footpad / leveling jack
 		pad_b := pole + up * (0.01 * s) + ldir * (0.80 * s)
 		pad_t := pole + up * (0.09 * s) + ldir * (0.80 * s)
 		rl.DrawCylinderEx(pad_b, pad_t, 0.15 * s, 0.13 * s, 8, gunmetal)
@@ -1388,7 +1282,6 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 		rl.DrawCylinderEx(pad_t, pad_t + up * (0.01 * s), 0.13 * s, 0.13 * s, 8, rl.Fade(cyan_glow, 0.7))
 	}
 
-	// 2. Azimuth Turntable Ring & Traversing Platform Deck
 	tt_b := pole + up * (0.22 * s)
 	tt_t := pole + up * (0.30 * s)
 	rl.DrawCylinderEx(tt_b, tt_t, 0.35 * s, 0.35 * s, 16, gunmetal)
@@ -1398,7 +1291,6 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 	deck_t := pole + up * (0.38 * s)
 	rl.DrawCylinderEx(deck_b, deck_t, 0.33 * s, 0.31 * s, 8, sand_base)
 
-	// 3. Twin Trunnion Stanchions (Mounting Cheeks) & Pivot Axle
 	ch_h: f32 = 0.28 * s
 	ch_w: f32 = 0.09 * s
 	ch_l: f32 = 0.26 * s
@@ -1415,13 +1307,11 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 	rl.DrawCylinderEx(axle_l, axle_l - right * (0.03 * s), 0.08 * s, 0.075 * s, 8, gunmetal)
 	rl.DrawCylinderEx(axle_r, axle_r + right * (0.03 * s), 0.08 * s, 0.075 * s, 8, gunmetal)
 
-	// Hydraulic elevation ram under cradle
 	ram_b := pole + up * (0.37 * s) + fwd * (0.10 * s)
 	ram_t := pole + up * (0.53 * s) + fwd * (0.03 * s) - barrel_normal * (0.07 * s)
 	rl.DrawCylinderEx(ram_b, ram_t, 0.045 * s, 0.035 * s, 6, steel_bright)
 	rl.DrawCylinderEx(ram_b, (ram_b + ram_t) * 0.5, 0.058 * s, 0.058 * s, 6, gunmetal)
 
-	// 4. Sloped Gun Shield (Schutzschild) & Targeting Optronics
 	sh_center := pole + up * (0.58 * s) + fwd * (0.19 * s)
 	pl_w: f32 = 0.14 * s
 	pl_h: f32 = 0.44 * s
@@ -1430,7 +1320,6 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 	draw_oriented_box(sh_center + right * (0.14 * s), pl_w * 0.5, pl_h * 0.5, pl_th * 0.5, fwd, up, right, sand_base)
 	draw_oriented_box(sh_center + up * (0.19 * s), 0.22 * s, 0.06 * s * 0.5, pl_th * 0.5, fwd, up, right, sand_light)
 
-	// Angled side cheek wings (bent backwards along -fwd)
 	h_half := up * (0.21 * s)
 	w_l_root := sh_center - right * (0.21 * s)
 	w_l_tip  := w_l_root - right * (0.16 * s) - fwd * (0.14 * s)
@@ -1440,55 +1329,45 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 	w_r_tip  := w_r_root + right * (0.16 * s) - fwd * (0.14 * s)
 	draw_quad_3d(w_r_root - h_half, w_r_tip - h_half, w_r_tip + h_half, w_r_root + h_half, sand_dark)
 
-	// Optronic sensor pod on left shield
 	pod_pos := sh_center - right * (0.15 * s) + up * (0.10 * s) + fwd * (0.04 * s)
 	draw_oriented_box(pod_pos, 0.055 * s, 0.065 * s, 0.075 * s, fwd, up, right, gunmetal)
 	rl.DrawSphereEx(pod_pos + fwd * (0.08 * s) + up * (0.022 * s), 0.024 * s, 6, 6, cyan_glow)
 	rl.DrawSphereEx(pod_pos + fwd * (0.08 * s) - up * (0.022 * s), 0.028 * s, 6, 6, amber_lens)
 
-	// Communications mast on right shield
 	mast_b := sh_center + right * (0.19 * s) + up * (0.22 * s)
 	mast_t := mast_b + up * (0.30 * s) - fwd * (0.04 * s)
 	rl.DrawCylinderEx(mast_b, mast_t, 0.016 * s, 0.007 * s, 4, steel_bright)
 	beacon_pulse := 0.75 + 0.25 * math.sin(laser_anim_time * 8.0 + f32(planet_idx))
 	rl.DrawSphere(mast_t, 0.022 * s, rl.Fade(cyan_glow, beacon_pulse))
 
-	// If upgrading: Pulsating Red Ambulance Lights on top of the shield!
 	if is_upgrading {
 		light_l := sh_center - right * (0.16 * s) + up * (0.26 * s)
 		light_r := sh_center + right * (0.16 * s) + up * (0.26 * s)
 		draw_ambulance_hazard_lights(light_l, light_r, s)
 	}
 
-	// 5. Gun Cradle & Breech Mechanism
 	pivot := pole + up * (0.58 * s) + fwd * (0.03 * s)
 	breech_c := pivot - barrel_dir * (0.16 * s)
 	draw_oriented_box(breech_c, 0.10 * s, 0.09 * s, 0.15 * s, barrel_dir, barrel_normal, right, gunmetal)
 	draw_oriented_box(breech_c + barrel_normal * (0.08 * s), 0.09 * s, 0.025 * s, 0.14 * s, barrel_dir, barrel_normal, right, sand_base)
 
-	// Heatsink slats with cyan thermal channels
 	draw_oriented_box(breech_c + right * (0.105 * s), 0.008 * s, 0.045 * s, 0.11 * s, barrel_dir, barrel_normal, right, cyan_glow)
 	draw_oriented_box(breech_c - right * (0.105 * s), 0.008 * s, 0.045 * s, 0.11 * s, barrel_dir, barrel_normal, right, cyan_glow)
 
-	// Upper recoil cylinder
 	rc_s := pivot - barrel_dir * (0.18 * s) + barrel_normal * (0.11 * s)
 	rc_e := pivot + barrel_dir * (0.35 * s) + barrel_normal * (0.11 * s)
 	rl.DrawCylinderEx(rc_s, rc_e, 0.045 * s, 0.045 * s, 8, steel_bright)
 	rl.DrawCylinderEx(rc_s, rc_s + barrel_dir * (0.06 * s), 0.058 * s, 0.058 * s, 8, gunmetal)
 
-	// Lower recuperator cylinder
 	rp_s := pivot - barrel_dir * (0.14 * s) - barrel_normal * (0.09 * s)
 	rp_e := pivot + barrel_dir * (0.28 * s) - barrel_normal * (0.09 * s)
 	rl.DrawCylinderEx(rp_s, rp_e, 0.038 * s, 0.038 * s, 8, steel_bright)
 
-	// 6. Stepped Barrel with Magnetic Rail Accelerator Coils & Double-Baffle Muzzle Brake
-	// Stage 1: Base Thermal Sleeve
 	s1_s := pivot
 	s1_e := pivot + barrel_dir * (0.45 * s)
 	rl.DrawCylinderEx(s1_s, s1_e, 0.088 * s, 0.076 * s, 10, sand_base)
 	rl.DrawCylinderEx(s1_s, s1_s + barrel_dir * (0.09 * s), 0.10 * s, 0.10 * s, 10, gunmetal)
 
-	// Stage 2: Accelerator Section
 	s2_s := s1_e
 	s2_e := pivot + barrel_dir * (1.25 * s)
 	rl.DrawCylinderEx(s2_s, s2_e, 0.070 * s, 0.058 * s, 10, gunmetal)
@@ -1502,12 +1381,10 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 		rl.DrawCylinderEx(c_len - barrel_dir * (0.008 * s), c_len, 0.086 * s, 0.086 * s, 10, mint_core)
 	}
 
-	// Stage 3: Forward Barrel
 	s3_s := s2_e
 	s3_e := pivot + barrel_dir * (1.75 * s)
 	rl.DrawCylinderEx(s3_s, s3_e, 0.054 * s, 0.044 * s, 10, sand_base)
 
-	// Stage 4: Double-Baffle Muzzle Brake
 	mb_s := s3_e
 	mb_e := s3_e + barrel_dir * (0.22 * s)
 	rl.DrawCylinderEx(mb_s, mb_e, 0.074 * s, 0.074 * s, 8, gunmetal)
@@ -1519,7 +1396,6 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 	rl.DrawCylinderEx(mb_e - barrel_dir * (0.015 * s), mb_e, 0.048 * s, 0.048 * s, 8, mint_core)
 	rl.DrawSphereEx(mb_e, 0.032 * s, 6, 6, cyan_glow)
 
-	// 7. Tech upgrades for higher defense levels
 	if level >= 2 {
 		cap_l := pole + up * (0.40 * s) - right * (0.24 * s) - fwd * (0.08 * s)
 		cap_r := pole + up * (0.40 * s) + right * (0.24 * s) - fwd * (0.08 * s)
@@ -1577,7 +1453,6 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 	}
 }
 
-// Visual construction site for an orbital defense battery being assembled by miners
 draw_cyberpunk_flak88_construction_site :: proc(planet_idx: int) {
 	if planet_idx < 0 || planet_idx >= PLANET_COUNT { return }
 	planet := planets[planet_idx]
@@ -1589,7 +1464,6 @@ draw_cyberpunk_flak88_construction_site :: proc(planet_idx: int) {
 	cyan_glow := SCIFI_CYAN
 	mint_core := SCIFI_MINT
 
-	// Base outriggers & pads
 	for d_idx in 0..<4 {
 		ang := f32(d_idx) * (math.PI / 2.0)
 		ldir := rl.Vector3{math.cos(ang), 0, math.sin(ang)}
@@ -1602,7 +1476,6 @@ draw_cyberpunk_flak88_construction_site :: proc(planet_idx: int) {
 		rl.DrawCylinderEx(pad_b, pad_t, 0.13 * s, 0.11 * s, 8, gunmetal)
 	}
 
-	// Staging pylons with alternating ambulance pulsating hazard lights
 	st_l := pole + up * (0.65 * s) - rl.Vector3{0.35 * s, 0, 0}
 	st_r := pole + up * (0.65 * s) + rl.Vector3{0.35 * s, 0, 0}
 	rl.DrawCylinderEx(pole - rl.Vector3{0.35 * s, 0, 0}, st_l, 0.02 * s, 0.015 * s, 6, gunmetal)

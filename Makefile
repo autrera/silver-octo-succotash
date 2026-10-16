@@ -1,18 +1,4 @@
-# Makefile for odin-raylib-test
-#
-# Compiles the project with the Odin compiler, using the raylib bindings that
-# ship with Odin (import "vendor:raylib").
-#
-# Targets:
-#   make          - build a debug binary into bin/debug/
-#   make run      - build and run the game
-#   make release  - build an optimized binary into bin/release/
-#   make clean    - remove build output
-#
-# Works on macOS and Windows (w64devkit terminal). `odin` must be on PATH.
-
 ODIN       ?= odin
-# debug | release
 BUILD_MODE ?= debug
 
 BIN_DIR := bin/$(BUILD_MODE)
@@ -27,8 +13,6 @@ else
 ODIN_FLAGS += -debug
 endif
 
-# Recipes run under sh (macOS/WSL/w64devkit terminal) or cmd.exe (plain
-# Windows). Detect which so mkdir/clean work in both.
 ifeq ($(shell echo "test"), "test")
 MKDIR_CMD := if not exist "$(subst /,\,$(BIN_DIR))" mkdir "$(subst /,\,$(BIN_DIR))"
 RM_CMD    := if exist "$(subst /,\,$(BIN_DIR))" rd /s /q "$(subst /,\,$(BIN_DIR))"

@@ -8,7 +8,6 @@ draw_inspector :: proc() {
 	panel_orig_x := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
 	h := f32(rl.GetScreenHeight())
 
-	// Floating tactical console container inset by 8px from screen edges (inspired by Star Fox Zero map console)
 	container_x := panel_orig_x + 4.0
 	container_y: f32 = 12.0
 	container_w := f32(SCREEN_PANEL_WIDTH) - 8.0
@@ -18,7 +17,6 @@ draw_inspector :: proc() {
 
 	x := panel_orig_x
 
-	// Header: clean planet name on the left, MPS on the right (no borders, no corners)
 	header_y: c.int = 26
 	is_enemy := selected_planet == ENEMY_HOME
 
@@ -48,8 +46,6 @@ draw_inspector :: proc() {
 		draw_outpost_inspector(x)
 	}
 
-	// Scouted-but-dark planets draw dimmed ghost rosters from the frozen intel
-	// snapshot instead of any live section; lit planets draw live rosters.
 	if ghost_view() {
 		draw_ghost_rosters(x)
 	} else if selected_planet == EARTH || has_vision(selected_planet) {
@@ -114,7 +110,6 @@ draw_inspector :: proc() {
 			rl.DrawText("NO UNITS SELECTED", i32(sel_rect.x + 10), i32(sel_rect.y + 5), 11, SCIFI_MUTED)
 		}
 	}
-	// Live drag rectangle for the inspector box-select.
 	if inspector_drag_active {
 		rect := rect_between(inspector_drag_start, rl.GetMousePosition())
 		rl.DrawRectangleRec(rect, rl.Fade(SCIFI_CYAN, 0.18))
@@ -123,17 +118,12 @@ draw_inspector :: proc() {
 	}
 }
 
-// Earth owns the command bases: base pips, base construction, production
-// lines and the build queue all live here and nowhere else.
 draw_earth_inspector :: proc(x: f32) {
 	if base_button_visible() {
 		base_button := rl.Rectangle{x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, BASE_BTN_H}
 		if base_build_planet == EARTH {
 			progress := base_build_progress / BASE_CONSTRUCT_TIME
 			draw_chamfered_panel(base_button, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
-			// Construction progress now fills the button itself, left to right,
-			// instead of a separate bar beneath it. The text is drawn on top so
-			// it stays legible as the green fill advances.
 			fill_w := base_button.width * progress
 			fill_rect := rl.Rectangle{base_button.x, base_button.y, fill_w, base_button.height}
 			rl.DrawRectangleRec(fill_rect, rl.Color{0, 200, 120, 120})
@@ -185,8 +175,6 @@ draw_earth_inspector :: proc(x: f32) {
 	}
 }
 
-// The enemy HQ sector inspector: fortress status card plus the shared unit
-// rosters. Drawn for ENEMY_HOME instead of the outpost card.
 draw_hq_inspector :: proc(x: f32) {
 	card := rl.Rectangle{x + PANEL_PAD_X, OUTPOST_CARD_Y, PANEL_CONTENT_W, CARD_H}
 	if enemy_hq_destroyed() {
@@ -213,8 +201,6 @@ draw_hq_inspector :: proc(x: f32) {
 	}
 }
 
-// Outpost planets host no player bases: show the mining forecast, the enemy
-// stronghold status (mining is locked until it falls) and unit rosters only.
 draw_outpost_inspector :: proc(x: f32) {
 	if !planet_liberated(selected_planet) {
 		card := rl.Rectangle{x + PANEL_PAD_X, OUTPOST_CARD_Y, PANEL_CONTENT_W, CARD_H}
@@ -267,17 +253,10 @@ draw_outpost_inspector :: proc(x: f32) {
 	}
 }
 
-// Ghost rosters for a scouted-but-dark planet: header + tiles per section,
-// all from the frozen intel snapshot, then a translucent grey-out over the
-// whole roster area so it reads as stale.
 draw_ghost_rosters :: proc(x: f32) {
 	enemy_header := rl.Color{235, 110, 110, 255}
 	intel := last_known_intel[selected_planet]
 
-	// Player mining section (with cap) + fighting section. Section kinds come
-	// from the same table for both loops: a defaulted kind that only the
-	// mining branch overrides once drew every section as .MINING, stacking the
-	// two enemy headers/tiles on one origin (and dropping fighters entirely).
 	kinds := [2]Unit_Type{.MINING, .COMBAT}
 	for section in 0..<2 {
 		kind := kinds[section]
@@ -298,7 +277,6 @@ draw_ghost_rosters :: proc(x: f32) {
 		}
 	}
 
-	// Enemy mining + fighting sections.
 	for section in 0..<2 {
 		kind := kinds[section]
 		label: cstring = "HOSTILE FIGHTERS"
@@ -316,14 +294,10 @@ draw_ghost_rosters :: proc(x: f32) {
 		}
 	}
 
-	// Grey-out overlay across the roster area: stale snapshot, not live units.
 	top := f32(unit_tile_y(.MINING) - 22)
 	rl.DrawRectangleRec(rl.Rectangle{x, top, SCREEN_PANEL_WIDTH - 6, f32(rl.GetScreenHeight() - 40) - top}, rl.Color{6, 16, 22, 160})
 }
 
-// When all bases are built on Earth, the Command Base button disappears and
-// orbital defense collapses up to SECTION_TOP; the production sections flow
-// dynamically below orbital defense and any active construction progress bars.
 production_title_y :: proc() -> int {
 	if selected_planet == EARTH {
 		return int(earth_orbital_defense_bottom_y() + 10)
@@ -359,8 +333,6 @@ queue_kind_at :: proc(planet, index: int) -> Unit_Type {
 	return pending[planet][queue_index]
 }
 
-// Returns the build progress (0..1) for the queue slot at `index`, or -1 when
-// that slot is a pending (not-yet-building) unit.
 queue_progress_at :: proc(planet, index: int) -> f32 {
 	queue_index := index
 	for b := 0; b < base_counts[planet]; b += 1 {
@@ -387,15 +359,8 @@ roster_count :: proc(kind: Unit_Type) -> int {
 	return count
 }
 
-// Y of the first unit-tile row for a kind, derived so the MINING DRONES header
-// and tiles always sit below every build queue row: the queue grid is
-// base_counts rows tall (capacity = bases * MAX_BASES slots, 5 per row, 22px
-// pitch) and must be cleared even with a full queue. Used by rendering, tile
-// rects and click hitboxes alike, so they can never drift apart.
 unit_tile_y :: proc(kind: Unit_Type) -> int {
 	mining_rows := (view_count(.MINING, false) + TILES_PER_ROW - 1) / TILES_PER_ROW
-	// Outpost inspectors dynamically position rosters below the refinery and
-	// orbital defense sections (flowing with active progress bars); on Earth they flow below the build queue.
 	y := ROSTER_BASE_Y
 	if selected_planet == EARTH {
 		extra_dy := 0
@@ -413,8 +378,6 @@ unit_tile_y :: proc(kind: Unit_Type) -> int {
 	return y
 }
 
-// Enemy mirror of the roster predicates: garrison drones and attackers bound
-// for the selected planet, counted for the ENEMY inspector sections.
 enemy_in_roster :: proc(index: int, kind: Unit_Type) -> bool {
 	u := &units[index]
 	if !u.enemy || u.kind != kind { return false }
@@ -434,9 +397,6 @@ enemy_roster_ordinal :: proc(index: int, kind: Unit_Type) -> int {
 	return ordinal
 }
 
-// Y of the enemy unit-tile rows: directly below the player fighting roster,
-// with the enemy mining section (when present) stacked above the fighters.
-// If no enemy mining drones exist, enemy fighters collapse up to avoid an empty gap.
 enemy_tile_y :: proc(kind: Unit_Type) -> int {
 	combat_rows := (view_count(.COMBAT, false) + TILES_PER_ROW - 1) / TILES_PER_ROW
 	y := unit_tile_y(.COMBAT) + SECTION_PAD_Y + combat_rows * (TILE_SIZE + TILE_GAP)
@@ -450,14 +410,10 @@ enemy_tile_y :: proc(kind: Unit_Type) -> int {
 	return y
 }
 
-// Ghost view: a previously scouted planet currently under fog renders its
-// rosters from the frozen intel snapshot instead of live units (Earth is
-// always lit; the HQ has its own card).
 ghost_view :: proc() -> bool {
 	return selected_planet != EARTH && selected_planet != ENEMY_HOME && !has_vision(selected_planet) && intel_recorded[selected_planet]
 }
 
-// Count of one section inside the frozen intel snapshot.
 ghost_count :: proc(kind: Unit_Type, enemy: bool) -> int {
 	count := 0
 	intel := last_known_intel[selected_planet]
@@ -468,8 +424,6 @@ ghost_count :: proc(kind: Unit_Type, enemy: bool) -> int {
 	return count
 }
 
-// Roster size driving headers and tile layout: live counts while lit, the
-// frozen snapshot counts in ghost view, so tiles never jump between frames.
 view_count :: proc(kind: Unit_Type, enemy: bool) -> int {
 	if ghost_view() { return ghost_count(kind, enemy) }
 	if enemy { return enemy_roster_count(kind) }
@@ -486,7 +440,6 @@ draw_unit_tile :: proc(index: int, x: f32, y: int, ordinal: int, enemy: bool) {
 	draw_unit_tile_data(units[index].kind, units[index].state, selected_units[index], x, y, ordinal, enemy)
 }
 
-// Core tile renderer; the ghost view calls it directly with snapshot data.
 draw_unit_tile_data :: proc(kind: Unit_Type, state: Unit_State, selected: bool, x: f32, y: int, ordinal: int, enemy: bool) {
 	rect := unit_tile_rect(x, y, ordinal)
 	if rect.y > f32(rl.GetScreenHeight()) || rect.y + rect.height < 0 { return }
@@ -511,9 +464,3 @@ draw_unit_tile_data :: proc(kind: Unit_Type, state: Unit_State, selected: bool, 
 	rl.DrawCircle(c.int(rect.x + rect.width - 4), c.int(rect.y + 4), 2, state_color(state))
 }
 
-// Layered enemy HQ dreadnought battlestation: inverted ventral keel with pulsating
-// fusion core, heavy octagonal citadel foundation with armor applique panels and
-// VLS missile grids, four cantilevered outrigger bastions with drone hangar launch
-// bays, point-defense autocannons, and wingtip strobes, mid-deck superstructure
-// with command bridge observation visor, towering sensor mast with rotating radar
-// dish, and an integrated traversing Level 10 Orbital Defense heavy railgun battery.

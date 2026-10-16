@@ -12,7 +12,6 @@ import "core:time"
 import rl "vendor:raylib"
 import "vendor:raylib/rlgl"
 
-// ---- Starting Setup on Earth (Tweakable Globals) ------------------------
 STARTING_EARTH_MINERS := 5
 STARTING_EARTH_COMBAT := 0
 STARTING_EARTH_BASES := 1
@@ -36,7 +35,6 @@ planets := [PLANET_COUNT]Planet{
 	{name = "NEPTUNE", position = {35, 5, 24}, radius = 2.9, color = rl.Color{80, 110, 220, 255}},
 }
 
-// Procedural textured planet models
 planet_models: [PLANET_COUNT]rl.Model
 planet_textures: [PLANET_COUNT]rl.Texture2D
 planet_visuals_ready := false
@@ -122,11 +120,8 @@ minor_wave_source_nebula_intensity: [SECTOR_COUNT]f32
 sector_combat_state: [SECTOR_COUNT]bool
 world_sector_spots: [SECTOR_COUNT]World_Sector_Spots
 
-// Visual intensity of Earth's manufacturing industry lights [0..1]: flares up
-// when units or bases are being constructed on Earth, turning surface lights on and off.
 earth_industry_intensity: f32
 
-// Start game menu & save notification state
 in_start_menu := true
 start_menu_selection := 0
 hud_save_notification_timer: f32
@@ -138,15 +133,11 @@ main :: proc() {
 	defer rl.CloseWindow()
 	rl.ToggleBorderlessWindowed()
 
-	// VSYNC handles refresh timing (60Hz / 120Hz). Setting target FPS to 2x the monitor
-	// refresh rate acts as an upper safety cap for unconstrained runs while ensuring raylib's
-	// internal WaitTime nanosleep never oversleeps into the next hardware vblank cycle (which
-	// would otherwise cause the display to drop cadence from 60 FPS down to 30 FPS).
 	refresh := rl.GetMonitorRefreshRate(rl.GetCurrentMonitor())
 	target_fps := refresh > 0 ? max(refresh, 60) : 60
 	rl.SetTargetFPS(target_fps * 2)
 
-	rl.SetExitKey(.KEY_NULL) // ESC cancels the last queued build instead of closing the window; P/F10 pause.
+	rl.SetExitKey(.KEY_NULL)
 
 	reset_world()
 	initialize_game()
