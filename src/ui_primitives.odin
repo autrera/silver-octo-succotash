@@ -297,6 +297,14 @@ draw_miner_vector_icon :: proc(center: rl.Vector2, size: f32, color: rl.Color) {
 	rl.DrawLineEx(p_mid, p_tip1, blade_thick, color)
 }
 
+// Returns normalized build progress [0.0, 1.0] for orbital ammo on planet p, or -1.0 if not building
+planet_orbital_ammo_build_progress :: proc(p: int) -> f32 {
+	if p < 0 || p >= SECTOR_COUNT || !orbital_defense_ammo_building[p] {
+		return -1.0
+	}
+	return clamp(orbital_defense_ammo_progress[p] / ORBITAL_DEFENSE_AMMO_BUILD_TIME, 0.0, 1.0)
+}
+
 // Calculates screen-space bounding rectangle for a conquered planet status overlay
 conquered_planet_overlay_rect :: proc(p: int, center_screen: rl.Vector2, screen_r: f32, is_selected: bool, viewport_w, screen_h: f32) -> rl.Rectangle {
 	def_lvl := orbital_defense_level[p]
@@ -350,6 +358,20 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 	bg_alpha := u8(is_selected ? 255 : 80)
 	rl.DrawRectangleRounded(rect, 0.16, 4, rl.Color{4, 12, 10, bg_alpha})
 
+	// Ammo construction progress bar filling Row 1 background
+	if progress := planet_orbital_ammo_build_progress(p); progress >= 0.0 {
+		fill_w := rect.width * progress
+		if fill_w > 0.5 {
+			scissor_x := c.int(math.floor(rect.x))
+			scissor_y := c.int(math.floor(rect.y))
+			scissor_w := c.int(math.ceil(fill_w))
+			scissor_h := c.int(math.ceil(rect.y + 34.0)) - scissor_y
+			rl.BeginScissorMode(scissor_x, scissor_y, scissor_w, scissor_h)
+			rl.DrawRectangleRounded(rect, 0.16, 4, rl.Color{0, 200, 120, u8(110.0 * alpha_factor)})
+			rl.EndScissorMode()
+		}
+	}
+
 	// 2. Green border:
 	// Selected: high-contrast bright sci-fi border; Unselected: subtle
 	border_col := rl.Color{45, 175, 100, u8(130.0 * alpha_factor)}
@@ -395,7 +417,7 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 	if def_empty {
 		def_col = rl.Color{255, 70, 70, icon_alpha}
 	}
-	if orbital_defense_building[p] {
+	if orbital_defense_building[p] || orbital_defense_ammo_building[p] {
 		draw_orbital_upgrade_spinner({icon_x, row1_cy}, icon_size, rl.Color{0, 240, 216, icon_alpha})
 	} else {
 		draw_defense_vector_icon({icon_x, row1_cy}, icon_size, def_col)

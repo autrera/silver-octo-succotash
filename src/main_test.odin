@@ -5983,5 +5983,59 @@ autobuilder_radio_rects_alignment :: proc(t: ^testing.T) {
 	testing.expect(t, f32(earth_queue_y()) + QUEUE_LABEL_GAP > btn_rect.y + btn_rect.height, "radio buttons sit above queue slots")
 }
 
+@(test)
+planet_orbital_ammo_build_progress_calculation :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
 
+	// Initial Earth: ammo is not building
+	testing.expect(t, !orbital_defense_ammo_building[EARTH], "Earth ammo is not building initially")
+	testing.expect(t, planet_orbital_ammo_build_progress(EARTH) == -1.0, "progress returns -1 when not building")
 
+	// Out of bounds sectors return -1
+	testing.expect(t, planet_orbital_ammo_build_progress(-1) == -1.0, "negative index returns -1")
+	testing.expect(t, planet_orbital_ammo_build_progress(SECTOR_COUNT) == -1.0, "out of bounds index returns -1")
+
+	// Start building ammo on Earth
+	orbital_defense_ammo_building[EARTH] = true
+	orbital_defense_ammo_progress[EARTH] = 0.0
+	testing.expect(t, abs(planet_orbital_ammo_build_progress(EARTH) - 0.0) < 0.001, "progress returns 0.0 at start")
+
+	// Halfway through build (10s of 20s)
+	orbital_defense_ammo_progress[EARTH] = 10.0
+	testing.expect(t, abs(planet_orbital_ammo_build_progress(EARTH) - 0.5) < 0.001, "progress returns 0.5 at 10s")
+
+	// Complete build (20s)
+	orbital_defense_ammo_progress[EARTH] = 20.0
+	testing.expect(t, abs(planet_orbital_ammo_build_progress(EARTH) - 1.0) < 0.001, "progress returns 1.0 at 20s")
+
+	// Progress exceeding 20s clamps to 1.0
+	orbital_defense_ammo_progress[EARTH] = 25.0
+	testing.expect(t, abs(planet_orbital_ammo_build_progress(EARTH) - 1.0) < 0.001, "progress clamps to 1.0 beyond build time")
+}
+
+@(test)
+planet_overlay_ammo_building_state :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+
+	// Liberated planet with orbital defense building ammo
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_ammo[EARTH] = 3
+	orbital_defense_ammo_building[EARTH] = true
+	orbital_defense_ammo_progress[EARTH] = 8.0
+
+	// Progress helper returns 8.0 / 20.0 = 0.4
+	prog := planet_orbital_ammo_build_progress(EARTH)
+	testing.expect(t, abs(prog - 0.4) < 0.001, "Earth ammo build progress is 0.4")
+
+	// Overlay rectangle calculates correctly while ammo is building
+	center := rl.Vector2{300, 200}
+	rect := conquered_planet_overlay_rect(EARTH, center, 25.0, true, 800, 600)
+	testing.expect(t, rect.width >= 118.0, "overlay rect width is valid")
+	testing.expect(t, rect.height == 102.0, "overlay rect height is 102")
+
+	// Spinner condition is active when building ammo even if orbital defense structure itself is not building
+	testing.expect(t, !orbital_defense_building[EARTH], "orbital defense structure is not building")
+	testing.expect(t, orbital_defense_building[EARTH] || orbital_defense_ammo_building[EARTH], "spinner active during ammo build")
+}
