@@ -281,7 +281,12 @@ update_input :: proc() {
 			inspector_drag_active = true
 		} else {
 			last_unit_clicked_index = -1
-			if planet := pick_planet(mouse); planet >= 0 {
+			if btn_p := pick_conquered_planet_overlay_ammo_button(mouse); btn_p >= 0 {
+				selected_planet = btn_p
+				if can_build_orbital_ammo(btn_p) {
+					start_orbital_ammo_construction(btn_p)
+				}
+			} else if planet := pick_planet(mouse); planet >= 0 {
 				selected_planet = planet
 			} else if ov_p := pick_conquered_planet_overlay(mouse); ov_p >= 0 {
 				selected_planet = ov_p
@@ -363,8 +368,6 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 			last_unit_clicked_index = -1
 			if can_build_orbital_defense(EARTH) {
 				start_orbital_defense_construction(EARTH)
-			} else if rl.CheckCollisionPointRec(mouse, orbital_ammo_button_rect(panel_x, EARTH)) && can_build_orbital_ammo(EARTH) {
-				start_orbital_ammo_construction(EARTH)
 			}
 			return
 		}
@@ -430,8 +433,6 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 			last_unit_clicked_index = -1
 			if can_build_orbital_defense(selected_planet) {
 				start_orbital_defense_construction(selected_planet)
-			} else if rl.CheckCollisionPointRec(mouse, orbital_ammo_button_rect(panel_x, selected_planet)) && can_build_orbital_ammo(selected_planet) {
-				start_orbital_ammo_construction(selected_planet)
 			}
 			return
 		}

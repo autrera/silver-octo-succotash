@@ -297,6 +297,88 @@ draw_miner_vector_icon :: proc(center: rl.Vector2, size: f32, color: rl.Color) {
 	rl.DrawLineEx(p_mid, p_tip1, blade_thick, color)
 }
 
+// Tactical ammunition vector icon for orbital defense cannon shells
+draw_ammo_vector_icon :: proc(center: rl.Vector2, size: f32, color: rl.Color) {
+	w := size * 0.38
+	h := size * 0.85
+	tip        := rl.Vector2{center.x, center.y - h * 0.70}
+	shoulder_l := rl.Vector2{center.x - w, center.y - h * 0.15}
+	shoulder_r := rl.Vector2{center.x + w, center.y - h * 0.15}
+	base_l     := rl.Vector2{center.x - w, center.y + h * 0.45}
+	base_r     := rl.Vector2{center.x + w, center.y + h * 0.45}
+	rim_l      := rl.Vector2{center.x - w * 1.25, center.y + h * 0.65}
+	rim_r      := rl.Vector2{center.x + w * 1.25, center.y + h * 0.65}
+	rim_bot_l  := rl.Vector2{center.x - w * 1.25, center.y + h * 0.75}
+	rim_bot_r  := rl.Vector2{center.x + w * 1.25, center.y + h * 0.75}
+
+	fill_col := rl.Color{color.r, color.g, color.b, u8(f32(color.a) * 0.40)}
+	rl.DrawTriangle(tip, shoulder_l, shoulder_r, fill_col)
+	rl.DrawTriangle(shoulder_l, base_l, shoulder_r, fill_col)
+	rl.DrawTriangle(shoulder_r, base_l, base_r, fill_col)
+	rl.DrawTriangle(base_l, rim_bot_l, base_r, fill_col)
+	rl.DrawTriangle(base_r, rim_bot_l, rim_bot_r, fill_col)
+
+	thick := max(1.0, size * 0.12)
+	rl.DrawLineEx(tip, shoulder_l, thick, color)
+	rl.DrawLineEx(shoulder_l, base_l, thick, color)
+	rl.DrawLineEx(base_l, rim_l, thick, color)
+	rl.DrawLineEx(rim_l, rim_bot_l, thick, color)
+	rl.DrawLineEx(rim_bot_l, rim_bot_r, thick, color)
+	rl.DrawLineEx(rim_bot_r, rim_r, thick, color)
+	rl.DrawLineEx(rim_r, base_r, thick, color)
+	rl.DrawLineEx(base_r, shoulder_r, thick, color)
+	rl.DrawLineEx(shoulder_r, tip, thick, color)
+
+	casing_col := rl.Color{color.r, color.g, color.b, u8(f32(color.a) * 0.75)}
+	rl.DrawLineEx(shoulder_l, shoulder_r, thick, casing_col)
+}
+
+// Small high-tech tactile action button on overlay badges
+draw_overlay_mini_button :: proc(rect: rl.Rectangle, label: cstring, enabled: bool, alpha_factor: f32) {
+	mouse := rl.GetMousePosition()
+	hovered := enabled && rl.CheckCollisionPointRec(mouse, rect)
+	pressed := hovered && rl.IsMouseButtonDown(.LEFT)
+
+	eff_alpha := hovered ? f32(1.0) : alpha_factor
+	bg := rl.Color{10, 24, 20, u8(180.0 * eff_alpha)}
+	border := rl.Color{45, 140, 90, u8(160.0 * eff_alpha)}
+	text_col := rl.Color{130, 240, 200, u8(240.0 * eff_alpha)}
+
+	if !enabled {
+		bg = rl.Color{6, 14, 12, u8(100.0 * eff_alpha)}
+		border = rl.Color{30, 55, 40, u8(70.0 * eff_alpha)}
+		text_col = rl.Color{75, 105, 90, u8(100.0 * eff_alpha)}
+	} else if pressed {
+		bg = rl.Color{0, 75, 55, 255}
+		border = rl.Color{60, 255, 170, 255}
+		text_col = rl.Color{255, 255, 255, 255}
+	} else if hovered {
+		bg = rl.Color{15, 60, 45, 255}
+		border = rl.Color{50, 235, 150, 255}
+		text_col = rl.Color{180, 255, 220, 255}
+	}
+
+	draw_chamfered_panel(rect, 3, bg, border)
+	if hovered {
+		draw_corner_brackets(rect, 1, 3, border)
+	}
+
+	tw := f32(rl.MeasureText(label, 14))
+	tx := i32(rect.x + (rect.width - tw) * 0.5)
+	ty := i32(rect.y + (rect.height - 14) * 0.5 + (pressed ? 1.0 : 0.0))
+	rl.DrawText(label, tx, ty, 14, text_col)
+}
+
+// Returns the screen rectangle for the small '+' ammo build button on an overlay badge
+conquered_planet_overlay_ammo_btn_rect :: proc(badge_rect: rl.Rectangle) -> rl.Rectangle {
+	btn_w: f32 = 20.0
+	btn_h: f32 = 20.0
+	row1_cy := badge_rect.y + 17.0
+	btn_x := badge_rect.x + badge_rect.width - btn_w - 7.0
+	btn_y := row1_cy - btn_h * 0.5
+	return rl.Rectangle{btn_x, btn_y, btn_w, btn_h}
+}
+
 // Returns normalized build progress [0.0, 1.0] for orbital ammo on planet p, or -1.0 if not building
 planet_orbital_ammo_build_progress :: proc(p: int) -> f32 {
 	if p < 0 || p >= SECTOR_COUNT || !orbital_defense_ammo_building[p] {
@@ -324,7 +406,8 @@ conquered_planet_overlay_rect :: proc(p: int, center_screen: rl.Vector2, screen_
 	combat_txt_w := f32(rl.MeasureText(combat_str, 18))
 
 	max_txt_w := max(def_txt_w, max(miner_txt_w, combat_txt_w))
-	w := max(52.0 + max_txt_w, 118.0)
+	btn_w: f32 = 20.0
+	w := max(58.0 + max_txt_w + btn_w, 128.0)
 	h: f32 = 102.0
 
 	eff_r := screen_r
@@ -429,6 +512,11 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 	}
 	rl.DrawText(def_str, txt_x, i32(row1_cy - 9.0), 18, def_txt_col)
 
+	// Small '+' button at the right of the ammo info to queue ammo build
+	ammo_btn_rect := conquered_planet_overlay_ammo_btn_rect(rect)
+	can_ammo := can_build_orbital_ammo(p)
+	draw_overlay_mini_button(ammo_btn_rect, "+", can_ammo, alpha_factor)
+
 	// Row 2: Miners
 	row2_cy := rect.y + 51.0
 	miner_col := miners > 0 ? rl.Color{240, 180, 60, icon_alpha} : rl.Color{140, 140, 140, muted_alpha}
@@ -480,6 +568,47 @@ draw_conquered_planet_overlays :: proc(viewport_w, screen_h: f32) {
 			}
 		}
 	}
+}
+
+// Ray/mouse hit test for clicking the '+' ammo build button on a conquered planet overlay badge
+pick_conquered_planet_overlay_ammo_button :: proc(mouse: rl.Vector2) -> int {
+	viewport_w := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
+	screen_h := f32(rl.GetScreenHeight())
+	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
+	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
+
+	// Check selected planet first as its badge renders on top
+	if selected_planet >= 0 && selected_planet < PLANET_COUNT && planet_liberated(selected_planet) {
+		p := selected_planet
+		to_planet := planets[p].position - camera.position
+		if rl.Vector3DotProduct(to_planet, cam_forward) > 0.1 {
+			center_screen := rl.GetWorldToScreen(planets[p].position, camera)
+			limb_screen := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
+			screen_r := max(rl.Vector2Distance(center_screen, limb_screen), 14.0)
+			rect := conquered_planet_overlay_rect(p, center_screen, screen_r, true, viewport_w, screen_h)
+			btn_rect := conquered_planet_overlay_ammo_btn_rect(rect)
+			if rl.CheckCollisionPointRec(mouse, btn_rect) {
+				return p
+			}
+		}
+	}
+
+	for p in 0..<PLANET_COUNT {
+		if p == selected_planet || !planet_liberated(p) { continue }
+		to_planet := planets[p].position - camera.position
+		if rl.Vector3DotProduct(to_planet, cam_forward) <= 0.1 { continue }
+
+		center_screen := rl.GetWorldToScreen(planets[p].position, camera)
+		limb_screen := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
+		screen_r := max(rl.Vector2Distance(center_screen, limb_screen), 14.0)
+
+		rect := conquered_planet_overlay_rect(p, center_screen, screen_r, false, viewport_w, screen_h)
+		btn_rect := conquered_planet_overlay_ammo_btn_rect(rect)
+		if rl.CheckCollisionPointRec(mouse, btn_rect) {
+			return p
+		}
+	}
+	return -1
 }
 
 // Ray/mouse hit test for clicking on a conquered planet overlay badge

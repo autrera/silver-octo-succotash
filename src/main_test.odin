@@ -4570,7 +4570,7 @@ outpost_orbital_defense_button_and_roster_have_no_ui_collisions :: proc(t: ^test
 	orbital_defense_level[MARS] = 1
 	orbital_defense_ammo[MARS] = 5
 	ammo_bottom := outpost_orbital_defense_bottom_y(MARS)
-	testing.expect(t, ammo_bottom == def_btn.y + GRID_PITCH + QUEUE_SLOT_H, "ammo slots extend the defense section")
+	testing.expect(t, ammo_bottom == def_btn.y + QUEUE_SLOT_H, "single-line ammo slots extend the defense section")
 	mining_header_ammo := f32(unit_tile_y(.MINING) - 23)
 	testing.expect(t, mining_header_ammo - ammo_bottom == 10, "consistent 10px gap below ammo slots")
 	orbital_defense_level[MARS] = 0
@@ -4631,7 +4631,7 @@ earth_orbital_defense_button_and_production_have_no_ui_collisions :: proc(t: ^te
 	orbital_defense_level[EARTH] = 1
 	orbital_defense_ammo[EARTH] = 5
 	ammo_bottom := earth_orbital_defense_bottom_y()
-	testing.expect(t, ammo_bottom == def_btn.y + GRID_PITCH + QUEUE_SLOT_H, "ammo slots extend the defense section")
+	testing.expect(t, ammo_bottom == def_btn.y + QUEUE_SLOT_H, "single-line ammo slots extend the defense section")
 	orders_y_ammo := f32(production_orders_y())
 	testing.expect(t, orders_y_ammo - ammo_bottom == 44, "orders stay 44px below ammo slots")
 	orbital_defense_level[EARTH] = 0
@@ -6039,3 +6039,82 @@ planet_overlay_ammo_building_state :: proc(t: ^testing.T) {
 	testing.expect(t, !orbital_defense_building[EARTH], "orbital defense structure is not building")
 	testing.expect(t, orbital_defense_building[EARTH] || orbital_defense_ammo_building[EARTH], "spinner active during ammo build")
 }
+
+@(test)
+conquered_planet_overlay_ammo_button_rect_layout :: proc(t: ^testing.T) {
+	badge := rl.Rectangle{100, 200, 140, 102}
+	btn := conquered_planet_overlay_ammo_btn_rect(badge)
+
+	testing.expect(t, btn.width == 20.0, "button width is 20")
+	testing.expect(t, btn.height == 20.0, "button height is 20")
+	testing.expect(t, btn.x >= badge.x, "button starts within badge")
+	testing.expect(t, btn.x + btn.width <= badge.x + badge.width, "button fits within badge width")
+	testing.expect(t, btn.y >= badge.y, "button starts within badge row 1")
+	testing.expect(t, btn.y + btn.height <= badge.y + 34.0, "button fits within badge row 1 height")
+
+	// Vertically centered in Row 1 (center is badge.y + 17)
+	row1_cy := badge.y + 17.0
+	btn_cy := btn.y + btn.height * 0.5
+	testing.expect(t, abs(btn_cy - row1_cy) < 0.1, "button is vertically centered in row 1")
+}
+
+@(test)
+planet_overlay_ammo_button_enabled_disabled_conditions :: proc(t: ^testing.T) {
+	reset_world()
+	initialize_game()
+
+	// 1. Earth starts with battery level 1, 5/10 ammo, miners, minerals
+	minerals = 1000
+	testing.expect(t, can_build_orbital_ammo(EARTH), "Earth ammo button is enabled with resources and open queue")
+
+	// 2. Disabled when not enough minerals (< 200)
+	minerals = 199
+	testing.expect(t, !can_build_orbital_ammo(EARTH), "ammo button disabled with insufficient minerals")
+	minerals = 200
+	testing.expect(t, can_build_orbital_ammo(EARTH), "ammo button enabled with exactly 200 minerals")
+
+	// 3. Disabled when queue is full (ammo + pending == 10)
+	orbital_defense_ammo[EARTH] = 9
+	orbital_defense_ammo_pending_count[EARTH] = 1
+	testing.expect(t, !can_build_orbital_ammo(EARTH), "ammo button disabled when ammo is at capacity (9+1)")
+	orbital_defense_ammo_pending_count[EARTH] = 0
+	testing.expect(t, can_build_orbital_ammo(EARTH), "ammo button re-enabled when queue has room (9+0)")
+
+	// 4. Disabled when orbital defense is level 0
+	orbital_defense_level[MARS] = 0
+	minerals = 1000
+	testing.expect(t, !can_build_orbital_ammo(MARS), "ammo button disabled when orbital defense not built")
+
+	// 5. Disabled when orbital defense structure is actively upgrading
+	orbital_defense_level[EARTH] = 1
+	orbital_defense_building[EARTH] = true
+	testing.expect(t, !can_build_orbital_ammo(EARTH), "ammo button disabled while defense battery is under construction")
+}
+
+@(test)
+single_line_ammo_slots_layout :: proc(t: ^testing.T) {
+	panel_x: f32 = 400.0
+	p := EARTH
+
+	base_y := orbital_defense_base_y(p)
+	left_bound := panel_x + PANEL_PAD_X
+	right_bound := panel_x + PANEL_PAD_X + PANEL_CONTENT_W
+
+	var_prev_x: f32 = left_bound
+
+	for slot in 0..<ORBITAL_DEFENSE_AMMO_MAX {
+		rect := orbital_ammo_slot_rect(panel_x, p, slot)
+		testing.expect(t, rect.y == base_y, "all ammo slots share single line y coordinate")
+		testing.expect(t, rect.width == 25.0, "slot width is 25")
+		testing.expect(t, rect.height == QUEUE_SLOT_H, "slot height is QUEUE_SLOT_H")
+		testing.expect(t, rect.x >= var_prev_x, "slots arranged strictly left to right without overlap")
+		testing.expect(t, rect.x + rect.width <= right_bound, "slot fits within PANEL_CONTENT_W")
+		var_prev_x = rect.x + rect.width
+	}
+
+	// Height of the orbital defense section with built battery is exactly QUEUE_SLOT_H
+	orbital_defense_level[p] = 1
+	orbital_defense_building[p] = false
+	testing.expect(t, orbital_defense_section_height(p) == QUEUE_SLOT_H, "single-line section height is QUEUE_SLOT_H")
+}
+

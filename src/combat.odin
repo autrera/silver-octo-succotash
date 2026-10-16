@@ -474,7 +474,7 @@ earth_orbital_defense_bottom_y :: proc() -> f32 {
 
 orbital_defense_section_height :: proc(p: int) -> f32 {
 	if p >= 0 && p < SECTOR_COUNT && orbital_defense_level[p] > 0 && !orbital_defense_building[p] {
-		return GRID_PITCH + QUEUE_SLOT_H
+		return QUEUE_SLOT_H
 	}
 	return BASE_BTN_H
 }
@@ -504,19 +504,15 @@ orbital_defense_base_y :: proc(planet: int) -> f32 {
 	return outpost_orbital_defense_y(planet)
 }
 
-orbital_ammo_button_rect :: proc(panel_x: f32, planet: int) -> rl.Rectangle {
-	base_y := orbital_defense_base_y(planet)
-	half := (PANEL_CONTENT_W - PANEL_PAD_X) / 2
-	return rl.Rectangle{panel_x + PANEL_PAD_X, base_y, f32(half), BASE_BTN_H}
-}
-
 orbital_ammo_slot_rect :: proc(panel_x: f32, planet: int, slot: int) -> rl.Rectangle {
-	half := (PANEL_CONTENT_W - PANEL_PAD_X) / 2
-	base_x := panel_x + PANEL_PAD_X + f32(half) + f32(PANEL_PAD_X)
+	base_x := panel_x + PANEL_PAD_X
 	base_y := orbital_defense_base_y(planet)
-	row := slot / 5
-	column := slot % 5
-	return rl.Rectangle{base_x + f32(column * 28), base_y + f32(row * GRID_PITCH), 24, QUEUE_SLOT_H}
+	slot_w: f32 = 25.0
+	slot_gap: f32 = 4.0
+	pitch := slot_w + slot_gap
+	margin: f32 = 2.0
+	x := base_x + margin + f32(slot) * pitch
+	return rl.Rectangle{x, base_y, slot_w, QUEUE_SLOT_H}
 }
 
 orbital_ammo_queue_head :: proc(p: int) -> int {
@@ -535,15 +531,16 @@ draw_orbital_ammo_slot :: proc(rect: rl.Rectangle, filled: bool, progress: f32 =
 		fill_rect := rl.Rectangle{rect.x, rect.y, rect.width * clamp(progress, 0, 1), rect.height}
 		rl.DrawRectangleRec(fill_rect, rl.Color{0, 200, 120, 140})
 	}
+	center := rl.Vector2{rect.x + rect.width * 0.5, rect.y + rect.height * 0.5}
 	if filled || progress >= 0 {
 		draw_corner_brackets(rect, 1, 3, border)
-		symbol: cstring = "A"
-		tw := f32(rl.MeasureText(symbol, 12))
-		tx := rect.x + (rect.width - tw) / 2
-		ty := rect.y + (rect.height - 12) / 2
 		accent := SCIFI_AMBER
-		rl.DrawText(symbol, c.int(tx + 1), c.int(ty + 1), 12, rl.Color{0, 0, 0, 160})
-		rl.DrawText(symbol, c.int(tx), c.int(ty), 12, accent)
+		if progress >= 0 && !filled {
+			accent = SCIFI_MINT
+		}
+		draw_ammo_vector_icon(center, 9.0, accent)
+	} else {
+		draw_ammo_vector_icon(center, 9.0, rl.Color{SCIFI_DIM.r, SCIFI_DIM.g, SCIFI_DIM.b, 70})
 	}
 }
 
@@ -564,9 +561,6 @@ draw_orbital_defense_inspector_section :: proc(x: f32, btn: rl.Rectangle, p: int
 		can_build := can_build_orbital_defense(p)
 		draw_button(btn, rl.TextFormat("[O] BUILD ORBITAL DEFENSE (%d)", ORBITAL_DEFENSE_COST), SCIFI_PANEL_SOLID, can_build)
 	} else {
-		can_ammo := can_build_orbital_ammo(p)
-		ammo_btn := orbital_ammo_button_rect(x, p)
-		draw_button(ammo_btn, "[O] +1 Ammo (200)", SCIFI_PANEL_SOLID, can_ammo)
 		for slot in 0..<ORBITAL_DEFENSE_AMMO_MAX {
 			completed := slot < orbital_defense_ammo[p]
 			queued := slot >= orbital_defense_ammo[p] && slot < orbital_defense_ammo[p] + orbital_defense_ammo_pending_count[p]
