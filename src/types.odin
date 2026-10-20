@@ -68,7 +68,7 @@ SCIFI_RED         :: rl.Color{255, 60, 75, 255}
 SCIFI_RED_DIM     :: rl.Color{120, 30, 40, 255}
 SCIFI_STEEL       :: rl.Color{24, 128, 84, 255}
 SCIFI_DIM         :: rl.Color{10, 62, 40, 255}
-SCIFI_PANEL       :: rl.Color{2, 12, 8, 235}
+SCIFI_PANEL       :: rl.Color{2, 12, 8, 255}
 SCIFI_PANEL_SOLID :: rl.Color{4, 20, 13, 255}
 SCIFI_TEXT        :: rl.Color{210, 245, 228, 255}
 SCIFI_MUTED       :: rl.Color{92, 150, 122, 255}

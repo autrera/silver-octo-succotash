@@ -481,12 +481,12 @@ draw_tactical_container :: proc(rect: rl.Rectangle) {
 	v7 := rl.Vector2{x, y + ch}
 
 	fill := SCIFI_PANEL
-	rl.DrawTriangle(v0, v1, v2, fill)
-	rl.DrawTriangle(v0, v2, v3, fill)
-	rl.DrawTriangle(v0, v3, v4, fill)
-	rl.DrawTriangle(v0, v4, v5, fill)
-	rl.DrawTriangle(v0, v5, v6, fill)
-	rl.DrawTriangle(v0, v6, v7, fill)
+	rl.DrawTriangle(v0, v2, v1, fill)
+	rl.DrawTriangle(v0, v3, v2, fill)
+	rl.DrawTriangle(v0, v4, v3, fill)
+	rl.DrawTriangle(v0, v5, v4, fill)
+	rl.DrawTriangle(v0, v6, v5, fill)
+	rl.DrawTriangle(v0, v7, v6, fill)
 
 	border := SCIFI_GREEN
 	rl.DrawLineV(v0, v1, border)
