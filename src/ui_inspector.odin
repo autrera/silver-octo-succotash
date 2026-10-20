@@ -443,24 +443,14 @@ draw_unit_tile :: proc(index: int, x: f32, y: int, ordinal: int, enemy: bool) {
 draw_unit_tile_data :: proc(kind: Unit_Type, state: Unit_State, selected: bool, x: f32, y: int, ordinal: int, enemy: bool) {
 	rect := unit_tile_rect(x, y, ordinal)
 	if rect.y > f32(rl.GetScreenHeight()) || rect.y + rect.height < 0 { return }
-	fill := rl.Color{10, 24, 34, 255}
-	border := SCIFI_STEEL
-	if enemy {
-		fill = rl.Color{48, 18, 22, 255}
-		border = SCIFI_RED_DIM
-	} else if selected {
-		fill = rl.Color{0, 60, 75, 255}
-		border = SCIFI_CYAN
-	}
-	draw_chamfered_panel(rect, 3, fill, border)
-	if selected && !enemy {
-		draw_corner_brackets(rect, 1, 3, SCIFI_CYAN)
-	}
-	symbol: cstring = "M"
 	accent := SCIFI_AMBER
-	if kind == .COMBAT { symbol = "C"; accent = SCIFI_BLUE }
+	if kind == .COMBAT { accent = SCIFI_BLUE }
 	if enemy { accent = SCIFI_RED }
-	rl.DrawText(symbol, c.int(rect.x + 5), c.int(rect.y + 4), 11, accent)
-	rl.DrawCircle(c.int(rect.x + rect.width - 4), c.int(rect.y + 4), 2, state_color(state))
+	center := rl.Vector2{rect.x + rect.width * 0.5, rect.y + rect.height * 0.5}
+	draw_unit_icon(kind, center, rect.width, accent)
+	if selected && !enemy {
+		draw_corner_brackets(rect, 1, 4, SCIFI_CYAN)
+	}
+	rl.DrawCircle(c.int(rect.x + rect.width - 2), c.int(rect.y + 2), 3, state_color(state))
 }
 

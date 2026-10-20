@@ -51,8 +51,8 @@ ROSTER_BASE_Y      :: 150
 ROSTER_BELOW_QUEUE :: 206
 
 MAX_PENDING        :: 25
-TILE_SIZE          :: 20
-TILE_GAP           :: 10
+TILE_SIZE          :: 26
+TILE_GAP           :: 4
 TILES_PER_ROW      :: 10
 DOUBLE_CLICK_TIME  :: 0.35
 

@@ -873,12 +873,125 @@ build_fighter_model :: proc(enemy: bool) -> rl.Model {
 	return rl.LoadModelFromMesh(mesh)
 }
 
+DRONE_ICON_RES :: 128
+
+drone_icons: [Unit_Type]rl.RenderTexture2D
+
+Icon_Edge :: struct {
+	a, b:   rl.Vector3,
+	normal: rl.Vector3,
+	keep:   bool,
+}
+
+quantize_vertex :: proc(v: rl.Vector3) -> [3]i32 {
+	return {i32(math.round(v.x * 4000)), i32(math.round(v.y * 4000)), i32(math.round(v.z * 4000))}
+}
+
+project_icon_point :: proc(p: rl.Vector3, yaw, pitch: f32) -> (rl.Vector2, f32) {
+	cy, sy := math.cos(yaw), math.sin(yaw)
+	cp, sp := math.cos(pitch), math.sin(pitch)
+	x := p.x * cy + p.z * sy
+	z := -p.x * sy + p.z * cy
+	y := p.y * cp - z * sp
+	depth := p.y * sp + z * cp
+	return {x, -y}, depth
+}
+
+bake_drone_icon :: proc(model: rl.Model, yaw, pitch: f32) -> rl.RenderTexture2D {
+	mesh := model.meshes[0]
+	edges := make(map[[6]i32]Icon_Edge)
+	defer delete(edges)
+
+	for t in 0..<int(mesh.triangleCount) {
+		p: [3]rl.Vector3
+		for k in 0..<3 {
+			i := (t * 3 + k) * 3
+			p[k] = {mesh.vertices[i], mesh.vertices[i + 1], mesh.vertices[i + 2]}
+		}
+		n := rl.Vector3CrossProduct(p[1] - p[0], p[2] - p[0])
+		n_len := rl.Vector3Length(n)
+		if n_len < 0.000001 { continue }
+		n /= n_len
+
+		for k in 0..<3 {
+			a := p[k]
+			b := p[(k + 1) % 3]
+			qa := quantize_vertex(a)
+			qb := quantize_vertex(b)
+			if qa == qb { continue }
+			key: [6]i32
+			if qa.x < qb.x || (qa.x == qb.x && (qa.y < qb.y || (qa.y == qb.y && qa.z < qb.z))) {
+				key = {qa.x, qa.y, qa.z, qb.x, qb.y, qb.z}
+			} else {
+				key = {qb.x, qb.y, qb.z, qa.x, qa.y, qa.z}
+			}
+			existing, found := edges[key]
+			if !found {
+				edges[key] = Icon_Edge{a = a, b = b, normal = n, keep = true}
+			} else {
+				if math.abs(rl.Vector3DotProduct(existing.normal, n)) > 0.995 {
+					existing.keep = false
+				}
+				edges[key] = existing
+			}
+		}
+	}
+
+	min_p := rl.Vector2{1e9, 1e9}
+	max_p := rl.Vector2{-1e9, -1e9}
+	min_d: f32 = 1e9
+	max_d: f32 = -1e9
+	for _, e in edges {
+		if !e.keep { continue }
+		for v in ([2]rl.Vector3{e.a, e.b}) {
+			pt, d := project_icon_point(v, yaw, pitch)
+			min_p = {min(min_p.x, pt.x), min(min_p.y, pt.y)}
+			max_p = {max(max_p.x, pt.x), max(max_p.y, pt.y)}
+			min_d = min(min_d, d)
+			max_d = max(max_d, d)
+		}
+	}
+
+	margin: f32 = 8
+	extent := max(max_p.x - min_p.x, max_p.y - min_p.y)
+	scale := (f32(DRONE_ICON_RES) - 2 * margin) / extent
+	mid := (min_p + max_p) * 0.5
+	origin := rl.Vector2{f32(DRONE_ICON_RES) * 0.5, f32(DRONE_ICON_RES) * 0.5}
+
+	target := rl.LoadRenderTexture(DRONE_ICON_RES, DRONE_ICON_RES)
+	rl.BeginTextureMode(target)
+	rl.ClearBackground(rl.Color{255, 255, 255, 0})
+	for _, e in edges {
+		if !e.keep { continue }
+		pa, da := project_icon_point(e.a, yaw, pitch)
+		pb, db := project_icon_point(e.b, yaw, pitch)
+		depth := ((da + db) * 0.5 - min_d) / max(max_d - min_d, 0.0001)
+		alpha := u8(110 + 145 * clamp(depth, 0, 1))
+		rl.DrawLineEx((pa - mid) * scale + origin, (pb - mid) * scale + origin, 2.4, rl.Color{255, 255, 255, alpha})
+	}
+	rl.EndTextureMode()
+
+	rl.GenTextureMipmaps(&target.texture)
+	rl.SetTextureFilter(target.texture, .TRILINEAR)
+	return target
+}
+
+draw_unit_icon :: proc(kind: Unit_Type, center: rl.Vector2, size: f32, tint: rl.Color) {
+	if !drone_visuals_ready { return }
+	tex := drone_icons[kind].texture
+	src := rl.Rectangle{0, 0, f32(tex.width), -f32(tex.height)}
+	dst := rl.Rectangle{center.x - size * 0.5, center.y - size * 0.5, size, size}
+	rl.DrawTexturePro(tex, src, dst, {0, 0}, 0, tint)
+}
+
 init_drone_visuals :: proc() {
 	if drone_visuals_ready { return }
 	drone_models[.PLAYER_MINER]   = build_miner_model(false)
 	drone_models[.ENEMY_MINER]    = build_miner_model(true)
 	drone_models[.PLAYER_FIGHTER] = build_fighter_model(false)
 	drone_models[.ENEMY_FIGHTER]  = build_fighter_model(true)
+	drone_icons[.MINING] = bake_drone_icon(drone_models[.PLAYER_MINER], 0.6, 0.45)
+	drone_icons[.COMBAT] = bake_drone_icon(drone_models[.PLAYER_FIGHTER], 1.3, 0.9)
 	drone_visuals_ready = true
 }
 
@@ -886,6 +999,9 @@ unload_drone_visuals :: proc() {
 	if !drone_visuals_ready { return }
 	for kind in Drone_Model_Kind {
 		rl.UnloadModel(drone_models[kind])
+	}
+	for kind in Unit_Type {
+		rl.UnloadRenderTexture(drone_icons[kind])
 	}
 	drone_visuals_ready = false
 }

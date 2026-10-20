@@ -501,28 +501,44 @@ orbital_ammo_queue_head :: proc(p: int) -> int {
 }
 
 draw_orbital_ammo_slot :: proc(rect: rl.Rectangle, filled: bool, progress: f32 = -1) {
-	color := SCIFI_PANEL_SOLID
-	border := SCIFI_DIM
+	charging := progress >= 0 && !filled
+	outline := SCIFI_DIM
+	charge := SCIFI_AMBER
+	level: f32 = 0
 	if filled {
-		color = rl.Color{0, 65, 85, 255}
-		border = SCIFI_CYAN
+		outline = SCIFI_AMBER
+		level = 1
+	} else if charging {
+		outline = SCIFI_MINT
+		charge = SCIFI_MINT
+		level = clamp(progress, 0, 1)
 	}
-	draw_chamfered_panel(rect, 3, color, border)
-	if progress >= 0 {
-		fill_rect := rl.Rectangle{rect.x, rect.y, rect.width * clamp(progress, 0, 1), rect.height}
-		rl.DrawRectangleRec(fill_rect, rl.Color{0, 200, 120, 140})
+	draw_battery_cell(rect, level, outline, charge)
+}
+
+draw_battery_cell :: proc(rect: rl.Rectangle, level: f32, outline, charge: rl.Color) {
+	body := rl.Rectangle{rect.x + 4, rect.y + 3, rect.width - 8, rect.height - 3}
+	nub := rl.Rectangle{rect.x + rect.width * 0.5 - 3, rect.y, 6, 3}
+	rl.DrawRectangleRec(body, SCIFI_PANEL_SOLID)
+
+	inner := rl.Rectangle{body.x + 2, body.y + 2, body.width - 4, body.height - 4}
+	if level > 0 {
+		fill_h := inner.height * level
+		fill_alpha := u8(f32(charge.a) * (level >= 1 ? 0.35 : 0.27))
+		rl.DrawRectangleRec(rl.Rectangle{inner.x, inner.y + inner.height - fill_h, inner.width, fill_h}, rl.Color{charge.r, charge.g, charge.b, fill_alpha})
 	}
-	center := rl.Vector2{rect.x + rect.width * 0.5, rect.y + rect.height * 0.5}
-	if filled || progress >= 0 {
-		draw_corner_brackets(rect, 1, 3, border)
-		accent := SCIFI_AMBER
-		if progress >= 0 && !filled {
-			accent = SCIFI_MINT
-		}
-		draw_ammo_vector_icon(center, 9.0, accent)
-	} else {
-		draw_ammo_vector_icon(center, 9.0, rl.Color{SCIFI_DIM.r, SCIFI_DIM.g, SCIFI_DIM.b, 70})
+
+	CELL_LINES :: 3
+	for i in 0..<CELL_LINES {
+		ly := inner.y + inner.height * (f32(i) + 0.5) / CELL_LINES
+		lit := level >= 1 - (f32(i) + 0.5) / CELL_LINES
+		line_col := rl.Color{SCIFI_STEEL.r, SCIFI_STEEL.g, SCIFI_STEEL.b, u8(f32(outline.a) * 0.24)}
+		if lit { line_col = charge }
+		rl.DrawLineEx({inner.x + 1, ly}, {inner.x + inner.width - 1, ly}, 1.5, line_col)
 	}
+
+	rl.DrawRectangleLinesEx(body, 1, outline)
+	rl.DrawRectangleRec(nub, outline)
 }
 
 draw_orbital_defense_inspector_section :: proc(x: f32, btn: rl.Rectangle, p: int) {

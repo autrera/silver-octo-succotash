@@ -181,53 +181,6 @@ draw_winged_panel_right :: proc(rect: rl.Rectangle, chamfer: f32, wing_cut: f32,
 	rl.DrawLineV({x + wing - 4, y + h + 3}, {x - 3, y + h - wing - 4}, rl.Fade(bracket_col, 0.7))
 }
 
-draw_fighter_vector_icon :: proc(center: rl.Vector2, size: f32, color: rl.Color) {
-	nose := rl.Vector2{center.x, center.y - size * 1.1}
-	wing_l := rl.Vector2{center.x - size * 1.0, center.y + size * 0.7}
-	wing_r := rl.Vector2{center.x + size * 1.0, center.y + size * 0.7}
-	tail := rl.Vector2{center.x, center.y + size * 0.2}
-
-	fill_col := rl.Color{color.r, color.g, color.b, u8(f32(color.a) * 0.35)}
-	rl.DrawTriangle(nose, wing_l, tail, fill_col)
-	rl.DrawTriangle(nose, tail, wing_r, fill_col)
-
-	thick := max(1.0, size * 0.12)
-	rl.DrawLineEx(nose, wing_l, thick, color)
-	rl.DrawLineEx(wing_l, tail, thick, color)
-	rl.DrawLineEx(tail, wing_r, thick, color)
-	rl.DrawLineEx(wing_r, nose, thick, color)
-	spine_col := rl.Color{SCIFI_MINT.r, SCIFI_MINT.g, SCIFI_MINT.b, color.a}
-	rl.DrawLineEx(nose, tail, thick, spine_col)
-}
-
-draw_defense_vector_icon :: proc(center: rl.Vector2, size: f32, color: rl.Color) {
-	w := size * 0.9
-	h := size * 1.15
-	p_top_l := rl.Vector2{center.x - w, center.y - h * 0.55}
-	p_top_m := rl.Vector2{center.x, center.y - h * 0.40}
-	p_top_r := rl.Vector2{center.x + w, center.y - h * 0.55}
-	p_mid_r := rl.Vector2{center.x + w, center.y + h * 0.10}
-	p_tip   := rl.Vector2{center.x, center.y + h * 0.80}
-	p_mid_l := rl.Vector2{center.x - w, center.y + h * 0.10}
-
-	fill_col := rl.Color{color.r, color.g, color.b, u8(f32(color.a) * 0.30)}
-	rl.DrawTriangle(p_top_l, p_mid_l, p_tip, fill_col)
-	rl.DrawTriangle(p_top_l, p_tip, p_top_m, fill_col)
-	rl.DrawTriangle(p_top_m, p_tip, p_top_r, fill_col)
-	rl.DrawTriangle(p_top_r, p_tip, p_mid_r, fill_col)
-
-	thick := max(1.0, size * 0.12)
-	rl.DrawLineEx(p_top_l, p_top_m, thick, color)
-	rl.DrawLineEx(p_top_m, p_top_r, thick, color)
-	rl.DrawLineEx(p_top_r, p_mid_r, thick, color)
-	rl.DrawLineEx(p_mid_r, p_tip, thick, color)
-	rl.DrawLineEx(p_tip, p_mid_l, thick, color)
-	rl.DrawLineEx(p_mid_l, p_top_l, thick, color)
-
-	spine_col := rl.Color{color.r, color.g, color.b, u8(f32(color.a) * 0.75)}
-	rl.DrawLineEx(p_top_m, {center.x, center.y + h * 0.45}, thick, spine_col)
-}
-
 draw_orbital_upgrade_spinner :: proc(center: rl.Vector2, size: f32, color: rl.Color) {
 	r := size * 0.75
 	rl.DrawCircleLines(c.int(center.x), c.int(center.y), r, rl.Fade(color, 0.35))
@@ -236,62 +189,6 @@ draw_orbital_upgrade_spinner :: proc(center: rl.Vector2, size: f32, color: rl.Co
 	tail := rl.Vector2{center.x - math.cos(ang) * r * 0.45, center.y - math.sin(ang) * r * 0.45}
 	rl.DrawLineEx(tail, head, max(1.5, size * 0.18), color)
 	rl.DrawCircleV(center, max(1.5, size * 0.14), color)
-}
-
-draw_miner_vector_icon :: proc(center: rl.Vector2, size: f32, color: rl.Color) {
-	h_start := rl.Vector2{center.x - size * 0.55, center.y + size * 0.65}
-	h_end   := rl.Vector2{center.x + size * 0.40, center.y - size * 0.45}
-	handle_thick := max(1.5, size * 0.18)
-	handle_col := rl.Color{color.r, color.g, color.b, u8(f32(color.a) * 0.85)}
-	rl.DrawLineEx(h_start, h_end, handle_thick, handle_col)
-
-	p_tip1 := rl.Vector2{center.x - size * 0.30, center.y - size * 0.75}
-	p_mid  := rl.Vector2{center.x + size * 0.35, center.y - size * 0.40}
-	p_tip2 := rl.Vector2{center.x + size * 0.75, center.y + size * 0.20}
-	p_back := rl.Vector2{center.x + size * 0.48, center.y - size * 0.52}
-
-	rl.DrawTriangle(p_tip1, p_mid, p_back, color)
-	rl.DrawTriangle(p_mid, p_tip2, p_back, color)
-	blade_thick := max(1.0, size * 0.12)
-	rl.DrawLineEx(p_tip1, p_back, blade_thick, color)
-	rl.DrawLineEx(p_back, p_tip2, blade_thick, color)
-	rl.DrawLineEx(p_tip2, p_mid, blade_thick, color)
-	rl.DrawLineEx(p_mid, p_tip1, blade_thick, color)
-}
-
-draw_ammo_vector_icon :: proc(center: rl.Vector2, size: f32, color: rl.Color) {
-	w := size * 0.38
-	h := size * 0.85
-	tip        := rl.Vector2{center.x, center.y - h * 0.70}
-	shoulder_l := rl.Vector2{center.x - w, center.y - h * 0.15}
-	shoulder_r := rl.Vector2{center.x + w, center.y - h * 0.15}
-	base_l     := rl.Vector2{center.x - w, center.y + h * 0.45}
-	base_r     := rl.Vector2{center.x + w, center.y + h * 0.45}
-	rim_l      := rl.Vector2{center.x - w * 1.25, center.y + h * 0.65}
-	rim_r      := rl.Vector2{center.x + w * 1.25, center.y + h * 0.65}
-	rim_bot_l  := rl.Vector2{center.x - w * 1.25, center.y + h * 0.75}
-	rim_bot_r  := rl.Vector2{center.x + w * 1.25, center.y + h * 0.75}
-
-	fill_col := rl.Color{color.r, color.g, color.b, u8(f32(color.a) * 0.40)}
-	rl.DrawTriangle(tip, shoulder_l, shoulder_r, fill_col)
-	rl.DrawTriangle(shoulder_l, base_l, shoulder_r, fill_col)
-	rl.DrawTriangle(shoulder_r, base_l, base_r, fill_col)
-	rl.DrawTriangle(base_l, rim_bot_l, base_r, fill_col)
-	rl.DrawTriangle(base_r, rim_bot_l, rim_bot_r, fill_col)
-
-	thick := max(1.0, size * 0.12)
-	rl.DrawLineEx(tip, shoulder_l, thick, color)
-	rl.DrawLineEx(shoulder_l, base_l, thick, color)
-	rl.DrawLineEx(base_l, rim_l, thick, color)
-	rl.DrawLineEx(rim_l, rim_bot_l, thick, color)
-	rl.DrawLineEx(rim_bot_l, rim_bot_r, thick, color)
-	rl.DrawLineEx(rim_bot_r, rim_r, thick, color)
-	rl.DrawLineEx(rim_r, base_r, thick, color)
-	rl.DrawLineEx(base_r, shoulder_r, thick, color)
-	rl.DrawLineEx(shoulder_r, tip, thick, color)
-
-	casing_col := rl.Color{color.r, color.g, color.b, u8(f32(color.a) * 0.75)}
-	rl.DrawLineEx(shoulder_l, shoulder_r, thick, casing_col)
 }
 
 draw_overlay_mini_button :: proc(rect: rl.Rectangle, label: cstring, enabled: bool, alpha_factor: f32) {
@@ -421,7 +318,7 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 	miner_str := rl.TextFormat("%d/%d", miners, cap)
 	combat_str := rl.TextFormat("%d", combat)
 
-	icon_size: f32 = 12.0
+	icon_size: f32 = 26.0
 	icon_x := rect.x + 19.0
 	txt_x := i32(rect.x + 38.0)
 
@@ -443,10 +340,11 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 	if def_empty {
 		def_col = rl.Color{255, 70, 70, icon_alpha}
 	}
-	if orbital_defense_building[p] || orbital_defense_ammo_building[p] {
-		draw_orbital_upgrade_spinner({icon_x, row1_cy}, icon_size, rl.Color{0, 240, 216, icon_alpha})
+	if orbital_defense_building[p] {
+		draw_orbital_upgrade_spinner({icon_x, row1_cy}, 12.0, rl.Color{0, 240, 216, icon_alpha})
 	} else {
-		draw_defense_vector_icon({icon_x, row1_cy}, icon_size, def_col)
+		ammo_level := f32(orbital_defense_ammo[p]) / f32(ORBITAL_DEFENSE_AMMO_MAX)
+		draw_battery_cell(rl.Rectangle{icon_x - 13.0, row1_cy - 12.0, 26.0, 24.0}, ammo_level, def_col, def_col)
 	}
 	rl.DrawText(def_str, txt_x + 1, i32(row1_cy - 8.0), 18, shadow_col)
 	def_txt_col := def_lvl > 0 ? rl.Color{130, 240, 200, text_alpha} : rl.Color{130, 155, 145, muted_alpha}
@@ -461,13 +359,13 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 
 	row2_cy := rect.y + 51.0
 	miner_col := miners > 0 ? rl.Color{240, 180, 60, icon_alpha} : rl.Color{140, 140, 140, muted_alpha}
-	draw_miner_vector_icon({icon_x, row2_cy}, icon_size, miner_col)
+	draw_unit_icon(.MINING, {icon_x, row2_cy}, icon_size, miner_col)
 	rl.DrawText(miner_str, txt_x + 1, i32(row2_cy - 8.0), 18, shadow_col)
 	rl.DrawText(miner_str, txt_x, i32(row2_cy - 9.0), 18, miners > 0 ? rl.Color{240, 180, 60, text_alpha} : rl.Color{140, 140, 140, muted_alpha})
 
 	row3_cy := rect.y + 85.0
 	combat_col := combat > 0 ? rl.Color{100, 200, 255, icon_alpha} : rl.Color{120, 145, 155, muted_alpha}
-	draw_fighter_vector_icon({icon_x, row3_cy}, icon_size, combat_col)
+	draw_unit_icon(.COMBAT, {icon_x, row3_cy}, icon_size, combat_col)
 	rl.DrawText(combat_str, txt_x + 1, i32(row3_cy - 8.0), 18, shadow_col)
 	rl.DrawText(combat_str, txt_x, i32(row3_cy - 9.0), 18, combat_col)
 }
