@@ -16,8 +16,8 @@ GARRISON_MINERS := [SECTOR_COUNT]int{8, 4, 0, 6, 10, 14, 18, 22, 0}
 GARRISON_BASE_HP := [SECTOR_COUNT]int{20, 10, 0, 15, 30, 40, 50, 60, ENEMY_HQ_BASE_HP}
 
 planets := [PLANET_COUNT]Planet{
-	{name = "MERCURY", position = {-30, 2, 8}, radius = 1.6, color = rl.Color{150, 148, 145, 255}},
-	{name = "VENUS", position = {-15, 0.8, -4}, radius = 2.6, color = rl.Color{230, 200, 130, 255}},
+	{name = "MERCURY", position = {-30, 2, -2}, radius = 1.6, color = rl.Color{150, 148, 145, 255}},
+	{name = "VENUS", position = {-15, 0.8, -8}, radius = 2.6, color = rl.Color{230, 200, 130, 255}},
 	{name = "EARTH", position = {0, 0, 0}, radius = 3.0, color = rl.Color{45, 125, 220, 255}},
 	{name = "MARS", position = {22, 1, 6}, radius = 2.2, color = rl.Color{215, 80, 55, 255}},
 	{name = "JUPITER", position = {50, 2.5, -12}, radius = 4.2, color = rl.Color{215, 175, 110, 255}},
