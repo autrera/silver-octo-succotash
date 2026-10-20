@@ -1,6 +1,5 @@
 package main
 
-import "core:c"
 import "core:math"
 import "core:time"
 import rl "vendor:raylib"
@@ -642,8 +641,8 @@ draw_rally_flag :: proc() {
 	top := rl.Vector3{p.position.x, p.position.y + p.radius + 3.4, p.position.z}
 	rl.DrawCylinderEx(base, top, 0.07, 0.07, 6, rl.Color{205, 208, 218, 255})
 	tip := rl.Vector3{p.position.x + 1.7, top.y - 0.55, p.position.z}
-	rl.DrawTriangle3D({p.position.x, top.y, p.position.z}, {p.position.x, top.y - 1.3, p.position.z}, tip, SCIFI_CYAN)
-	rl.DrawTriangle3D({p.position.x, top.y - 1.3, p.position.z}, {p.position.x, top.y, p.position.z}, tip, SCIFI_CYAN)
+	rl.DrawTriangle3D({p.position.x, top.y, p.position.z}, {p.position.x, top.y - 1.3, p.position.z}, tip, SCIFI_GREEN)
+	rl.DrawTriangle3D({p.position.x, top.y - 1.3, p.position.z}, {p.position.x, top.y, p.position.z}, tip, SCIFI_GREEN)
 }
 
 zoom_percent :: proc() -> int {

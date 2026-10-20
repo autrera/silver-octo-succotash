@@ -5,7 +5,6 @@ import "core:fmt"
 import "core:strings"
 import "core:strconv"
 import "core:path/filepath"
-import rl "vendor:raylib"
 
 save_game_path :: proc(custom_path: string = "", allocator := context.temp_allocator) -> string {
 	if len(custom_path) > 0 {

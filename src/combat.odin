@@ -1,6 +1,5 @@
 package main
 
-import "core:c"
 import "core:math"
 import rl "vendor:raylib"
 
@@ -547,7 +546,7 @@ draw_orbital_defense_inspector_section :: proc(x: f32, btn: rl.Rectangle, p: int
 		draw_chamfered_panel(btn, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
 		fill_rect := rl.Rectangle{btn.x, btn.y, btn.width * progress, btn.height}
 		rl.DrawRectangleRec(fill_rect, rl.Color{0, 200, 120, 120})
-		draw_corner_brackets(btn, 2, 6, SCIFI_CYAN)
+		draw_corner_brackets(btn, 2, 6, SCIFI_GREEN)
 		if orbital_defense_constructing_miners(p) < ORBITAL_DEFENSE_CONSTRUCT_MINERS {
 			rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", orbital_defense_constructing_miners(p), ORBITAL_DEFENSE_CONSTRUCT_MINERS), i32(btn.x + CARD_INSET), i32(btn.y + 12), 11, rl.WHITE)
 		} else {
@@ -750,7 +749,7 @@ planet_is_minor_wave_source :: proc(p: int) -> bool {
 
 minor_wave_warning_planet :: proc() -> int {
 	if minor_wave_timer < MINOR_WAVE_INTERVAL - 3.0 { return -1 }
-	sources, targets, count := collect_minor_wave_attacks()
+	_, targets, count := collect_minor_wave_attacks()
 	if count == 0 { return -1 }
 	for i in 0..<count {
 		if targets[i] == EARTH { return EARTH }
@@ -1253,7 +1252,7 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 	gunmetal     := rl.Color{36, 40, 46, 255}
 	frame_mid    := rl.Color{65, 72, 82, 255}
 	steel_bright := rl.Color{155, 165, 180, 255}
-	cyan_glow    := SCIFI_CYAN
+	cyan_glow    := SCIFI_GREEN
 	mint_core    := SCIFI_MINT
 	amber_lens   := SCIFI_AMBER
 
@@ -1477,7 +1476,7 @@ draw_cyberpunk_flak88_construction_site :: proc(planet_idx: int) {
 	s: f32 = 0.84 + clamp(planet.radius * 0.07, 0.11, 0.32)
 
 	gunmetal := rl.Color{40, 44, 52, 255}
-	cyan_glow := SCIFI_CYAN
+	cyan_glow := SCIFI_GREEN
 	mint_core := SCIFI_MINT
 
 	for d_idx in 0..<4 {

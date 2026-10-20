@@ -4,51 +4,20 @@ import "core:c"
 import "core:math"
 import "core:mem"
 import rl "vendor:raylib"
-import "vendor:raylib/rlgl"
 
 draw_world :: proc() {
 	viewport_w := rl.GetScreenWidth() - SCREEN_PANEL_WIDTH
 	draw_starfield()
+	draw_ambient_nebulae()
+	draw_planet_halos()
 	draw_combat_nebulae()
 	rl.BeginMode3D(camera)
+	draw_orbit_rings()
 	for p in 0..<PLANET_COUNT {
 		planet := planets[p]
-		lit := has_vision(p)
-		surface := planet.color
-		if !lit {
-			surface = rl.Color{58, 62, 74, 255}
-		}
-		if planet_visuals_ready {
-			tint := rl.WHITE
-			if !lit { tint = rl.Color{110, 116, 130, 255} }
-			rl.DrawModelEx(planet_models[p], planet.position, {0, 1, 0}, planet_spin[p] * 57.29578, {1, 1, 1}, tint)
-		} else {
-			rl.DrawSphere(planet.position, planet.radius, surface)
-		}
-		atmo := rl.Color{planet.color.r, planet.color.g, planet.color.b, 255}
-		if !lit { atmo = rl.Color{70, 76, 90, 255} }
-		rl.DrawSphereEx(planet.position, planet.radius * 1.09, 12, 24, rl.Fade(atmo, 0.16))
-		glint_dir := rl.Vector3Normalize({-0.45, 0.75, -0.35})
-		glint_pos := planet.position + glint_dir * (planet.radius * 0.82)
-		rl.DrawSphereEx(glint_pos, planet.radius * 0.10, 6, 8, rl.Color{255, 255, 255, 70})
-		rl.DrawCircle3D(planet.position + {0, 1.0, 0}, planet.radius + 1.5, {0, 1, 0}, 90, rl.Fade(atmo, 0.30))
-		if p == SATURN {
-			ring_col := rl.Color{225, 205, 155, 255}
-			if !lit { ring_col = rl.Color{70, 76, 90, 255} }
-			rl.DrawCircle3D(planet.position, planet.radius * 1.55, {0.35, 1, 0.15}, 78, rl.Fade(ring_col, 0.55))
-			rl.DrawCircle3D(planet.position, planet.radius * 1.95, {0.35, 1, 0.15}, 78, rl.Fade(ring_col, 0.30))
-		}
-		if p == selected_planet {
-			pulse := 0.75 + 0.25 * math.sin(laser_anim_time * 3.0)
-			rl.DrawCircle3D(planet.position, planet.radius + 0.35, {0, 1, 0}, 90, rl.Fade(SCIFI_CYAN, pulse))
-			rl.DrawCircle3D(planet.position, planet.radius + 0.70, {0, 1, 0}, 90, SCIFI_DIM)
-			for a in 0..<4 {
-				ang := f32(a) * math.PI / 2.0 + laser_anim_time * 0.4
-				p_in := planet.position + rl.Vector3{math.cos(ang) * (planet.radius + 0.35), 0, math.sin(ang) * (planet.radius + 0.35)}
-				p_out := planet.position + rl.Vector3{math.cos(ang) * (planet.radius + 0.85), 0, math.sin(ang) * (planet.radius + 0.85)}
-				rl.DrawLine3D(p_in, p_out, SCIFI_CYAN)
-			}
-		}
+		draw_planet_body(p)
+		ring_col := has_vision(p) ? planet_atmospheres[p] : rl.Color{70, 76, 90, 255}
+		rl.DrawCircle3D(planet.position, planet.radius + 1.5, {1, 0, 0}, 90, rl.Fade(ring_col, 0.22))
 		if orbital_defense_level[p] > 0 {
 			draw_cyberpunk_flak88(p)
 		} else if orbital_defense_building[p] {
@@ -67,9 +36,6 @@ draw_world :: proc() {
 		hq_trim = rl.Color{255, 120, 125, 255}
 	}
 	draw_hq_fortress(ENEMY_HQ_POSITION, hq_color, hq_trim, hq_glow)
-	if selected_planet == ENEMY_HOME {
-		rl.DrawCubeWiresV(ENEMY_HQ_POSITION, {11.2, 5.8, 11.2}, SCIFI_CYAN)
-	}
 	draw_rally_flag()
 
 	sector_vis: [SECTOR_COUNT]bool
@@ -172,7 +138,7 @@ draw_world :: proc() {
 						draw_fighter_drone(u.position, u.enemy, heading)
 						if rl.Vector3Length(heading) > 0.001 {
 							trail := u.position - rl.Vector3Normalize(heading) * 1.2
-							rl.DrawLine3D(u.position, trail, rl.Fade(u.enemy ? rl.RED : SCIFI_CYAN, 0.6))
+							rl.DrawLine3D(u.position, trail, rl.Fade(u.enemy ? rl.RED : SCIFI_GREEN, 0.6))
 						}
 					}
 				} else if u.kind == .MINING {
@@ -209,59 +175,11 @@ draw_world :: proc() {
 		return
 	}
 
-	for p in 0..<PLANET_COUNT {
-		pos := rl.GetWorldToScreen(planets[p].position, camera)
-		if pos.x < f32(viewport_w) && pos.x > 0 && pos.y > 0 && pos.y < f32(rl.GetScreenHeight()) {
-			label := planets[p].name
-			if p == selected_planet {
-				draw_optical_reticle_2d(pos, planets[p].radius * 5.0, SCIFI_CYAN, label)
-			} else {
-				rl.DrawText(label, c.int(pos.x - 28 + 1), c.int(pos.y - planets[p].radius * 5 - 14 + 1), 14, rl.Color{0, 0, 0, 170})
-				rl.DrawText(label, c.int(pos.x - 28), c.int(pos.y - planets[p].radius * 5 - 14), 14, SCIFI_TEXT)
-			}
-		}
-	}
-	hq_screen := rl.GetWorldToScreen(ENEMY_HQ_POSITION, camera)
-	if hq_screen.x < f32(viewport_w) && hq_screen.x > 0 && hq_screen.y > 0 && hq_screen.y < f32(rl.GetScreenHeight()) {
-		hq_label: cstring = "ENEMY HQ"
-		if enemy_hq_destroyed() { hq_label = "ENEMY HQ (DESTROYED)" }
-		if selected_planet == ENEMY_HOME {
-			draw_optical_reticle_2d(hq_screen, 28.0, SCIFI_RED, hq_label)
-		} else {
-			rl.DrawText(hq_label, c.int(hq_screen.x - 30), c.int(hq_screen.y - 26), 13, SCIFI_RED)
-		}
-	}
+	draw_planet_labels(f32(viewport_w))
 
 	draw_conquered_planet_overlays(f32(viewport_w), f32(rl.GetScreenHeight()))
 
-	tl_dock_w: f32 = 400.0
-	tl_dock_h: f32 = 50.0
-	tl_rect := rl.Rectangle{f32(HUD_PAD), f32(HUD_PAD), tl_dock_w, tl_dock_h}
-	draw_winged_panel_left(tl_rect, 6, 20, SCIFI_PANEL, SCIFI_CYAN)
-
-	col1_x: f32 = f32(HUD_PAD + 16)
-	rl.DrawText("MINERALS", i32(col1_x), i32(HUD_PAD + 7), 10, SCIFI_MINT)
-	min_val := rl.TextFormat("%d", minerals)
-	rl.DrawText(min_val, i32(col1_x), i32(HUD_PAD + 20), 22, SCIFI_AMBER)
-
-	div1_x: f32 = col1_x + 104.0
-	rl.DrawLineV({div1_x, HUD_PAD + 10}, {div1_x, HUD_PAD + 40}, SCIFI_DIM)
-	draw_diamond(div1_x, HUD_PAD + 25, 2.5, SCIFI_CYAN)
-
-	col2_x: f32 = div1_x + 16.0
-	rl.DrawText("PRODUCTION", i32(col2_x), i32(HUD_PAD + 7), 10, SCIFI_MUTED)
-	mps_val := rl.TextFormat("+%.1f/s", global_mps())
-	rl.DrawText(mps_val, i32(col2_x), i32(HUD_PAD + 22), 17, SCIFI_CYAN)
-
-	div2_x: f32 = col2_x + 92.0
-	rl.DrawLineV({div2_x, HUD_PAD + 10}, {div2_x, HUD_PAD + 40}, SCIFI_DIM)
-	draw_diamond(div2_x, HUD_PAD + 25, 2.5, SCIFI_CYAN)
-
-	col3_x: f32 = div2_x + 16.0
-	rl.DrawText("DRONE SPEED", i32(col3_x), i32(HUD_PAD + 7), 10, SCIFI_MUTED)
-	speed_val := rl.TextFormat("LVL %d/%d", drone_speed_level, DRONE_SPEED_UPGRADE_MAX)
-	rl.DrawText(speed_val, i32(col3_x), i32(HUD_PAD + 24), 11, SCIFI_MINT)
-	draw_segmented_meter({col3_x + 58, HUD_PAD + 24, 48, 12}, f32(drone_speed_level) / f32(DRONE_SPEED_UPGRADE_MAX), 5, SCIFI_MINT, SCIFI_DIM)
+	draw_resource_hud()
 
 	if hud_save_notification_timer > 0 {
 		saved_lbl: cstring = "GAME SAVED"
@@ -736,7 +654,7 @@ build_miner_model :: proc(enemy: bool) -> rl.Model {
 
 	cab_pos := pos + h * 0.14 + up * 0.08 - side * 0.07
 	add_cylinder(&verts, &norms, &cols, cab_pos - h * 0.08, cab_pos + h * 0.08, 0.09, 0.07, 5, hull_main)
-	add_cylinder(&verts, &norms, &cols, cab_pos + h * 0.05, cab_pos + h * 0.09, 0.06, 0.045, 5, SCIFI_CYAN)
+	add_cylinder(&verts, &norms, &cols, cab_pos + h * 0.05, cab_pos + h * 0.09, 0.06, 0.045, 5, SCIFI_GREEN)
 
 	light_pos := pos + h * 0.22 + up * 0.06 + side * 0.08
 	add_cylinder(&verts, &norms, &cols, light_pos - h * 0.04, light_pos, 0.040, 0.040, 4, frame_dark)
@@ -799,7 +717,7 @@ build_fighter_model :: proc(enemy: bool) -> rl.Model {
 		armor_dark  = rl.Color{16, 26, 42, 255}
 		armor_plate = rl.Color{46, 82, 126, 255}
 		metal_trim  = rl.Color{135, 165, 190, 255}
-		energy_glow = SCIFI_CYAN
+		energy_glow = SCIFI_GREEN
 		energy_core = SCIFI_MINT
 	}
 
@@ -820,7 +738,6 @@ build_fighter_model :: proc(enemy: bool) -> rl.Model {
 	for s_sign in s_signs {
 		s_vec := side * s_sign
 		sh_f := pos + h * 0.18 + up * 0.06 + s_vec * 0.24
-		sh_b := pos - h * 0.26 + up * 0.08 + s_vec * 0.26
 		sh_tip := pos + s_vec * 0.30 - up * 0.06
 
 		add_triangle(&verts, &norms, &cols, hood_f, sh_f, hood_b, armor_plate)
@@ -1065,7 +982,7 @@ draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, 
 	num_p := min(pc, rep_count(pc))
 	num_e := min(ec, rep_count(ec))
 	if num_p > 0 && num_e > 0 {
-		for i in 0..<num_p { draw_laser_bolt(player_spots[i], enemy_spots[i % num_e], f32(i) * 2.3, SCIFI_CYAN) }
+		for i in 0..<num_p { draw_laser_bolt(player_spots[i], enemy_spots[i % num_e], f32(i) * 2.3, SCIFI_GREEN) }
 		for j in 0..<num_e { draw_laser_bolt(enemy_spots[j], player_spots[j % num_p], f32(j) * 2.3 + 1.1, rl.RED) }
 	} else if num_e > 0 {
 		if p < PLANET_COUNT && orbital_defense_level[p] > 0 {
@@ -1083,13 +1000,13 @@ draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, 
 	} else if num_p > 0 {
 		if emc > 0 {
 			num_tc := min(emc, rep_count(emc))
-			for i in 0..<num_p { draw_laser_bolt(player_spots[i], enemy_miner_spots[i % num_tc], f32(i) * 2.3, SCIFI_CYAN) }
+			for i in 0..<num_p { draw_laser_bolt(player_spots[i], enemy_miner_spots[i % num_tc], f32(i) * 2.3, SCIFI_GREEN) }
 		} else if p == ENEMY_HOME && orbital_defense_level[p] > 0 {
 			def_pos := orbital_defense_pos(p)
-			for i in 0..<num_p { draw_laser_bolt(player_spots[i], def_pos, f32(i) * 2.3, SCIFI_CYAN) }
+			for i in 0..<num_p { draw_laser_bolt(player_spots[i], def_pos, f32(i) * 2.3, SCIFI_GREEN) }
 		} else if enemy_base_hp[p] > 0 {
 			base := sector_pos(p) + rl.Vector3{0, sector_radius(p) * 0.6, 0}
-			for i in 0..<num_p { draw_laser_bolt(player_spots[i], base, f32(i) * 2.3, SCIFI_CYAN) }
+			for i in 0..<num_p { draw_laser_bolt(player_spots[i], base, f32(i) * 2.3, SCIFI_GREEN) }
 		}
 	}
 }
@@ -1163,13 +1080,13 @@ draw_selection_ring :: proc(center: rl.Vector3, radius: f32) {
 		rl.DrawLine3D(
 			{center.x + math.cos(a) * radius, center.y - 0.25, center.z + math.sin(a) * radius},
 			{center.x + math.cos(b) * radius, center.y - 0.25, center.z + math.sin(b) * radius},
-			rl.Fade(SCIFI_CYAN, pulse),
+			rl.Fade(SCIFI_GREEN, pulse),
 		)
 		or_ := radius + 0.22
 		rl.DrawLine3D(
 			{center.x + math.cos(a) * or_, center.y - 0.25, center.z + math.sin(a) * or_},
 			{center.x + math.cos(b) * or_, center.y - 0.25, center.z + math.sin(b) * or_},
-			rl.Fade(SCIFI_CYAN, 0.25 * pulse),
+			rl.Fade(SCIFI_GREEN, 0.25 * pulse),
 		)
 	}
 }
@@ -1189,176 +1106,6 @@ update_planet_spin :: proc(dt: f32) {
 		planet_spin[p] += dt * planet_spin_speed(p)
 		if planet_spin[p] > 2 * math.PI { planet_spin[p] -= 2 * math.PI }
 	}
-}
-
-mix_color :: proc(a, b: rl.Color, t: f32) -> rl.Color {
-	return rl.Color{
-		u8(f32(a.r) * (1 - t) + f32(b.r) * t),
-		u8(f32(a.g) * (1 - t) + f32(b.g) * t),
-		u8(f32(a.b) * (1 - t) + f32(b.b) * t),
-		255,
-	}
-}
-
-PLANET_TEX_SIZE :: 128
-
-planet_blob :: struct { x, y, r: f32 }
-
-init_planet_visuals :: proc() {
-	if planet_visuals_ready { return }
-	for p in 0..<PLANET_COUNT {
-		base := planets[p].color
-		img := rl.GenImageColor(PLANET_TEX_SIZE, PLANET_TEX_SIZE, base)
-		noise := rl.GenImagePerlinNoise(PLANET_TEX_SIZE, PLANET_TEX_SIZE, c.int(p * 17 + 3), c.int(p * 29 + 7), 6.0)
-		lum := rl.LoadImageColors(noise)
-		seed := u32(0x9E3779B9 + u32(p) * 0x85EBCA6B)
-		next := proc(seed: ^u32) -> f32 {
-			seed^ = seed^ * 1664525 + 1013904223
-			return f32((seed^ >> 8) & 0xFFFF) / f32(0xFFFF)
-		}
-		blobs: [9]planet_blob
-		for b in 0..<9 {
-			blobs[b] = {next(&seed) * PLANET_TEX_SIZE, next(&seed) * PLANET_TEX_SIZE, 4 + next(&seed) * 11}
-		}
-		oceans: [6]planet_blob
-		for b in 0..<6 {
-			oceans[b] = {next(&seed) * PLANET_TEX_SIZE, next(&seed) * PLANET_TEX_SIZE, 6 + next(&seed) * 13}
-		}
-		blotch := rl.Color{u8(min(int(base.r) + 34, 255)), u8(min(int(base.g) + 34, 255)), u8(min(int(base.b) + 34, 255)), 255}
-		ocean := rl.Color{18, 60, 150, 255}
-		for y in 0..<PLANET_TEX_SIZE {
-			for x in 0..<PLANET_TEX_SIZE {
-				l := f32(lum[y * PLANET_TEX_SIZE + x].r) / 255.0
-				shade := 0.70 + l * 0.60
-				col := rl.Color{
-					u8(min(f32(base.r) * shade, 255)),
-					u8(min(f32(base.g) * shade, 255)),
-					u8(min(f32(base.b) * shade, 255)),
-					255,
-				}
-				if p >= JUPITER {
-					x_lat := f32(x) + (l - 0.5) * 5.0
-					band_freq: f32 = 0.38
-					band_phase: f32 = f32(p * 13)
-					if p == JUPITER { band_freq = 0.42 }
-					else if p == SATURN { band_freq = 0.32 }
-					else if p == URANUS { band_freq = 0.22 }
-					else if p == NEPTUNE { band_freq = 0.28 }
-
-					band_val := math.sin(x_lat * band_freq + band_phase) + 0.35 * math.sin(x_lat * band_freq * 2.1 + band_phase * 1.5)
-
-					contrast: f32 = 0.26
-					if p == JUPITER { contrast = 0.32 }
-					else if p == SATURN { contrast = 0.18 }
-					else if p == URANUS { contrast = 0.12 }
-					else if p == NEPTUNE { contrast = 0.22 }
-
-					if band_val > 0.1 {
-						boost := 1.0 + contrast * (band_val * 0.7)
-						col = rl.Color{
-							u8(min(f32(col.r) * boost + 8 * boost, 255)),
-							u8(min(f32(col.g) * boost + 8 * boost, 255)),
-							u8(min(f32(col.b) * boost + 8 * boost, 255)),
-							255,
-						}
-					} else {
-						darken := 1.0 + contrast * band_val
-						darken = max(darken, 0.65)
-						if p == JUPITER {
-							col = rl.Color{
-								u8(min(f32(col.r) * darken * 1.08, 255)),
-								u8(f32(col.g) * darken * 0.90),
-								u8(f32(col.b) * darken * 0.80),
-								255,
-							}
-						} else {
-							col = rl.Color{
-								u8(f32(col.r) * darken),
-								u8(f32(col.g) * darken),
-								u8(f32(col.b) * darken),
-								255,
-							}
-						}
-					}
-
-					if p == JUPITER {
-						spot_x: f32 = 82.0
-						spot_y: f32 = 55.0
-						dx := (f32(x) - spot_x) / 5.5
-						dy_val := f32(y) - spot_y
-						if dy_val > f32(PLANET_TEX_SIZE) / 2.0 { dy_val -= f32(PLANET_TEX_SIZE) }
-						if dy_val < -f32(PLANET_TEX_SIZE) / 2.0 { dy_val += f32(PLANET_TEX_SIZE) }
-						dy := dy_val / 11.0
-						dist_sq := dx * dx + dy * dy
-						if dist_sq <= 1.0 {
-							spot_col := rl.Color{205, 68, 48, 255}
-							col = mix_color(col, spot_col, 0.78 * (1.0 - dist_sq * 0.25))
-						}
-					} else if p == NEPTUNE {
-						spot_x: f32 = 75.0
-						spot_y: f32 = 60.0
-						dx := (f32(x) - spot_x) / 6.0
-						dy_val := f32(y) - spot_y
-						if dy_val > f32(PLANET_TEX_SIZE) / 2.0 { dy_val -= f32(PLANET_TEX_SIZE) }
-						if dy_val < -f32(PLANET_TEX_SIZE) / 2.0 { dy_val += f32(PLANET_TEX_SIZE) }
-						dy := dy_val / 12.0
-						dist_sq := dx * dx + dy * dy
-						if dist_sq <= 1.0 {
-							spot_col := rl.Color{35, 55, 140, 255}
-							col = mix_color(col, spot_col, 0.70)
-						}
-					}
-				} else {
-					fx, fy := f32(x), f32(y)
-					for b in 0..<9 {
-						dx, dy := fx - blobs[b].x, fy - blobs[b].y
-						if dx * dx + dy * dy <= blobs[b].r * blobs[b].r {
-							col = mix_color(col, blotch, 0.5)
-							break
-						}
-					}
-					if p == EARTH {
-						for b in 0..<6 {
-							dx, dy := fx - oceans[b].x, fy - oceans[b].y
-							if dx * dx + dy * dy <= oceans[b].r * oceans[b].r {
-								col = mix_color(col, ocean, 0.65)
-								break
-							}
-						}
-						if x < 8 || x > 120 {
-							col = mix_color(col, rl.Color{240, 245, 255, 255}, 0.85)
-						}
-					} else if p == MARS {
-						if x < 6 || x > 122 {
-							col = mix_color(col, rl.Color{240, 230, 225, 255}, 0.80)
-						}
-					}
-				}
-				rl.ImageDrawPixel(&img, c.int(x), c.int(y), col)
-			}
-		}
-		rl.UnloadImageColors(lum)
-		rl.UnloadImage(noise)
-		tex := rl.LoadTextureFromImage(img)
-		rl.SetTextureWrap(tex, .REPEAT)
-		rl.SetTextureFilter(tex, .BILINEAR)
-		rl.UnloadImage(img)
-		planet_textures[p] = tex
-		model := rl.LoadModelFromMesh(rl.GenMeshSphere(planets[p].radius, 32, 32))
-		model.transform = rl.MatrixRotateX(rl.DEG2RAD * -90)
-		rl.SetMaterialTexture(&model.materials[0], .ALBEDO, tex)
-		planet_models[p] = model
-	}
-	planet_visuals_ready = true
-}
-
-unload_planet_visuals :: proc() {
-	if !planet_visuals_ready { return }
-	for p in 0..<PLANET_COUNT {
-		rl.UnloadModel(planet_models[p])
-		rl.UnloadTexture(planet_textures[p])
-	}
-	planet_visuals_ready = false
 }
 
 STAR_COUNT :: 280

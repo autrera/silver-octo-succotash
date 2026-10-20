@@ -1,7 +1,6 @@
 package main
 
 import "core:c"
-import "core:math"
 import rl "vendor:raylib"
 
 draw_inspector :: proc() {
@@ -102,7 +101,7 @@ draw_inspector :: proc() {
 		sel_rect := rl.Rectangle{x + PANEL_PAD_X, sel_y, PANEL_CONTENT_W, 22}
 		sel_count := selection_count()
 		if sel_count > 0 {
-			draw_chamfered_panel(sel_rect, 4, rl.Color{10, 30, 40, 240}, SCIFI_CYAN)
+			draw_chamfered_panel(sel_rect, 4, rl.Color{10, 30, 40, 240}, SCIFI_GREEN)
 			draw_corner_brackets(sel_rect, 1, 4, SCIFI_MINT)
 			rl.DrawText(rl.TextFormat("ACTIVE SQUAD: %d UNITS SELECTED", sel_count), i32(sel_rect.x + 10), i32(sel_rect.y + 5), 11, SCIFI_MINT)
 		} else {
@@ -112,8 +111,8 @@ draw_inspector :: proc() {
 	}
 	if inspector_drag_active {
 		rect := rect_between(inspector_drag_start, rl.GetMousePosition())
-		rl.DrawRectangleRec(rect, rl.Fade(SCIFI_CYAN, 0.18))
-		rl.DrawRectangleLinesEx(rect, 1, SCIFI_CYAN)
+		rl.DrawRectangleRec(rect, rl.Fade(SCIFI_GREEN, 0.18))
+		rl.DrawRectangleLinesEx(rect, 1, SCIFI_GREEN)
 		draw_corner_brackets(rect, 0, 6, SCIFI_MINT)
 	}
 }
@@ -127,7 +126,7 @@ draw_earth_inspector :: proc(x: f32) {
 			fill_w := base_button.width * progress
 			fill_rect := rl.Rectangle{base_button.x, base_button.y, fill_w, base_button.height}
 			rl.DrawRectangleRec(fill_rect, rl.Color{0, 200, 120, 120})
-			draw_corner_brackets(base_button, 2, 6, SCIFI_CYAN)
+			draw_corner_brackets(base_button, 2, 6, SCIFI_GREEN)
 			if base_constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS {
 				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", base_constructing_miners(EARTH), BASE_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 12, 11, rl.WHITE)
 			} else {
@@ -162,7 +161,7 @@ draw_earth_inspector :: proc(x: f32) {
 	queue_y := earth_queue_y()
 	queue_capacity := base_counts[EARTH] * MAX_BASES
 	queue_total := queued_count(EARTH)
-	draw_section_header(x + PANEL_PAD_X, f32(queue_y), PANEL_CONTENT_W, rl.TextFormat("QUEUE BUFFER (%d/%d)", queue_total, queue_capacity), SCIFI_CYAN)
+	draw_section_header(x + PANEL_PAD_X, f32(queue_y), PANEL_CONTENT_W, rl.TextFormat("QUEUE BUFFER (%d/%d)", queue_total, queue_capacity), SCIFI_GREEN)
 	if base_counts[EARTH] >= MAX_BASES {
 		draw_autobuild_radio_buttons(x)
 	}
@@ -232,12 +231,12 @@ draw_outpost_inspector :: proc(x: f32) {
 			draw_chamfered_panel(btn, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
 			fill_rect := rl.Rectangle{btn.x, btn.y, btn.width * (refinery_progress[selected_planet] / REFINERY_BUILD_TIME), btn.height}
 			rl.DrawRectangleRec(fill_rect, rl.Color{0, 200, 120, 120})
-			draw_corner_brackets(btn, 2, 6, SCIFI_CYAN)
+			draw_corner_brackets(btn, 2, 6, SCIFI_GREEN)
 			if refinery_constructing_miners(selected_planet) < REFINERY_CONSTRUCT_MINERS {
-				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", refinery_constructing_miners(selected_planet), REFINERY_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 12), 11, SCIFI_CYAN)
+				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", refinery_constructing_miners(selected_planet), REFINERY_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 12), 11, SCIFI_GREEN)
 			} else {
 				remaining := REFINERY_BUILD_TIME - refinery_progress[selected_planet]
-				rl.DrawText(rl.TextFormat("REFINERY  %3.1fs", remaining), i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 11), 13, SCIFI_CYAN)
+				rl.DrawText(rl.TextFormat("REFINERY  %3.1fs", remaining), i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 11), 13, SCIFI_GREEN)
 			}
 		} else if !refinery_built[selected_planet] {
 			cost := refinery_cost(selected_planet)
@@ -254,7 +253,6 @@ draw_outpost_inspector :: proc(x: f32) {
 }
 
 draw_ghost_rosters :: proc(x: f32) {
-	enemy_header := rl.Color{235, 110, 110, 255}
 	intel := last_known_intel[selected_planet]
 
 	kinds := [2]Unit_Type{.MINING, .COMBAT}
@@ -449,7 +447,7 @@ draw_unit_tile_data :: proc(kind: Unit_Type, state: Unit_State, selected: bool, 
 	center := rl.Vector2{rect.x + rect.width * 0.5, rect.y + rect.height * 0.5}
 	draw_unit_icon(kind, center, rect.width, accent)
 	if selected && !enemy {
-		draw_corner_brackets(rect, 1, 4, SCIFI_CYAN)
+		draw_corner_brackets(rect, 1, 4, SCIFI_GREEN)
 	}
 	rl.DrawCircle(c.int(rect.x + rect.width - 2), c.int(rect.y + 2), 3, state_color(state))
 }

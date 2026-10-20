@@ -1,16 +1,7 @@
 package main
 
-import "core:math"
-import "core:mem"
-import "core:c"
-import "core:os"
-import "core:fmt"
-import "core:strings"
-import "core:strconv"
-import "core:path/filepath"
 import "core:time"
 import rl "vendor:raylib"
-import "vendor:raylib/rlgl"
 
 STARTING_EARTH_MINERS := 5
 STARTING_EARTH_COMBAT := 0
@@ -36,7 +27,6 @@ planets := [PLANET_COUNT]Planet{
 }
 
 planet_models: [PLANET_COUNT]rl.Model
-planet_textures: [PLANET_COUNT]rl.Texture2D
 planet_visuals_ready := false
 planet_spin: [PLANET_COUNT]f32
 
@@ -145,6 +135,7 @@ main :: proc() {
 	defer unload_planet_visuals()
 	init_drone_visuals()
 	defer unload_drone_visuals()
+	defer unload_display_fonts()
 	camera = rl.Camera3D{
 		position = {camera_target.x, CAMERA_START_Y, camera_target.z + CAMERA_START_Y},
 		target = camera_target,

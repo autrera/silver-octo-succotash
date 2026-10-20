@@ -264,12 +264,7 @@ conquered_planet_overlay_rect :: proc(p: int, center_screen: rl.Vector2, screen_
 	w := max(58.0 + max_txt_w + btn_w, 128.0)
 	h: f32 = 102.0
 
-	eff_r := screen_r
-	if is_selected {
-		eff_r = max(screen_r, max(planets[p].radius * 5.0, 20.0) + 9.0)
-	}
-
-	overlay_y := center_screen.y + eff_r + 22.0
+	overlay_y := planet_label_y(center_screen.y, screen_r, is_selected) + PLANET_LABEL_H + 4.0
 	overlay_x := center_screen.x - w * 0.5
 	overlay_x = clamp(overlay_x, 6.0, max(6.0, viewport_w - w - 6.0))
 
@@ -386,7 +381,7 @@ draw_conquered_planet_overlays :: proc(viewport_w, screen_h: f32) {
 		}
 
 		limb_screen := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
-		screen_r := max(rl.Vector2Distance(center_screen, limb_screen), 14.0)
+		screen_r := rl.Vector2Distance(center_screen, limb_screen)
 
 		draw_conquered_planet_overlay_badge(p, center_screen, screen_r, false, viewport_w, screen_h)
 	}
@@ -397,7 +392,7 @@ draw_conquered_planet_overlays :: proc(viewport_w, screen_h: f32) {
 			center_screen := rl.GetWorldToScreen(planets[selected_planet].position, camera)
 			if center_screen.x >= -100 && center_screen.x <= viewport_w + 100 && center_screen.y >= -100 && center_screen.y <= screen_h + 100 {
 				limb_screen := rl.GetWorldToScreen(planets[selected_planet].position + cam_right * planets[selected_planet].radius, camera)
-				screen_r := max(rl.Vector2Distance(center_screen, limb_screen), 14.0)
+				screen_r := rl.Vector2Distance(center_screen, limb_screen)
 
 				draw_conquered_planet_overlay_badge(selected_planet, center_screen, screen_r, true, viewport_w, screen_h)
 			}
@@ -417,7 +412,7 @@ pick_conquered_planet_overlay_ammo_button :: proc(mouse: rl.Vector2) -> int {
 		if rl.Vector3DotProduct(to_planet, cam_forward) > 0.1 {
 			center_screen := rl.GetWorldToScreen(planets[p].position, camera)
 			limb_screen := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
-			screen_r := max(rl.Vector2Distance(center_screen, limb_screen), 14.0)
+			screen_r := rl.Vector2Distance(center_screen, limb_screen)
 			rect := conquered_planet_overlay_rect(p, center_screen, screen_r, true, viewport_w, screen_h)
 			btn_rect := conquered_planet_overlay_ammo_btn_rect(rect)
 			if rl.CheckCollisionPointRec(mouse, btn_rect) {
@@ -433,7 +428,7 @@ pick_conquered_planet_overlay_ammo_button :: proc(mouse: rl.Vector2) -> int {
 
 		center_screen := rl.GetWorldToScreen(planets[p].position, camera)
 		limb_screen := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
-		screen_r := max(rl.Vector2Distance(center_screen, limb_screen), 14.0)
+		screen_r := rl.Vector2Distance(center_screen, limb_screen)
 
 		rect := conquered_planet_overlay_rect(p, center_screen, screen_r, false, viewport_w, screen_h)
 		btn_rect := conquered_planet_overlay_ammo_btn_rect(rect)
@@ -457,7 +452,7 @@ pick_conquered_planet_overlay :: proc(mouse: rl.Vector2) -> int {
 
 		center_screen := rl.GetWorldToScreen(planets[p].position, camera)
 		limb_screen := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
-		screen_r := max(rl.Vector2Distance(center_screen, limb_screen), 14.0)
+		screen_r := rl.Vector2Distance(center_screen, limb_screen)
 
 		rect := conquered_planet_overlay_rect(p, center_screen, screen_r, p == selected_planet, viewport_w, screen_h)
 		if rl.CheckCollisionPointRec(mouse, rect) {
@@ -473,7 +468,7 @@ draw_tactical_container :: proc(rect: rl.Rectangle) {
 	wing: f32 = 20.0
 
 	rl.DrawRectangleGradientH(i32(x - 28), i32(y), 28, i32(h), rl.Color{0, 0, 0, 0}, rl.Color{0, 0, 0, 160})
-	glow_col := rl.Fade(SCIFI_CYAN, 0.08)
+	glow_col := rl.Fade(SCIFI_GREEN, 0.08)
 	rl.DrawRectangleGradientV(i32(x), i32(y), i32(w), i32(h), glow_col, rl.Color{0, 0, 0, 0})
 
 	v0 := rl.Vector2{x + ch, y}
@@ -493,7 +488,7 @@ draw_tactical_container :: proc(rect: rl.Rectangle) {
 	rl.DrawTriangle(v0, v5, v6, fill)
 	rl.DrawTriangle(v0, v6, v7, fill)
 
-	border := SCIFI_CYAN
+	border := SCIFI_GREEN
 	rl.DrawLineV(v0, v1, border)
 	rl.DrawLineV(v1, v2, border)
 	rl.DrawLineV(v2, v3, border)
@@ -576,46 +571,6 @@ draw_segmented_meter :: proc(rect: rl.Rectangle, value: f32, segments: int, fill
 	}
 }
 
-draw_optical_reticle_2d :: proc(center: rl.Vector2, radius: f32, color: rl.Color, label: cstring = "") {
-	r := max(radius, 20.0)
-	pulse := 0.8 + 0.2 * math.sin(laser_anim_time * 4.0)
-	col := rl.Fade(color, pulse)
-
-	segments :: 32
-	for i in 0..<segments {
-		quad_idx := i % 8
-		if quad_idx == 0 || quad_idx == 7 { continue }
-
-		a1 := f32(i) * 2 * math.PI / f32(segments) + laser_anim_time * 0.3
-		a2 := f32(i + 1) * 2 * math.PI / f32(segments) + laser_anim_time * 0.3
-		p1 := rl.Vector2{center.x + math.cos(a1) * r, center.y + math.sin(a1) * r}
-		p2 := rl.Vector2{center.x + math.cos(a2) * r, center.y + math.sin(a2) * r}
-		rl.DrawLineV(p1, p2, col)
-	}
-
-	rl.DrawCircleLines(c.int(center.x), c.int(center.y), r + 6.0, rl.Fade(SCIFI_STEEL, 0.6))
-
-	tick_len: f32 = 7.0
-	rl.DrawLineV({center.x, center.y - r - 2}, {center.x, center.y - r - 2 - tick_len}, col)
-	rl.DrawLineV({center.x, center.y + r + 2}, {center.x, center.y + r + 2 + tick_len}, col)
-	rl.DrawLineV({center.x - r - 2, center.y}, {center.x - r - 2 - tick_len, center.y}, col)
-	rl.DrawLineV({center.x + r + 2, center.y}, {center.x + r + 2 + tick_len, center.y}, col)
-
-	bracket_rect := rl.Rectangle{center.x - r - 8, center.y - r - 8, 2 * (r + 8), 2 * (r + 8)}
-	draw_corner_brackets(bracket_rect, 0, 8, SCIFI_CYAN)
-
-	rl.DrawCircle(c.int(center.x), c.int(center.y), 2.0, SCIFI_AMBER)
-
-	if len(label) > 0 {
-		tw := f32(rl.MeasureText(label, 13))
-		lbl_x := center.x - tw / 2
-		lbl_y := center.y - r - 24
-		rl.DrawRectangleRec({lbl_x - 6, lbl_y - 2, tw + 12, 17}, SCIFI_PANEL_SOLID)
-		rl.DrawRectangleLinesEx({lbl_x - 6, lbl_y - 2, tw + 12, 17}, 1, SCIFI_STEEL)
-		rl.DrawText(label, c.int(lbl_x), c.int(lbl_y), 13, SCIFI_MINT)
-	}
-}
-
 draw_button :: proc(rect: rl.Rectangle, label: cstring, color: rl.Color = SCIFI_PANEL_SOLID, enabled: bool = true) {
 	hovered := enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), rect)
 	pressed := enabled && hovered && rl.IsMouseButtonDown(.LEFT)
@@ -635,14 +590,14 @@ draw_button :: proc(rect: rl.Rectangle, label: cstring, color: rl.Color = SCIFI_
 		text_col = SCIFI_MINT
 	} else if hovered {
 		fill = rl.Color{10, 36, 46, 255}
-		border = SCIFI_CYAN
-		text_col = SCIFI_CYAN
+		border = SCIFI_GREEN
+		text_col = SCIFI_GREEN
 	}
 
 	draw_chamfered_panel(rect, chamfer, fill, border)
 
 	if hovered && enabled {
-		draw_corner_brackets(rect, 2, 6, SCIFI_CYAN)
+		draw_corner_brackets(rect, 2, 6, SCIFI_GREEN)
 	}
 
 	tw := f32(rl.MeasureText(label, 12))
@@ -661,7 +616,7 @@ draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type, progr
 	if queued {
 		color = rl.Color{0, 65, 85, 255}
 		if kind == .COMBAT { color = rl.Color{15, 45, 90, 255}; accent = SCIFI_BLUE }
-		border = SCIFI_CYAN
+		border = SCIFI_GREEN
 		symbol = "M"
 		if kind == .COMBAT { symbol = "C" }
 	}
@@ -702,7 +657,7 @@ draw_autobuild_radio_buttons :: proc(panel_x: f32) {
 
 		if selected {
 			fill = rl.Color{0, 60, 75, 255}
-			border = SCIFI_CYAN
+			border = SCIFI_GREEN
 			text_col = SCIFI_MINT
 		} else if hovered {
 			fill = rl.Color{10, 36, 46, 255}
@@ -792,9 +747,9 @@ state_color :: proc(state: Unit_State) -> rl.Color {
 	case .TRANSIT: return SCIFI_BLUE
 	case .MINING: return rl.GREEN
 	case .RETURNING: return rl.ORANGE
-	case .DEPOSITING: return SCIFI_CYAN
+	case .DEPOSITING: return SCIFI_GREEN
 	case .GUARDING: return rl.RED
-	case .CONSTRUCTING: return SCIFI_CYAN
+	case .CONSTRUCTING: return SCIFI_GREEN
 	}
 	return rl.WHITE
 }

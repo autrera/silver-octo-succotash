@@ -49,8 +49,8 @@ draw_squad_hud :: proc() {
 		w := f32(rl.MeasureText(label, 13))
 		badge := rl.Rectangle{x, BADGE_Y, w + 2 * BADGE_PAD, BADGE_H}
 		draw_chamfered_panel(badge, 4, SCIFI_PANEL_SOLID, SCIFI_STEEL)
-		draw_corner_brackets(badge, 1, 3, SCIFI_CYAN)
-		rl.DrawText(label, c.int(x + BADGE_PAD), BADGE_Y + 4, 13, SCIFI_CYAN)
+		draw_corner_brackets(badge, 1, 3, SCIFI_GREEN)
+		rl.DrawText(label, c.int(x + BADGE_PAD), BADGE_Y + 4, 13, SCIFI_GREEN)
 		x += badge.width + BADGE_GAP
 	}
 }
@@ -92,13 +92,6 @@ activate_pause_selection :: proc() {
 	case 4:
 		quit_requested = true
 	}
-}
-
-draw_diamond :: proc(cx, cy, r: f32, color: rl.Color) {
-	rl.DrawLineV({cx, cy - r}, {cx + r, cy}, color)
-	rl.DrawLineV({cx + r, cy}, {cx, cy + r}, color)
-	rl.DrawLineV({cx, cy + r}, {cx - r, cy}, color)
-	rl.DrawLineV({cx - r, cy}, {cx, cy - r}, color)
 }
 
 step_simulation :: proc(dt: f32) {
@@ -202,25 +195,26 @@ update_intel :: proc() {
 	}
 }
 
+PAUSE_MENU_HINTS := [?]Menu_Hint{{"P", "RESUME"}, {"UP/DN", "NAVIGATE"}, {"ENTER", "SELECT"}}
+
 pause_menu_rects :: proc() -> (box, continue_rect, save_rect, load_rect, new_game_rect, quit_rect: rl.Rectangle) {
-	w := f32(rl.GetScreenWidth())
-	h := f32(rl.GetScreenHeight())
-	title_w := f32(rl.MeasureText("PAUSED", 36))
-	box_w := max(title_w, f32(280)) + 60
-	box_h: f32 = 352.0
-	box = rl.Rectangle{(w - box_w) / 2, (h - box_h) / 2, box_w, box_h}
-	btn_w := box.width - 2 * DIALOG_PAD
-	continue_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 82, btn_w, DIALOG_BTN_H}
-	save_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 134, btn_w, DIALOG_BTN_H}
-	load_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 186, btn_w, DIALOG_BTN_H}
-	new_game_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 238, btn_w, DIALOG_BTN_H}
-	quit_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 290, btn_w, DIALOG_BTN_H}
+	box = menu_box(PAUSE_MENU_OPTIONS)
+	continue_rect = menu_item_rect(box, 0)
+	save_rect     = menu_item_rect(box, 1)
+	load_rect     = menu_item_rect(box, 2)
+	new_game_rect = menu_item_rect(box, 3)
+	quit_rect     = menu_item_rect(box, 4)
 	return
 }
 
 update_pause_menu :: proc(dt: f32 = 0) {
 	if save_feedback_timer > 0 {
 		save_feedback_timer -= dt
+	}
+	_, continue_rect, save_rect, load_rect, new_game_rect, quit_rect := pause_menu_rects()
+	rects := [?]rl.Rectangle{continue_rect, save_rect, load_rect, new_game_rect, quit_rect}
+	if hovered := menu_hover_index(rects[:]); hovered >= 0 {
+		pause_menu_selection = hovered
 	}
 	if rl.IsKeyPressed(.UP) { advance_pause_selection(-1) }
 	if rl.IsKeyPressed(.DOWN) { advance_pause_selection(1) }
@@ -254,69 +248,30 @@ update_pause_menu :: proc(dt: f32 = 0) {
 		return
 	}
 	if !rl.IsMouseButtonPressed(.LEFT) { return }
-	_, continue_rect, save_rect, load_rect, new_game_rect, quit_rect := pause_menu_rects()
 	mouse := rl.GetMousePosition()
-	if rl.CheckCollisionPointRec(mouse, continue_rect) {
-		game_paused = false
-	} else if rl.CheckCollisionPointRec(mouse, save_rect) {
-		if save_game() {
-			save_feedback_timer = 2.0
+	for r, i in rects {
+		if rl.CheckCollisionPointRec(mouse, r) {
+			pause_menu_selection = i
+			activate_pause_selection()
+			return
 		}
-	} else if rl.CheckCollisionPointRec(mouse, load_rect) {
-		if load_game() {
-			game_paused = false
-		}
-	} else if rl.CheckCollisionPointRec(mouse, new_game_rect) {
-		restart_game()
-		game_paused = false
-	} else if rl.CheckCollisionPointRec(mouse, quit_rect) {
-		quit_requested = true
 	}
 }
 
 draw_pause_menu :: proc() {
-	rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), rl.Color{4, 12, 18, 220})
+	draw_menu_backdrop(PAUSE_MENU_HINTS[:])
 	box, continue_rect, save_rect, load_rect, new_game_rect, quit_rect := pause_menu_rects()
-
-	draw_chamfered_panel(box, 12, SCIFI_PANEL, SCIFI_STEEL)
-	draw_corner_brackets(box, 3, 14, SCIFI_CYAN)
-
-	title: cstring = "MISSION PAUSED"
-	title_w := f32(rl.MeasureText(title, 26))
-	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 26), 26, SCIFI_CYAN)
-
 	if save_feedback_timer > 0 {
-		saved_txt: cstring = "GAME SAVED TO DISK"
-		st_w := f32(rl.MeasureText(saved_txt, 12))
-		rl.DrawText(saved_txt, c.int(box.x + (box.width - st_w) / 2), c.int(box.y + 58), 12, SCIFI_AMBER)
-	}
-
-	has_save := save_game_exists()
-	draw_button(continue_rect, "[C] CONTINUE", SCIFI_PANEL_SOLID)
-	draw_button(save_rect, "[S] SAVE GAME", SCIFI_PANEL_SOLID)
-	if has_save {
-		draw_button(load_rect, "[L] LOAD GAME", SCIFI_PANEL_SOLID)
+		draw_menu_frame(box, "PAUSED", "GAME SAVED TO DISK", subtitle_color = SCIFI_AMBER)
 	} else {
-		draw_button(load_rect, "[L] LOAD GAME (NO SAVE)", rl.Color{10, 20, 28, 255}, false)
+		draw_menu_frame(box, "PAUSED", "MISSION SUSPENDED")
 	}
-	draw_button(new_game_rect, "[N] NEW GAME", SCIFI_PANEL_SOLID)
-	draw_button(quit_rect, "[Q] QUIT", SCIFI_PANEL_SOLID)
-
-	focused_rect: rl.Rectangle
-	switch pause_menu_selection {
-	case 0: focused_rect = continue_rect
-	case 1: focused_rect = save_rect
-	case 2: focused_rect = load_rect
-	case 3: focused_rect = new_game_rect
-	case 4: focused_rect = quit_rect
-	}
-	draw_pause_focus(focused_rect)
-}
-
-draw_pause_focus :: proc(rect: rl.Rectangle) {
-	if rect.width <= 0 { return }
-	draw_corner_brackets(rect, 4, 8, SCIFI_CYAN)
-	rl.DrawRectangleLinesEx({rect.x - 2, rect.y - 2, rect.width + 4, rect.height + 4}, 1, rl.Fade(SCIFI_CYAN, 0.45))
+	has_save := save_game_exists()
+	draw_menu_item(continue_rect, "CONTINUE", "C", pause_menu_selection == 0)
+	draw_menu_item(save_rect, "SAVE GAME", "S", pause_menu_selection == 1)
+	draw_menu_item(load_rect, has_save ? "LOAD GAME" : "LOAD GAME - NO SAVE", "L", pause_menu_selection == 2, has_save)
+	draw_menu_item(new_game_rect, "NEW GAME", "N", pause_menu_selection == 3)
+	draw_menu_item(quit_rect, "QUIT", "Q", pause_menu_selection == 4)
 }
 
 open_controls_overlay :: proc() {
@@ -329,15 +284,16 @@ close_controls_overlay :: proc() {
 	game_paused = false
 }
 
+CONTROLS_HINTS := [?]Menu_Hint{{"ESC", "CLOSE"}, {"ENTER", "RESUME"}}
+
 controls_overlay_rects :: proc() -> (box: rl.Rectangle, close_btn: rl.Rectangle) {
 	w := f32(rl.GetScreenWidth())
 	h := f32(rl.GetScreenHeight())
-	box_w: f32 = 740.0
-	box_h: f32 = 490.0
-	box = rl.Rectangle{(w - box_w) / 2, (h - box_h) / 2, box_w, box_h}
-	close_btn_w: f32 = 200.0
-	close_btn_h: f32 = 36.0
-	close_btn = rl.Rectangle{box.x + (box.width - close_btn_w) / 2, box.y + box.height - 50, close_btn_w, close_btn_h}
+	box_w: f32 = 760.0
+	box_h: f32 = 540.0
+	box = rl.Rectangle{math.round((w - box_w) / 2), math.round((h - MENU_FOOTER_H - box_h) / 2), box_w, box_h}
+	close_btn_w: f32 = 300.0
+	close_btn = rl.Rectangle{box.x + (box.width - close_btn_w) / 2, box.y + box.height - MENU_ITEM_H - 22, close_btn_w, MENU_ITEM_H}
 	return
 }
 
@@ -362,27 +318,15 @@ draw_control_row :: proc(x, y: f32, key, desc: cstring) {
 }
 
 draw_controls_overlay :: proc() {
-	rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), rl.Color{4, 12, 18, 225})
+	draw_menu_backdrop(CONTROLS_HINTS[:])
 	box, close_btn := controls_overlay_rects()
-
-	draw_chamfered_panel(box, 14, SCIFI_PANEL, SCIFI_CYAN)
-	draw_corner_brackets(box, 3, 14, SCIFI_CYAN)
-
-	title: cstring = "TACTICAL CONTROLS DIRECTIVE"
-	title_w := f32(rl.MeasureText(title, 22))
-	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 22), 22, SCIFI_CYAN)
-
-	sub: cstring = "OPERATIONAL KEYBINDS AND COMMAND PROTOCOLS"
-	sub_w := f32(rl.MeasureText(sub, 12))
-	rl.DrawText(sub, c.int(box.x + (box.width - sub_w) / 2), c.int(box.y + 50), 12, SCIFI_MUTED)
-
-	rl.DrawLineV({box.x + 24, box.y + 70}, {box.x + box.width - 24, box.y + 70}, SCIFI_DIM)
+	draw_menu_frame(box, "CONTROLS", "OPERATIONAL KEYBINDS AND COMMAND PROTOCOLS")
 
 	col1_x := box.x + 32
 	col2_x := box.x + 376
 
-	cy1 := box.y + 84
-	rl.DrawText("CAMERA AND NAVIGATION", c.int(col1_x), c.int(cy1), 13, SCIFI_AMBER)
+	cy1 := box.y + 92
+	rl.DrawText("CAMERA AND NAVIGATION", c.int(col1_x), c.int(cy1), 13, SCIFI_GREEN)
 	cy1 += 20
 	draw_control_row(col1_x, cy1, "WASD / ARROWS", "Pan tactical view")
 	cy1 += 18
@@ -391,7 +335,7 @@ draw_controls_overlay :: proc() {
 	draw_control_row(col1_x, cy1, "SPACE", "Select Earth / Center view")
 
 	cy1 += 26
-	rl.DrawText("FLEET SELECTION AND SQUADS", c.int(col1_x), c.int(cy1), 13, SCIFI_AMBER)
+	rl.DrawText("FLEET SELECTION AND SQUADS", c.int(col1_x), c.int(cy1), 13, SCIFI_GREEN)
 	cy1 += 20
 	draw_control_row(col1_x, cy1, "LEFT CLICK", "Select planet, citadel, or drone")
 	cy1 += 18
@@ -404,7 +348,7 @@ draw_controls_overlay :: proc() {
 	draw_control_row(col1_x, cy1, "1-9", "Recall assigned Squad 1-9")
 
 	cy1 += 26
-	rl.DrawText("TACTICAL DIRECTIVES", c.int(col1_x), c.int(cy1), 13, SCIFI_AMBER)
+	rl.DrawText("TACTICAL DIRECTIVES", c.int(col1_x), c.int(cy1), 13, SCIFI_GREEN)
 	cy1 += 20
 	draw_control_row(col1_x, cy1, "RIGHT CLICK", "Dispatch units to planet / HQ")
 	cy1 += 18
@@ -414,8 +358,8 @@ draw_controls_overlay :: proc() {
 	cy1 += 18
 	draw_control_row(col1_x, cy1, "O / CLICK", "Build / Upgrade Orbital Defense")
 
-	cy2 := box.y + 84
-	rl.DrawText("EARTH BASE REQUISITION", c.int(col2_x), c.int(cy2), 13, SCIFI_AMBER)
+	cy2 := box.y + 92
+	rl.DrawText("EARTH BASE REQUISITION", c.int(col2_x), c.int(cy2), 13, SCIFI_GREEN)
 	cy2 += 20
 	draw_control_row(col2_x, cy2, "M / CLICK", rl.TextFormat("Build Mining Drone (%d)", MINER_COST))
 	cy2 += 18
@@ -434,7 +378,7 @@ draw_controls_overlay :: proc() {
 	draw_control_row(col2_x, cy2, "CLICK SLOT", "Cancel specific queue slot")
 
 	cy2 += 26
-	rl.DrawText("SYSTEM AND SIMULATION", c.int(col2_x), c.int(cy2), 13, SCIFI_AMBER)
+	rl.DrawText("SYSTEM AND SIMULATION", c.int(col2_x), c.int(cy2), 13, SCIFI_GREEN)
 	cy2 += 20
 	draw_control_row(col2_x, cy2, "P / F10", "Pause game / Mission menu")
 	cy2 += 18
@@ -445,15 +389,13 @@ draw_controls_overlay :: proc() {
 	draw_control_row(col2_x, cy2, "CTRL + N", "Debug: force enemy wave")
 
 	cy2 += 26
-	rl.DrawText("TACTICAL SENSORS", c.int(col2_x), c.int(cy2), 13, SCIFI_AMBER)
+	rl.DrawText("TACTICAL SENSORS", c.int(col2_x), c.int(cy2), 13, SCIFI_GREEN)
 	cy2 += 20
 	draw_control_row(col2_x, cy2, "FOG OF WAR", "Presence required to scout")
 	cy2 += 18
 	draw_control_row(col2_x, cy2, "GHOST VIEW", "Stale intel retained dark")
 
-	rl.DrawLineV({box.x + 24, box.y + box.height - 64}, {box.x + box.width - 24, box.y + box.height - 64}, SCIFI_DIM)
-
-	draw_button(close_btn, "[C] RESUME GAME", SCIFI_PANEL_SOLID, true)
+	draw_menu_item(close_btn, "RESUME GAME", "C", true)
 }
 
 start_menu_options_count :: proc(has_save: bool) -> int {
@@ -494,22 +436,18 @@ activate_start_menu_selection :: proc() {
 	}
 }
 
-start_menu_rects :: proc(has_save: bool) -> (box, continue_rect, new_game_rect, quit_rect: rl.Rectangle) {
-	w := f32(rl.GetScreenWidth())
-	h := f32(rl.GetScreenHeight())
-	box_w: f32 = 380.0
-	box_h: f32 = has_save ? 270.0 : 218.0
-	box = rl.Rectangle{(w - box_w) / 2, (h - box_h) / 2, box_w, box_h}
+START_MENU_HINTS := [?]Menu_Hint{{"UP/DN", "NAVIGATE"}, {"ENTER", "SELECT"}, {"Q", "QUIT"}}
 
-	btn_w := box.width - 2 * DIALOG_PAD
+start_menu_rects :: proc(has_save: bool) -> (box, continue_rect, new_game_rect, quit_rect: rl.Rectangle) {
+	box = menu_box(start_menu_options_count(has_save), 0, 620)
 	if has_save {
-		continue_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 78, btn_w, DIALOG_BTN_H}
-		new_game_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 130, btn_w, DIALOG_BTN_H}
-		quit_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 182, btn_w, DIALOG_BTN_H}
+		continue_rect = menu_item_rect(box, 0)
+		new_game_rect = menu_item_rect(box, 1)
+		quit_rect     = menu_item_rect(box, 2)
 	} else {
 		continue_rect = rl.Rectangle{}
-		new_game_rect = rl.Rectangle{box.x + DIALOG_PAD, box.y + 78, btn_w, DIALOG_BTN_H}
-		quit_rect     = rl.Rectangle{box.x + DIALOG_PAD, box.y + 130, btn_w, DIALOG_BTN_H}
+		new_game_rect = menu_item_rect(box, 0)
+		quit_rect     = menu_item_rect(box, 1)
 	}
 	return
 }
@@ -521,6 +459,13 @@ update_start_menu :: proc(dt: f32) {
 	count := start_menu_options_count(has_save)
 	if start_menu_selection >= count {
 		start_menu_selection = 0
+	}
+
+	_, continue_rect, new_game_rect, quit_rect := start_menu_rects(has_save)
+	all_rects := [?]rl.Rectangle{continue_rect, new_game_rect, quit_rect}
+	rects := has_save ? all_rects[:] : all_rects[1:]
+	if hovered := menu_hover_index(rects); hovered >= 0 {
+		start_menu_selection = hovered
 	}
 
 	if rl.IsKeyPressed(.UP) { advance_start_menu_selection(-1) }
@@ -551,60 +496,28 @@ update_start_menu :: proc(dt: f32) {
 
 	if !rl.IsMouseButtonPressed(.LEFT) { return }
 	mouse := rl.GetMousePosition()
-	_, continue_rect, new_game_rect, quit_rect := start_menu_rects(has_save)
-	if has_save && rl.CheckCollisionPointRec(mouse, continue_rect) {
-		if load_game() {
-			in_start_menu = false
-			game_paused = false
+	for r, i in rects {
+		if rl.CheckCollisionPointRec(mouse, r) {
+			start_menu_selection = i
+			activate_start_menu_selection()
+			return
 		}
-	} else if rl.CheckCollisionPointRec(mouse, new_game_rect) {
-		restart_game()
-		in_start_menu = false
-		game_paused = false
-	} else if rl.CheckCollisionPointRec(mouse, quit_rect) {
-		quit_requested = true
 	}
 }
 
 draw_start_menu :: proc() {
-	rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), rl.Color{4, 12, 18, 220})
+	draw_menu_backdrop(START_MENU_HINTS[:])
 	has_save := save_game_exists()
 	box, continue_rect, new_game_rect, quit_rect := start_menu_rects(has_save)
-
-	draw_chamfered_panel(box, 14, SCIFI_PANEL, SCIFI_STEEL)
-	draw_corner_brackets(box, 3, 14, SCIFI_CYAN)
-
-	title: cstring = "STARFALL COMMAND"
-	title_w := f32(rl.MeasureText(title, 26))
-	rl.DrawText(title, c.int(box.x + (box.width - title_w) / 2), c.int(box.y + 26), 26, SCIFI_CYAN)
-
-	sub: cstring = "STRATEGIC SPACE DEFENSE"
-	sub_w := f32(rl.MeasureText(sub, 10))
-	rl.DrawText(sub, c.int(box.x + (box.width - sub_w) / 2), c.int(box.y + 56), 10, SCIFI_MUTED)
-
-	focused_rect: rl.Rectangle
+	draw_menu_frame(box, "STARFALL COMMAND", "STRATEGIC SPACE DEFENSE")
 	if has_save {
-		draw_button(continue_rect, "[C] CONTINUE", SCIFI_PANEL_SOLID)
-		draw_button(new_game_rect, "[N] NEW GAME", SCIFI_PANEL_SOLID)
-		draw_button(quit_rect, "[Q] QUIT", SCIFI_PANEL_SOLID)
-		switch start_menu_selection {
-		case 0: focused_rect = continue_rect
-		case 1: focused_rect = new_game_rect
-		case 2: focused_rect = quit_rect
-		}
+		draw_menu_item(continue_rect, "CONTINUE", "C", start_menu_selection == 0)
+		draw_menu_item(new_game_rect, "NEW GAME", "N", start_menu_selection == 1)
+		draw_menu_item(quit_rect, "QUIT", "Q", start_menu_selection == 2)
 	} else {
-		draw_button(new_game_rect, "[N] NEW GAME", SCIFI_PANEL_SOLID)
-		draw_button(quit_rect, "[Q] QUIT", SCIFI_PANEL_SOLID)
-		switch start_menu_selection {
-		case 0: focused_rect = new_game_rect
-		case 1: focused_rect = quit_rect
-		}
+		draw_menu_item(new_game_rect, "NEW GAME", "N", start_menu_selection == 0)
+		draw_menu_item(quit_rect, "QUIT", "Q", start_menu_selection == 1)
 	}
-	draw_pause_focus(focused_rect)
-
-	footer: cstring = "UP/DOWN: SELECT   ENTER: CONFIRM"
-	footer_w := f32(rl.MeasureText(footer, 10))
-	rl.DrawText(footer, c.int(box.x + (box.width - footer_w) / 2), c.int(box.y + box.height - 22), 10, SCIFI_MUTED)
 }
 
 enemy_hq_destroyed :: proc() -> bool { return enemy_base_hp[ENEMY_HOME] <= 0 }
@@ -623,58 +536,60 @@ restart_game :: proc() {
 	camera.target = camera_target
 }
 
-victory_button_rects :: proc() -> (play, quit: rl.Rectangle) {
-	cy := f32(rl.GetScreenHeight() / 2 + 66)
-	play = rl.Rectangle{f32(rl.GetScreenWidth() / 2 - 144), cy, 140, 44}
-	quit = rl.Rectangle{f32(rl.GetScreenWidth() / 2 + 4), cy, 140, 44}
+END_MENU_HINTS := [?]Menu_Hint{{"UP/DN", "NAVIGATE"}, {"ENTER", "SELECT"}, {"Q", "QUIT"}}
+END_MENU_BODY_H :: 64
+end_menu_selection := 0
+
+end_menu_rects :: proc() -> (box, play, quit: rl.Rectangle) {
+	box = menu_box(2, END_MENU_BODY_H, 600)
+	play = menu_item_rect(box, 0, END_MENU_BODY_H)
+	quit = menu_item_rect(box, 1, END_MENU_BODY_H)
 	return
 }
 
-victory_quit_key_pressed :: proc() -> bool {
-	return rl.IsKeyPressed(.Q) || rl.IsKeyPressed(.ESCAPE)
-}
-
-update_victory_overlay :: proc() {
-	if rl.IsKeyPressed(.R) || rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) { restart_game(); return }
-	if victory_quit_key_pressed() { quit_requested = true; return }
+update_end_menu :: proc() {
+	_, play_rect, quit_rect := end_menu_rects()
+	rects := [?]rl.Rectangle{play_rect, quit_rect}
+	if hovered := menu_hover_index(rects[:]); hovered >= 0 {
+		end_menu_selection = hovered
+	}
+	if rl.IsKeyPressed(.UP) || rl.IsKeyPressed(.DOWN) { end_menu_selection = 1 - end_menu_selection }
+	activate := -1
+	if rl.IsKeyPressed(.R) { activate = 0 }
+	if rl.IsKeyPressed(.Q) || rl.IsKeyPressed(.ESCAPE) { activate = 1 }
+	if rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) { activate = end_menu_selection }
 	if rl.IsMouseButtonPressed(.LEFT) {
-		play_rect, quit_rect := victory_button_rects()
 		mouse := rl.GetMousePosition()
-		if rl.CheckCollisionPointRec(mouse, play_rect) {
-			restart_game()
-		} else if rl.CheckCollisionPointRec(mouse, quit_rect) {
-			quit_requested = true
+		for r, i in rects {
+			if rl.CheckCollisionPointRec(mouse, r) { activate = i }
 		}
+	}
+	switch activate {
+	case 0:
+		end_menu_selection = 0
+		restart_game()
+	case 1:
+		quit_requested = true
 	}
 }
 
+draw_end_menu :: proc(title, subtitle, line1, line2, play_label: cstring, accent: rl.Color) {
+	draw_menu_backdrop(END_MENU_HINTS[:], accent)
+	box, play_rect, quit_rect := end_menu_rects()
+	draw_menu_frame(box, title, subtitle, accent, accent)
+	body_y := box.y + MENU_TITLE_H + 14
+	draw_display_text(line1, {box.x + MENU_PAD_X, body_y}, 13, SCIFI_MINT)
+	draw_display_text(line2, {box.x + MENU_PAD_X, body_y + 26}, 11, SCIFI_MUTED)
+	draw_menu_item(play_rect, play_label, "R", end_menu_selection == 0, true, accent)
+	draw_menu_item(quit_rect, "QUIT", "Q", end_menu_selection == 1, true, accent)
+}
+
+update_victory_overlay :: proc() {
+	update_end_menu()
+}
+
 draw_victory_overlay :: proc() {
-	rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), rl.Color{4, 12, 18, 225})
-	w := f32(rl.GetScreenWidth())
-	h := f32(rl.GetScreenHeight())
-	box := rl.Rectangle{w/2 - 280, h/2 - 130, 560, 270}
-	draw_chamfered_panel(box, 16, SCIFI_PANEL, SCIFI_CYAN)
-	draw_corner_brackets(box, 4, 16, SCIFI_CYAN)
-
-	title: cstring = "SYSTEM LIBERATED"
-	title_w := f32(rl.MeasureText(title, 32))
-	rl.DrawText(title, c.int(w/2 - title_w/2), c.int(box.y + 36), 32, SCIFI_CYAN)
-
-	sub: cstring = "ALL 8 PLANETS LIBERATED   ENEMY HQ DESTROYED"
-	sub_w := f32(rl.MeasureText(sub, 14))
-	rl.DrawText(sub, c.int(w/2 - sub_w/2), c.int(box.y + 78), 14, SCIFI_MINT)
-
-	stats: cstring = "CAMPAIGN OBJECTIVE ACHIEVED   SOLAR SECTOR SECURED"
-	stats_w := f32(rl.MeasureText(stats, 11))
-	rl.DrawText(stats, c.int(w/2 - stats_w/2), c.int(box.y + 104), 11, SCIFI_MUTED)
-
-	hint: cstring = "R / ENTER: PLAY AGAIN   Q / ESC: QUIT"
-	hint_w := f32(rl.MeasureText(hint, 10))
-	rl.DrawText(hint, c.int(w/2 - hint_w/2), c.int(box.y + 140), 10, SCIFI_MUTED)
-
-	play_rect, quit_rect := victory_button_rects()
-	draw_button(play_rect, "[R] PLAY AGAIN", SCIFI_PANEL_SOLID)
-	draw_button(quit_rect, "[Q] QUIT", SCIFI_PANEL_SOLID)
+	draw_end_menu("SYSTEM LIBERATED", "VICTORY", "ALL 8 PLANETS LIBERATED - ENEMY HQ DESTROYED", "CAMPAIGN OBJECTIVE ACHIEVED - SOLAR SECTOR SECURED", "PLAY AGAIN", SCIFI_GREEN)
 }
 
 defeat_condition :: proc() -> bool {
@@ -688,45 +603,76 @@ defeat_condition :: proc() -> bool {
 }
 
 update_game_over_overlay :: proc() {
-	if rl.IsKeyPressed(.R) || rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) { restart_game(); return }
-	if rl.IsKeyPressed(.Q) || rl.IsKeyPressed(.ESCAPE) { quit_requested = true; return }
-	if rl.IsMouseButtonPressed(.LEFT) {
-		play_rect, quit_rect := victory_button_rects()
-		mouse := rl.GetMousePosition()
-		if rl.CheckCollisionPointRec(mouse, play_rect) {
-			restart_game()
-		} else if rl.CheckCollisionPointRec(mouse, quit_rect) {
-			quit_requested = true
-		}
-	}
+	update_end_menu()
 }
 
 draw_game_over_overlay :: proc() {
-	rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), rl.Color{4, 12, 18, 225})
-	w := f32(rl.GetScreenWidth())
-	h := f32(rl.GetScreenHeight())
-	box := rl.Rectangle{w/2 - 280, h/2 - 130, 560, 270}
-	draw_chamfered_panel(box, 16, SCIFI_PANEL, SCIFI_RED)
-	draw_corner_brackets(box, 4, 16, SCIFI_RED)
-
-	title: cstring = "CRITICAL DEFEAT"
-	title_w := f32(rl.MeasureText(title, 32))
-	rl.DrawText(title, c.int(w/2 - title_w/2), c.int(box.y + 36), 32, SCIFI_RED)
-
-	sub: cstring = "ALL COMMAND BASES AND DRONES DESTROYED"
-	sub_w := f32(rl.MeasureText(sub, 14))
-	rl.DrawText(sub, c.int(w/2 - sub_w/2), c.int(box.y + 78), 14, SCIFI_TEXT)
-
-	stats: cstring = "SECTOR DEFENSE COLLAPSED   HOSTILE FORCES PREVAIL"
-	stats_w := f32(rl.MeasureText(stats, 11))
-	rl.DrawText(stats, c.int(w/2 - stats_w/2), c.int(box.y + 104), 11, SCIFI_MUTED)
-
-	hint: cstring = "R / ENTER: RESTART   Q / ESC: QUIT"
-	hint_w := f32(rl.MeasureText(hint, 10))
-	rl.DrawText(hint, c.int(w/2 - hint_w/2), c.int(box.y + 140), 10, SCIFI_MUTED)
-
-	play_rect, quit_rect := victory_button_rects()
-	draw_button(play_rect, "[R] RESTART", SCIFI_PANEL_SOLID)
-	draw_button(quit_rect, "[Q] QUIT", SCIFI_PANEL_SOLID)
+	draw_end_menu("CRITICAL DEFEAT", "MISSION FAILED", "ALL COMMAND BASES AND DRONES DESTROYED", "SECTOR DEFENSE COLLAPSED - HOSTILE FORCES PREVAIL", "RESTART", SCIFI_RED)
 }
 
+draw_resource_hud :: proc() {
+	x0 := f32(HUD_PAD)
+	y0 := f32(HUD_PAD)
+	w := f32(RESOURCE_HUD_W)
+	h := f32(RESOURCE_HUD_H)
+	rail := rl.Color{30, 168, 104, 255}
+	rail_dim := rl.Color{18, 96, 60, 255}
+
+	rl.DrawRectangleGradientH(i32(x0 - HUD_PAD), 0, i32(w * 0.75 + HUD_PAD), i32(y0 + h + 10), rl.Color{0, 6, 3, 190}, rl.Color{0, 6, 3, 130})
+	rl.DrawRectangleGradientH(i32(x0 + w * 0.75), 0, i32(w * 0.35), i32(y0 + h + 10), rl.Color{0, 6, 3, 130}, rl.Color{0, 6, 3, 0})
+	rl.DrawRectangleGradientV(i32(x0 - HUD_PAD), i32(y0 + h + 10), i32(w * 1.1 + HUD_PAD), 26, rl.Color{0, 6, 3, 110}, rl.Color{0, 6, 3, 0})
+	rl.DrawRectangleGradientH(i32(x0), i32(y0), 36, i32(h), rl.Color{40, 200, 120, 46}, rl.Color{40, 200, 120, 0})
+	rl.DrawRectangleGradientV(i32(x0), i32(y0), i32(w * 0.8), 18, rl.Color{40, 200, 120, 22}, rl.Color{40, 200, 120, 0})
+
+	num_size: f32 = 40
+	cell := measure_display_text("0", num_size) + display_spacing(num_size)
+	value := rl.TextFormat("%d", minerals)
+	digits := len(string(value))
+	num_x := x0 + 16
+	num_right := num_x + f32(max(digits, 3)) * cell
+	side_x := num_right + 14
+
+	top_y := y0 + 16
+	tag: cstring = "RESOURCES"
+	tag_size: f32 = 10
+	tag_w := measure_display_text(tag, tag_size)
+	tag_x := x0 + w - 74 - tag_w
+	rl.DrawRectangleRec({x0 + 12, top_y - 1.5, 44, 3}, rail)
+	rl.DrawLineEx({x0 + 12, top_y}, {tag_x - 10, top_y}, 1.5, rail)
+	rl.DrawCircleV({tag_x - 6, top_y}, 1.6, rail)
+	draw_display_text(tag, {tag_x, top_y - 9}, tag_size, SCIFI_LABEL)
+
+	num_y := y0 + 24
+	for i in 0..<digits {
+		glyph := [2]u8{(transmute([]u8)string(value))[i], 0}
+		gw := measure_display_text(cstring(&glyph[0]), num_size)
+		gx := num_x + f32(i) * cell + (cell - display_spacing(num_size) - gw) / 2
+		draw_display_text_glow(cstring(&glyph[0]), {gx, num_y}, num_size, SCIFI_MINT, rl.Color{20, 112, 96, 255}, rl.Color{60, 230, 160, 255})
+	}
+	for sy := num_y + 6; sy < num_y + num_size + 2; sy += 3 {
+		rl.DrawLineEx({num_x - 4, sy}, {num_right + 4, sy}, 1, rl.Color{0, 20, 10, 46})
+	}
+
+	draw_display_text("MINERALS", {side_x, num_y + 7}, 15, SCIFI_LABEL)
+	draw_display_text(rl.TextFormat("+%.1f / S", global_mps()), {side_x, num_y + 29}, 11, SCIFI_MINT)
+
+	bot_y := y0 + 76
+	slash_x := x0 + w - 62
+	rl.DrawLineEx({x0 + 12, bot_y}, {slash_x, bot_y}, 1.5, rail)
+	rl.DrawLineEx({slash_x, bot_y}, {slash_x + 6, bot_y - 6}, 1.5, rail)
+	rl.DrawLineEx({slash_x + 6, bot_y - 6}, {slash_x + 18, bot_y - 6}, 1.5, rail)
+	rl.DrawLineEx({slash_x + 18, bot_y - 6}, {slash_x + 38, top_y + 4}, 3, rail)
+	rl.DrawLineEx({slash_x + 38, top_y + 4}, {slash_x + 46, top_y + 4}, 3, rail)
+	rl.DrawLineEx({slash_x + 26, bot_y - 6}, {slash_x + 46, top_y + 4}, 1.5, rail_dim)
+	rl.DrawLineEx({slash_x + 46, top_y + 4}, {slash_x + 52, top_y + 4}, 1.5, rail_dim)
+
+	sub_y := bot_y + 9
+	rl.DrawRectangleRec({x0 + 12, sub_y - 1.5, 44, 3}, rail)
+	speed_x := x0 + 66
+	draw_display_text("DRONE SPEED", {speed_x, sub_y - 6}, 9, SCIFI_LABEL)
+	lvl := rl.TextFormat("LVL %d/%d", drone_speed_level, DRONE_SPEED_UPGRADE_MAX)
+	lvl_x := speed_x + measure_display_text("DRONE SPEED", 9) + 10
+	draw_display_text(lvl, {lvl_x, sub_y - 6}, 9, SCIFI_MINT)
+	meter_x := lvl_x + measure_display_text(lvl, 9) + 10
+	draw_segmented_meter({meter_x, sub_y - 4, 60, 8}, f32(drone_speed_level) / f32(DRONE_SPEED_UPGRADE_MAX), DRONE_SPEED_UPGRADE_MAX, SCIFI_FILL, SCIFI_DIM)
+}

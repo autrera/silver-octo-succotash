@@ -1,6 +1,5 @@
 package main
 
-import "core:c"
 import "core:math"
 import rl "vendor:raylib"
 import "vendor:raylib/rlgl"

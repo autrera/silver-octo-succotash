@@ -1,7 +1,5 @@
 package main
 
-import "core:c"
-import "core:time"
 import rl "vendor:raylib"
 
 SCREEN_PANEL_WIDTH :: 330
@@ -44,7 +42,9 @@ DIALOG_BTN_H       :: 44
 HUD_PAD            :: 16
 BADGE_PAD          :: 8
 BADGE_GAP          :: 8
-BADGE_Y            :: 72
+RESOURCE_HUD_W     :: 400
+RESOURCE_HUD_H     :: 100
+BADGE_Y            :: HUD_PAD + RESOURCE_HUD_H + 4
 BADGE_H            :: 20
 BOTTOM_DOCK_H      :: 36
 ROSTER_BASE_Y      :: 150
@@ -58,19 +58,23 @@ DOUBLE_CLICK_TIME  :: 0.35
 
 CAMERA_START_Y     :: 200.0 - 185.0 * 0.60
 
-SCIFI_CYAN        :: rl.Color{0, 240, 216, 255}
-SCIFI_MINT        :: rl.Color{140, 255, 235, 255}
+SCIFI_GREEN       :: rl.Color{71, 252, 175, 255}
+SCIFI_MINT        :: rl.Color{185, 239, 215, 255}
+SCIFI_CYAN        :: rl.Color{40, 215, 255, 255}
 SCIFI_BLUE        :: rl.Color{0, 200, 245, 255}
 SCIFI_AMBER       :: rl.Color{255, 128, 36, 255}
 SCIFI_AMBER_DIM   :: rl.Color{140, 65, 18, 255}
 SCIFI_RED         :: rl.Color{255, 60, 75, 255}
 SCIFI_RED_DIM     :: rl.Color{120, 30, 40, 255}
-SCIFI_STEEL       :: rl.Color{18, 110, 122, 255}
-SCIFI_DIM         :: rl.Color{6, 58, 68, 255}
-SCIFI_PANEL       :: rl.Color{6, 16, 22, 240}
-SCIFI_PANEL_SOLID :: rl.Color{8, 22, 30, 255}
-SCIFI_TEXT        :: rl.Color{215, 245, 245, 255}
-SCIFI_MUTED       :: rl.Color{85, 145, 155, 255}
+SCIFI_STEEL       :: rl.Color{24, 128, 84, 255}
+SCIFI_DIM         :: rl.Color{10, 62, 40, 255}
+SCIFI_PANEL       :: rl.Color{2, 12, 8, 235}
+SCIFI_PANEL_SOLID :: rl.Color{4, 20, 13, 255}
+SCIFI_TEXT        :: rl.Color{210, 245, 228, 255}
+SCIFI_MUTED       :: rl.Color{92, 150, 122, 255}
+SCIFI_LABEL       :: rl.Color{60, 215, 140, 255}
+SCIFI_FILL        :: rl.Color{52, 192, 130, 255}
+SCIFI_INK         :: rl.Color{2, 18, 10, 255}
 
 MAX_BASES   :: 5
 MAX_UNITS   :: 2560
