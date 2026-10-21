@@ -12,7 +12,6 @@ draw_world :: proc() {
 	draw_planet_halos()
 	draw_combat_nebulae()
 	rl.BeginMode3D(camera)
-	draw_orbit_rings()
 	for p in 0..<PLANET_COUNT {
 		planet := planets[p]
 		draw_planet_body(p)

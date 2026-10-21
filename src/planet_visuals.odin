@@ -6,7 +6,6 @@ import "core:math/noise"
 import rl "vendor:raylib"
 import "vendor:raylib/rlgl"
 
-SYSTEM_CENTER     :: rl.Vector3{10, 0, 2}
 PLANET_LIGHT_DIR  :: rl.Vector3{-0.62, 0.50, 0.60}
 PLANET_LABEL_SIZE :: 14
 PLANET_LABEL_GAP  :: 6
@@ -475,16 +474,6 @@ draw_planet_halos :: proc() {
 			strength *= 0.45
 		}
 		rl.DrawTexturePro(planet_halo_texture, src, {center.x - r, center.y - r, r * 2, r * 2}, {}, 0, rl.Fade(tint, strength))
-	}
-}
-
-draw_orbit_rings :: proc() {
-	for p in 0..<PLANET_COUNT {
-		pos := planets[p].position
-		center := rl.Vector3{SYSTEM_CENTER.x, pos.y, SYSTEM_CENTER.z}
-		dist := rl.Vector2Length({pos.x - center.x, pos.z - center.z})
-		if dist < 1 { continue }
-		rl.DrawCircle3D(center, dist, {1, 0, 0}, 90, rl.Color{50, 210, 160, 34})
 	}
 }
 
