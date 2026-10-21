@@ -64,10 +64,10 @@ draw_world :: proc() {
 				if p >= 0 && p < SECTOR_COUNT && sector_vis[p] {
 					s := &world_sector_spots[p]
 					if u.enemy {
-						if s.ec < 256 { s.enemy_combat[s.ec] = u.position }
+						if s.ec < MAX_UNITS { s.enemy_combat[s.ec] = u.position }
 						s.ec += 1
 					} else {
-						if s.pc < 256 { s.player_combat[s.pc] = u.position }
+						if s.pc < MAX_UNITS { s.player_combat[s.pc] = u.position }
 						s.pc += 1
 					}
 				}
@@ -82,10 +82,10 @@ draw_world :: proc() {
 			if p >= 0 && p < SECTOR_COUNT && sector_vis[p] {
 				s := &world_sector_spots[p]
 				if u.enemy {
-					if s.emc < 256 { s.enemy_miners[s.emc] = u.position }
+					if s.emc < MAX_UNITS { s.enemy_miners[s.emc] = u.position }
 					s.emc += 1
 				} else {
-					if s.pmc < 256 { s.player_miners[s.pmc] = u.position }
+					if s.pmc < MAX_UNITS { s.player_miners[s.pmc] = u.position }
 					s.pmc += 1
 				}
 			} else if u.target_planet >= 0 && u.target_planet < SECTOR_COUNT {
@@ -103,10 +103,10 @@ draw_world :: proc() {
 		if !sector_vis[p] { continue }
 		s := &world_sector_spots[p]
 		sp := sector_pos(p)
-		for d in 0..<rep_count(s.pc) { draw_fighter_drone(s.player_combat[d], false, drone_heading(s.player_combat[d], sp)) }
-		for d in 0..<rep_count(s.ec) { draw_fighter_drone(s.enemy_combat[d], true, drone_heading(s.enemy_combat[d], sp)) }
+		for d in 0..<s.pc { draw_fighter_drone(s.player_combat[d], false, drone_heading(s.player_combat[d], sp)) }
+		for d in 0..<s.ec { draw_fighter_drone(s.enemy_combat[d], true, drone_heading(s.enemy_combat[d], sp)) }
 		draw_combat_lasers(p, s.player_combat[:], s.enemy_combat[:], s.pc, s.ec, s.player_miners[:], s.enemy_miners[:], s.pmc, s.emc)
-		for d in 0..<rep_count(s.emc) { draw_miner_drone(s.enemy_miners[d], true, drone_heading(s.enemy_miners[d], sp)) }
+		for d in 0..<s.emc { draw_miner_drone(s.enemy_miners[d], true, drone_heading(s.enemy_miners[d], sp)) }
 	}
 
 	vis_combat: [SECTOR_COUNT][2]int
@@ -119,9 +119,9 @@ draw_world :: proc() {
 	for p in 0..<SECTOR_COUNT {
 		for side in 0..<2 {
 			if side == 1 && !sector_vis[p] { continue }
-			vis_combat[p][side] = rep_count(transit_counts[p][side])
-			vis_miner_tr[p][side] = rep_count(miner_transit_counts[p][side])
-			vis_miner_ret[p][side] = rep_count(miner_return_counts[p][side])
+			vis_combat[p][side] = transit_counts[p][side]
+			vis_miner_tr[p][side] = miner_transit_counts[p][side]
+			vis_miner_ret[p][side] = miner_return_counts[p][side]
 		}
 	}
 
@@ -993,8 +993,8 @@ draw_fighter_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector
 }
 
 draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, ec: int, player_miner_spots, enemy_miner_spots: []rl.Vector3, pmc, emc: int) {
-	num_p := min(pc, rep_count(pc))
-	num_e := min(ec, rep_count(ec))
+	num_p := pc
+	num_e := ec
 	if num_p > 0 && num_e > 0 {
 		for i in 0..<num_p { draw_laser_bolt(player_spots[i], enemy_spots[i % num_e], f32(i) * 2.3, SCIFI_GREEN) }
 		for j in 0..<num_e { draw_laser_bolt(enemy_spots[j], player_spots[j % num_p], f32(j) * 2.3 + 1.1, rl.RED) }
@@ -1005,7 +1005,7 @@ draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, 
 				draw_laser_bolt(enemy_spots[j], def_pos, f32(j) * 2.3, rl.RED)
 			}
 		} else {
-			num_tc := min(pmc, rep_count(pmc))
+			num_tc := pmc
 			for j in 0..<num_e {
 				if num_tc == 0 { break }
 				draw_laser_bolt(enemy_spots[j], player_miner_spots[j % num_tc], f32(j) * 2.3, rl.RED)
@@ -1013,7 +1013,7 @@ draw_combat_lasers :: proc(p: int, player_spots, enemy_spots: []rl.Vector3, pc, 
 		}
 	} else if num_p > 0 {
 		if emc > 0 {
-			num_tc := min(emc, rep_count(emc))
+			num_tc := emc
 			for i in 0..<num_p { draw_laser_bolt(player_spots[i], enemy_miner_spots[i % num_tc], f32(i) * 2.3, SCIFI_GREEN) }
 		} else if p == ENEMY_HOME && orbital_defense_level[p] > 0 {
 			def_pos := orbital_defense_pos(p)
@@ -1036,8 +1036,6 @@ draw_laser_bolt :: proc(from, to: rl.Vector3, offset: f32, color: rl.Color) {
 		rl.DrawLine3D(from + dir * tail, from + dir * head, color)
 	}
 }
-
-rep_count :: proc(count: int) -> int { return (count + 9) / 10 }
 
 transit_fighters_at :: proc(target_planet: int, enemy: bool) -> int {
 	count := 0

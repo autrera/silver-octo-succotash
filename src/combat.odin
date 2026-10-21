@@ -1053,7 +1053,7 @@ spawn_n_enemies_to :: proc(target: int, count: int) {
 	if rl.Vector3Length(right) < 0.01 { right = rl.Vector3{0, 0, 1} }
 	right = rl.Vector3Normalize(right)
 	up := rl.Vector3Normalize(rl.Vector3CrossProduct(right, dir))
-	groups := rep_count(spawn_count)
+	groups := (spawn_count + 9) / 10
 	origin := ENEMY_HQ_POSITION + dir * (ENEMY_HQ_RADIUS + 1.5)
 
 	for i in 0..<spawn_count {

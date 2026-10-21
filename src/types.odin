@@ -277,10 +277,10 @@ Orbital_Defense_Blast :: struct {
 }
 
 World_Sector_Spots :: struct {
-	player_combat: [256]rl.Vector3,
-	enemy_combat:  [256]rl.Vector3,
-	player_miners: [256]rl.Vector3,
-	enemy_miners:  [256]rl.Vector3,
+	player_combat: [MAX_UNITS]rl.Vector3,
+	enemy_combat:  [MAX_UNITS]rl.Vector3,
+	player_miners: [MAX_UNITS]rl.Vector3,
+	enemy_miners:  [MAX_UNITS]rl.Vector3,
 	pc:            int,
 	ec:            int,
 	pmc:           int,
