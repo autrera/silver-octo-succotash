@@ -181,14 +181,30 @@ draw_winged_panel_right :: proc(rect: rl.Rectangle, chamfer: f32, wing_cut: f32,
 	rl.DrawLineV({x + wing - 4, y + h + 3}, {x - 3, y + h - wing - 4}, rl.Fade(bracket_col, 0.7))
 }
 
-draw_orbital_upgrade_spinner :: proc(center: rl.Vector2, size: f32, color: rl.Color) {
-	r := size * 0.75
-	rl.DrawCircleLines(c.int(center.x), c.int(center.y), r, rl.Fade(color, 0.35))
-	ang := laser_anim_time * 5.0
-	head := rl.Vector2{center.x + math.cos(ang) * r, center.y + math.sin(ang) * r}
-	tail := rl.Vector2{center.x - math.cos(ang) * r * 0.45, center.y - math.sin(ang) * r * 0.45}
-	rl.DrawLineEx(tail, head, max(1.5, size * 0.18), color)
-	rl.DrawCircleV(center, max(1.5, size * 0.14), color)
+draw_orbital_upgrade_spinner :: proc(center: rl.Vector2, size: f32, progress: f32, color: rl.Color) {
+	r_out := size
+	r_in := size - max(2.5, size * 0.22)
+	rl.DrawRing(center, r_in, r_out, 0, 360, 48, rl.Fade(color, 0.16))
+
+	start: f32 = -90.0
+	sweep := clamp(progress, 0.0, 1.0) * 360.0
+	if sweep > 0.5 {
+		rl.DrawRing(center, r_in, r_out, start, start + sweep, 48, rl.Fade(color, 0.85))
+	}
+
+	head := math.mod(laser_anim_time * 280.0, 360.0)
+	TRAIL_STEPS :: 12
+	for i in 0..<TRAIL_STEPS {
+		t := f32(i) / f32(TRAIL_STEPS)
+		a0 := head - (t + 1.0 / f32(TRAIL_STEPS)) * 110.0
+		a1 := head - t * 110.0
+		rl.DrawRing(center, r_in - 3.5, r_in - 1.0, a0, a1, 6, rl.Fade(color, (1.0 - t) * 0.9))
+	}
+
+	rad := head * (math.PI / 180.0)
+	tip := rl.Vector2{center.x + math.cos(rad) * (r_in - 1.0), center.y + math.sin(rad) * (r_in - 1.0)}
+	rl.DrawCircleV(tip, max(1.5, size * 0.12), rl.WHITE)
+	rl.DrawCircleV(center, max(1.5, size * 0.1), rl.Fade(color, 0.8))
 }
 
 draw_overlay_mini_button :: proc(src_rect: rl.Rectangle, enabled: bool, alpha_factor: f32) {
@@ -238,6 +254,10 @@ conquered_planet_overlay_ammo_btn_rect :: proc(badge_rect: rl.Rectangle) -> rl.R
 	return rl.Rectangle{btn_x, btn_y, btn_w, btn_h}
 }
 
+overlay_ammo_button_visible :: proc(p: int) -> bool {
+	return orbital_defense_level[p] > 0 && !orbital_defense_building[p]
+}
+
 planet_orbital_ammo_build_progress :: proc(p: int) -> f32 {
 	if p < 0 || p >= SECTOR_COUNT || !orbital_defense_ammo_building[p] {
 		return -1.0
@@ -252,7 +272,7 @@ conquered_planet_overlay_rect :: proc(p: int, center_screen: rl.Vector2, screen_
 	combat := planet_combat_drone_count(p)
 
 	def_str := rl.TextFormat("%d/%d", orbital_defense_ammo[p], ORBITAL_DEFENSE_AMMO_MAX)
-	if def_lvl <= 0 && !orbital_defense_building[p] {
+	if orbital_defense_building[p] || def_lvl <= 0 {
 		def_str = rl.TextFormat("--")
 	}
 	miner_str := rl.TextFormat("%d/%d", miners, cap)
@@ -310,7 +330,7 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 	combat := planet_combat_drone_count(p)
 
 	def_str := rl.TextFormat("%d/%d", orbital_defense_ammo[p], ORBITAL_DEFENSE_AMMO_MAX)
-	if def_lvl <= 0 && !orbital_defense_building[p] {
+	if orbital_defense_building[p] || def_lvl <= 0 {
 		def_str = rl.TextFormat("--")
 	}
 	miner_str := rl.TextFormat("%d/%d", miners, cap)
@@ -339,7 +359,7 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 		def_col = rl.Color{255, 70, 70, icon_alpha}
 	}
 	if orbital_defense_building[p] {
-		draw_orbital_upgrade_spinner({icon_x, row1_cy}, 12.0, rl.Color{0, 240, 216, icon_alpha})
+		draw_orbital_upgrade_spinner({icon_x, row1_cy}, 12.0, orbital_defense_progress[p] / ORBITAL_DEFENSE_BUILD_TIME, rl.Color{0, 240, 216, icon_alpha})
 	} else {
 		ammo_level := f32(orbital_defense_ammo[p]) / f32(ORBITAL_DEFENSE_AMMO_MAX)
 		draw_battery_cell(rl.Rectangle{icon_x - 13.0, row1_cy - 12.0, 26.0, 24.0}, ammo_level, def_col, def_col)
@@ -352,8 +372,9 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 	rl.DrawText(def_str, txt_x, i32(row1_cy - 9.0), 18, def_txt_col)
 
 	ammo_btn_rect := conquered_planet_overlay_ammo_btn_rect(rect)
-	can_ammo := can_build_orbital_ammo(p)
-	draw_overlay_mini_button(ammo_btn_rect, can_ammo, alpha_factor)
+	if overlay_ammo_button_visible(p) {
+		draw_overlay_mini_button(ammo_btn_rect, can_build_orbital_ammo(p), alpha_factor)
+	}
 	if p == EARTH {
 		draw_overlay_mini_button(overlay_drone_plus_btn_rect(rect, rect.y + 51.0), can_queue_unit(.MINING), alpha_factor)
 		draw_overlay_mini_button(overlay_drone_plus_btn_rect(rect, rect.y + 85.0), can_queue_unit(.COMBAT), alpha_factor)
@@ -483,7 +504,7 @@ pick_conquered_planet_overlay_ammo_button :: proc(mouse: rl.Vector2) -> int {
 
 		rect := conquered_planet_overlay_rect(p, center_screen, screen_r, false, viewport_w, screen_h)
 		btn_rect := conquered_planet_overlay_ammo_btn_rect(rect)
-		if rl.CheckCollisionPointRec(mouse, btn_rect) {
+		if overlay_ammo_button_visible(p) && rl.CheckCollisionPointRec(mouse, btn_rect) {
 			return p
 		}
 	}
