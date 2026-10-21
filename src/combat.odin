@@ -67,7 +67,7 @@ closest_approaching_enemy :: proc(planet: int) -> (^Unit, bool) {
 orbital_defense_aim_toward :: proc(planet_idx: int, target: rl.Vector3) -> (azimuth: f32, elev: f32) {
 	if planet_idx < 0 || planet_idx >= SECTOR_COUNT { return 0, 0 }
 	if planet_idx == ENEMY_HOME {
-		pivot := ENEMY_HQ_POSITION + {0.3, 2.31, 0}
+		pivot := ENEMY_HQ_POSITION + HQ_BATTERY_PIVOT
 		diff := target - pivot
 		horiz_d := math.sqrt(diff.x * diff.x + diff.z * diff.z)
 		azimuth = math.atan2(diff.z, diff.x)
@@ -98,8 +98,8 @@ orbital_defense_muzzle_pos_toward :: proc(planet_idx: int, target: rl.Vector3) -
 		cos_el := math.cos(elev)
 		sin_el := math.sin(elev)
 		barrel_dir := fwd * cos_el + up * sin_el
-		pivot := ENEMY_HQ_POSITION + {0.3, 2.31, 0}
-		return pivot + barrel_dir * 3.25
+		pivot := ENEMY_HQ_POSITION + HQ_BATTERY_PIVOT
+		return pivot + barrel_dir * HQ_MUZZLE_REACH
 	}
 	planet := planets[planet_idx]
 	s: f32 = 0.84 + clamp(planet.radius * 0.07, 0.11, 0.32)
@@ -201,8 +201,8 @@ orbital_defense_muzzle_pos :: proc(planet_idx: int) -> rl.Vector3 {
 		cos_el := math.cos(elev)
 		sin_el := math.sin(elev)
 		barrel_dir := fwd * cos_el + up * sin_el
-		pivot := ENEMY_HQ_POSITION + {0.3, 2.31, 0}
-		return pivot + barrel_dir * 3.25
+		pivot := ENEMY_HQ_POSITION + HQ_BATTERY_PIVOT
+		return pivot + barrel_dir * HQ_MUZZLE_REACH
 	}
 	planet := planets[planet_idx]
 	s: f32 = 0.84 + clamp(planet.radius * 0.07, 0.11, 0.32)

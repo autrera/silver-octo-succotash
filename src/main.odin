@@ -138,6 +138,8 @@ main :: proc() {
 	defer unload_planet_visuals()
 	init_drone_visuals()
 	defer unload_drone_visuals()
+	init_hq_visuals()
+	defer unload_hq_visuals()
 	defer unload_display_fonts()
 	camera = rl.Camera3D{
 		position = {camera_target.x, CAMERA_START_Y, camera_target.z + CAMERA_START_Y},

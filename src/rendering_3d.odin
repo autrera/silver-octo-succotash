@@ -24,19 +24,8 @@ draw_world :: proc() {
 			draw_cyberpunk_flak88_construction_site(p)
 		}
 	}
-	hq_color := rl.Color{96, 34, 40, 255}
-	hq_trim := rl.Color{150, 55, 62, 255}
-	hq_glow := rl.Color{255, 90, 90, 255}
-	if enemy_hq_destroyed() {
-		hq_color = rl.Color{58, 60, 66, 255}
-		hq_trim = rl.Color{80, 84, 94, 255}
-		hq_glow = rl.Color{100, 105, 115, 255}
-	} else if has_vision(ENEMY_HOME) {
-		hq_color = rl.Color{205, 50, 58, 255}
-		hq_trim = rl.Color{255, 120, 125, 255}
-	}
-	if hq_on_screen() {
-		draw_hq_fortress(ENEMY_HQ_POSITION, hq_color, hq_trim, hq_glow)
+	if hq_on_screen(f32(viewport_w)) {
+		draw_hq_fortress(ENEMY_HQ_POSITION)
 	}
 	draw_rally_flag()
 
@@ -205,268 +194,15 @@ draw_world :: proc() {
 }
 
 
-hq_on_screen :: proc() -> bool {
+hq_on_screen :: proc(viewport_w: f32) -> bool {
 	if !planet_in_front(ENEMY_HQ_POSITION) { return false }
 	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
 	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
 	center := rl.GetWorldToScreen(ENEMY_HQ_POSITION, camera)
 	edge := rl.GetWorldToScreen(ENEMY_HQ_POSITION + cam_right * (ENEMY_HQ_RADIUS * 2.5), camera)
 	margin := rl.Vector2Distance(center, edge)
-	w := f32(rl.GetScreenWidth())
 	h := f32(rl.GetScreenHeight())
-	return center.x + margin >= 0 && center.x - margin <= w && center.y + margin >= 0 && center.y - margin <= h
-}
-
-draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
-	dark       := rl.Color{u8(f32(hull.r) * 0.46), u8(f32(hull.g) * 0.46), u8(f32(hull.b) * 0.46), 255}
-	darker     := rl.Color{u8(f32(hull.r) * 0.25), u8(f32(hull.g) * 0.25), u8(f32(hull.b) * 0.25), 255}
-	gunmetal   := rl.Color{24, 27, 34, 255}
-	steel_mid  := rl.Color{48, 54, 64, 255}
-	steel_lit  := rl.Color{135, 145, 162, 255}
-	amber_warn := rl.Color{255, 140, 25, 255}
-
-	destroyed := enemy_hq_destroyed() || enemy_base_hp[ENEMY_HOME] <= 0
-
-	eff_glow := glow
-	eff_amber := amber_warn
-	if destroyed {
-		eff_glow = rl.Color{55, 58, 64, 255}
-		eff_amber = rl.Color{45, 48, 52, 255}
-	}
-
-	pulse_slow := 0.70 + 0.30 * math.sin(laser_anim_time * 3.0)
-	pulse_fast := 0.60 + 0.40 * math.sin(laser_anim_time * 7.5)
-
-	up := rl.Vector3{0, 1, 0}
-
-	rl.DrawCylinderEx(center - up * 0.6, center - up * 1.5, 2.6, 1.9, 6, dark)
-	rl.DrawCylinderEx(center - up * 1.5, center - up * 2.3, 1.9, 1.0, 6, gunmetal)
-
-	reactor_col := rl.Fade(eff_glow, pulse_slow * 0.95)
-	rl.DrawCylinderEx(center - up * 2.25, center - up * 2.35, 1.15, 1.15, 12, reactor_col)
-	rl.DrawSphereEx(center - up * 2.45, 0.55 * pulse_slow + 0.12, 8, 12, reactor_col)
-
-	for i in 0..<4 {
-		ang := f32(i) * (math.PI / 2.0)
-		fdir := rl.Vector3{math.cos(ang), 0, math.sin(ang)}
-		ftan := rl.Vector3{-fdir.z, 0, fdir.x}
-		f_top := center - up * 1.0 + fdir * 1.7
-		f_bot := center - up * 2.3 + fdir * 0.7
-		rl.DrawCylinderEx(f_top, f_bot, 0.14, 0.06, 4, dark)
-		rl.DrawLine3D(f_top + ftan * 0.08, f_bot + ftan * 0.08, eff_glow)
-		rl.DrawLine3D(f_top - ftan * 0.08, f_bot - ftan * 0.08, eff_glow)
-	}
-
-	draw_oriented_box(center - up * 0.35, 3.2, 0.35, 3.2, {1, 0, 0}, up, {0, 0, 1}, dark)
-	draw_oriented_box(center - up * 0.35, 2.26, 0.36, 2.26, {0.707, 0, 0.707}, up, {-0.707, 0, 0.707}, dark)
-
-	draw_oriented_box(center + up * 0.35, 2.9, 0.35, 2.9, {1, 0, 0}, up, {0, 0, 1}, hull)
-	draw_oriented_box(center + up * 0.35, 2.05, 0.36, 2.05, {0.707, 0, 0.707}, up, {-0.707, 0, 0.707}, hull)
-
-	draw_oriented_box(center + up * 0.02, 3.25, 0.06, 3.25, {1, 0, 0}, up, {0, 0, 1}, trim)
-	draw_oriented_box(center + up * 0.40, 3.02, 0.05, 3.02, {1, 0, 0}, up, {0, 0, 1}, eff_glow)
-
-	for i in 0..<4 {
-		ang := f32(i) * (math.PI / 2.0)
-		cdir := rl.Vector3{math.cos(ang), 0, math.sin(ang)}
-		ctan := rl.Vector3{-cdir.z, 0, cdir.x}
-		b_pos := center + up * 0.42 + cdir * 2.95
-		draw_oriented_box(b_pos, 0.10, 0.26, 1.4, cdir, up, ctan, dark)
-		draw_oriented_box(b_pos + up * 0.18, 0.08, 0.06, 1.2, cdir, up, ctan, trim)
-		rl.DrawLine3D(b_pos - ctan * 1.3 - up * 0.15, b_pos + ctan * 1.3 - up * 0.15, eff_glow)
-
-		vls_center := center + up * 0.72 + cdir * 2.15
-		draw_oriented_box(vls_center, 0.35, 0.02, 0.55, cdir, up, ctan, gunmetal)
-		for vr in -1..=1 {
-			for vc in 0..=1 {
-				cell_pos := vls_center + ctan * (f32(vr) * 0.24) + cdir * (f32(vc) * 0.24 - 0.12)
-				draw_oriented_box(cell_pos, 0.08, 0.025, 0.08, cdir, up, ctan, darker)
-				draw_low_poly_sphere(cell_pos + up * 0.02, 0.035, eff_glow)
-			}
-		}
-	}
-
-	for d_idx in 0..<4 {
-		ang := f32(d_idx) * (math.PI / 2.0) + (math.PI / 4.0)
-		b_dir := rl.Vector3{math.cos(ang), 0, math.sin(ang)}
-		b_tan := rl.Vector3{-b_dir.z, 0, b_dir.x}
-
-		boom_c := center + up * 0.25 + b_dir * 3.3
-		draw_oriented_box(boom_c, 0.38, 0.22, 0.75, b_dir, up, b_tan, gunmetal)
-
-		p1_s := center + up * 0.68 + b_dir * 2.0 + b_tan * 0.22
-		p1_e := boom_c + up * 0.18 + b_dir * 0.75 + b_tan * 0.22
-		rl.DrawCylinderEx(p1_s, p1_e, 0.05, 0.05, 6, steel_mid)
-		rl.DrawLine3D(p1_s + up * 0.04, p1_e + up * 0.04, eff_glow)
-
-		p2_s := center + up * 0.68 + b_dir * 2.0 - b_tan * 0.22
-		p2_e := boom_c + up * 0.18 + b_dir * 0.75 - b_tan * 0.22
-		rl.DrawCylinderEx(p2_s, p2_e, 0.05, 0.05, 6, steel_mid)
-		rl.DrawLine3D(p2_s + up * 0.04, p2_e + up * 0.04, eff_glow)
-
-		truss_s := center - up * 0.5 + b_dir * 2.2
-		truss_e := boom_c - up * 0.12 + b_dir * 0.6
-		rl.DrawCylinderEx(truss_s, truss_e, 0.12, 0.08, 6, dark)
-
-		pod_c := center + up * 0.32 + b_dir * 4.6
-		draw_oriented_box(pod_c, 0.65, 0.45, 0.85, b_dir, up, b_tan, hull)
-		draw_oriented_box(pod_c + up * 0.25, 0.52, 0.12, 0.72, b_dir, up, b_tan, trim)
-		draw_oriented_box(pod_c - up * 0.25, 0.52, 0.10, 0.72, b_dir, up, b_tan, dark)
-
-		bay_face := pod_c + b_dir * 0.86
-		draw_oriented_box(bay_face - b_dir * 0.08, 0.38, 0.24, 0.10, b_dir, up, b_tan, rl.Color{8, 10, 14, 255})
-		rl.DrawLine3D(bay_face - b_dir * 0.4 - up * 0.08, bay_face + b_dir * 0.15 - up * 0.08, eff_glow)
-		draw_low_poly_sphere(bay_face + b_dir * 0.05, 0.12, eff_glow)
-
-		turret_pos := pod_c + up * 0.48
-		rl.DrawCylinderEx(turret_pos, turret_pos + up * 0.14, 0.20, 0.18, 8, gunmetal)
-		b1 := turret_pos + up * 0.16 + b_tan * 0.09
-		b2 := turret_pos + up * 0.16 - b_tan * 0.09
-		rl.DrawCylinderEx(b1, b1 + b_dir * 0.55, 0.038, 0.034, 6, steel_lit)
-		rl.DrawCylinderEx(b2, b2 + b_dir * 0.55, 0.038, 0.034, 6, steel_lit)
-		draw_low_poly_sphere(b1 + b_dir * 0.56, 0.032, eff_glow)
-		draw_low_poly_sphere(b2 + b_dir * 0.56, 0.032, eff_glow)
-
-		strobe_col := (d_idx % 2 == 0) ? eff_glow : eff_amber
-		strobe_p   := (d_idx % 2 == 0) ? pulse_fast : (1.0 - pulse_fast)
-		tip_l := pod_c + b_tan * 0.65 + b_dir * 0.75 + up * 0.32
-		tip_r := pod_c - b_tan * 0.65 + b_dir * 0.75 + up * 0.32
-		draw_low_poly_sphere(tip_l, 0.07, rl.Fade(strobe_col, strobe_p))
-		draw_low_poly_sphere(tip_r, 0.07, rl.Fade(strobe_col, 1.0 - strobe_p))
-	}
-
-	draw_oriented_box(center + up * 1.1, 1.9, 0.40, 2.1, {1, 0, 0}, up, {0, 0, 1}, dark)
-	draw_oriented_box(center + up * 1.5, 1.5, 0.38, 1.7, {1, 0, 0}, up, {0, 0, 1}, hull)
-
-	bridge_c := center + up * 1.65 + rl.Vector3{0.3, 0, 0}
-	draw_oriented_box(bridge_c, 1.35, 0.12, 1.55, {1, 0, 0}, up, {0, 0, 1}, eff_glow)
-	draw_oriented_box(bridge_c + up * 0.14, 1.45, 0.06, 1.65, {1, 0, 0}, up, {0, 0, 1}, trim)
-
-	for s in -1..=1 {
-		if s == 0 { continue }
-		blister_p := center + up * 1.4 + rl.Vector3{0, 0, f32(s) * 1.65}
-		draw_oriented_box(blister_p, 0.28, 0.26, 0.28, {1, 0, 0}, up, {0, 0, 1}, gunmetal)
-		draw_low_poly_sphere(blister_p + rl.Vector3{0, 0.08, f32(s) * 0.22}, 0.12, eff_amber)
-		rl.DrawCylinderEx(blister_p + up * 0.26, blister_p + up * 0.85, 0.02, 0.01, 4, steel_lit)
-	}
-
-	battery_mount := center + up * 1.95 + rl.Vector3{0.3, 0, 0}
-	rl.DrawCylinderEx(battery_mount, battery_mount + up * 0.28, 1.4, 1.3, 16, gunmetal)
-	rl.DrawCylinderEx(battery_mount + up * 0.25, battery_mount + up * 0.29, 1.35, 1.35, 16, eff_glow)
-
-	aim_az, aim_el := orbital_defense_aim(ENEMY_HOME)
-	cur_az := aim_az
-	cur_el := aim_el
-	if destroyed || orbital_defense_hp[ENEMY_HOME] <= 0 {
-		cur_el = -0.32
-	}
-
-	cos_az := math.cos(cur_az)
-	sin_az := math.sin(cur_az)
-	b_fwd   := rl.Vector3{cos_az, 0, sin_az}
-	b_right := rl.Vector3{-sin_az, 0, cos_az}
-
-	cos_el := math.cos(cur_el)
-	sin_el := math.sin(cur_el)
-	barrel_dir    := b_fwd * cos_el + up * sin_el
-	barrel_normal := -b_fwd * sin_el + up * cos_el
-
-	turret_c := battery_mount + up * 0.46
-	draw_oriented_box(turret_c, 0.62, 0.26, 0.72, b_fwd, up, b_right, dark)
-	draw_oriented_box(turret_c + up * 0.22, 0.50, 0.10, 0.58, b_fwd, up, b_right, trim)
-
-	cheek_l := turret_c + b_right * 0.52 + up * 0.24
-	cheek_r := turret_c - b_right * 0.52 + up * 0.24
-	draw_oriented_box(cheek_l, 0.12, 0.32, 0.48, b_fwd, up, b_right, gunmetal)
-	draw_oriented_box(cheek_r, 0.12, 0.32, 0.48, b_fwd, up, b_right, gunmetal)
-
-	pivot := turret_c + up * 0.36
-	rl.DrawCylinderEx(pivot - b_right * 0.60, pivot + b_right * 0.60, 0.12, 0.12, 8, steel_lit)
-
-	shield_c := pivot + barrel_dir * 0.25
-	draw_oriented_box(shield_c + b_right * 0.34, 0.18, 0.38, 0.08, barrel_dir, barrel_normal, b_right, hull)
-	draw_oriented_box(shield_c - b_right * 0.34, 0.18, 0.38, 0.08, barrel_dir, barrel_normal, b_right, hull)
-	draw_oriented_box(shield_c + barrel_normal * 0.26, 0.42, 0.08, 0.08, barrel_dir, barrel_normal, b_right, trim)
-
-	breech := pivot - barrel_dir * 0.35
-	draw_oriented_box(breech, 0.45, 0.28, 0.48, barrel_dir, barrel_normal, b_right, gunmetal)
-	draw_oriented_box(breech + barrel_normal * 0.22, 0.36, 0.08, 0.40, barrel_dir, barrel_normal, b_right, hull)
-
-	cable_s := turret_c - b_fwd * 0.45 + up * 0.10
-	cable_e := breech - barrel_dir * 0.20
-	rl.DrawCylinderEx(cable_s, cable_e, 0.08, 0.07, 6, gunmetal)
-	rl.DrawLine3D(cable_s + up * 0.07, cable_e + barrel_normal * 0.07, eff_glow)
-
-	rc_l_s := pivot - barrel_dir * 0.30 + b_right * 0.26 + barrel_normal * 0.25
-	rc_l_e := pivot + barrel_dir * 0.70 + b_right * 0.26 + barrel_normal * 0.25
-	rl.DrawCylinderEx(rc_l_s, rc_l_e, 0.095, 0.095, 8, steel_lit)
-	rl.DrawCylinderEx(rc_l_s, rc_l_s + barrel_dir * 0.15, 0.12, 0.12, 8, gunmetal)
-
-	rc_r_s := pivot - barrel_dir * 0.30 - b_right * 0.26 + barrel_normal * 0.25
-	rc_r_e := pivot + barrel_dir * 0.70 - b_right * 0.26 + barrel_normal * 0.25
-	rl.DrawCylinderEx(rc_r_s, rc_r_e, 0.095, 0.095, 8, steel_lit)
-	rl.DrawCylinderEx(rc_r_s, rc_r_s + barrel_dir * 0.15, 0.12, 0.12, 8, gunmetal)
-
-	for b_i in 0..<2 {
-		b_sign: f32 = (b_i == 0) ? 1.0 : -1.0
-		bar_root := pivot + b_right * (b_sign * 0.26)
-
-		s1_s := bar_root
-		s1_e := bar_root + barrel_dir * 1.10
-		rl.DrawCylinderEx(s1_s, s1_e, 0.165, 0.145, 8, dark)
-		rl.DrawCylinderEx(s1_s, s1_s + barrel_dir * 0.25, 0.19, 0.19, 8, gunmetal)
-
-		s2_s := s1_e
-		s2_e := bar_root + barrel_dir * 2.70
-		rl.DrawCylinderEx(s2_s, s2_e, 0.13, 0.11, 8, gunmetal)
-
-		for c_idx in 0..<5 {
-			c_dist := 0.25 + f32(c_idx) * 0.46
-			c_pos := s2_s + barrel_dir * c_dist
-			c_end := c_pos + barrel_dir * 0.10
-			rl.DrawCylinderEx(c_pos, c_end, 0.155, 0.155, 8, eff_glow)
-			rl.DrawCylinderEx(c_pos, c_pos + barrel_dir * 0.02, 0.165, 0.165, 8, steel_lit)
-			rl.DrawCylinderEx(c_end - barrel_dir * 0.02, c_end, 0.165, 0.165, 8, steel_lit)
-		}
-
-		mb_s := s2_e
-		mb_e := s2_e + barrel_dir * 0.55
-		rl.DrawCylinderEx(mb_s, mb_e, 0.145, 0.145, 8, steel_mid)
-		baf1 := mb_s + barrel_dir * 0.15
-		baf2 := mb_s + barrel_dir * 0.32
-		rl.DrawCylinderEx(baf1, baf1 + barrel_dir * 0.06, 0.18, 0.18, 8, gunmetal)
-		rl.DrawCylinderEx(baf2, baf2 + barrel_dir * 0.06, 0.18, 0.18, 8, gunmetal)
-
-		rl.DrawSphereEx(mb_e, 0.09, 6, 6, eff_glow)
-	}
-
-	pod_c := pivot + barrel_normal * 0.32 + barrel_dir * 0.40
-	draw_oriented_box(pod_c, 0.18, 0.15, 0.22, barrel_dir, barrel_normal, b_right, gunmetal)
-	draw_low_poly_sphere(pod_c + barrel_dir * 0.23 + barrel_normal * 0.04, 0.08, eff_glow)
-	draw_low_poly_sphere(pod_c + barrel_dir * 0.23 - barrel_normal * 0.04, 0.07, eff_amber)
-
-	collimator_s := pivot + barrel_dir * 0.60
-	collimator_e := pivot + barrel_dir * 2.80
-	rl.DrawLine3D(collimator_s, collimator_e, eff_glow)
-
-	mast_root := center + up * 2.0 - rl.Vector3{1.1, 0, 0}
-	rl.DrawCylinderEx(mast_root, mast_root + up * 2.2, 0.26, 0.14, 6, gunmetal)
-	rl.DrawCylinderEx(mast_root + up * 2.2, mast_root + up * 4.2, 0.14, 0.05, 4, steel_lit)
-
-	rl.DrawCylinderEx(mast_root + up * 1.8 - b_right * 0.9, mast_root + up * 1.8 + b_right * 0.9, 0.04, 0.04, 4, steel_mid)
-	rl.DrawCylinderEx(mast_root + up * 2.8 - b_right * 0.55, mast_root + up * 2.8 + b_right * 0.55, 0.03, 0.03, 4, steel_mid)
-
-	spire_tip := mast_root + up * 4.3
-	draw_low_poly_sphere(spire_tip, 0.28 * pulse_fast + 0.14, rl.Fade(eff_glow, 0.95))
-
-	if !destroyed {
-		sweep_ang := laser_anim_time * 1.8
-		sweep_dir := rl.Vector3{math.cos(sweep_ang), 0.22, math.sin(sweep_ang)}
-		radar_hub := mast_root + up * 2.3
-		rl.DrawCylinderEx(radar_hub, radar_hub + sweep_dir * 0.75, 0.08, 0.26, 8, steel_mid)
-		draw_low_poly_sphere(radar_hub + sweep_dir * 0.78, 0.10, eff_glow)
-		rl.DrawLine3D(radar_hub, radar_hub + sweep_dir * 3.8, rl.Fade(eff_glow, 0.75))
-	}
+	return center.x + margin >= 0 && center.x - margin <= viewport_w && center.y + margin >= 0 && center.y - margin <= h
 }
 
 drone_heading :: proc(pos, center: rl.Vector3) -> rl.Vector3 {
@@ -581,18 +317,18 @@ add_sphere :: proc(
 			p10 := center + n10 * radius
 			p11 := center + n11 * radius
 
-			append(verts, p00.x, p00.y, p00.z,  p10.x, p10.y, p10.z,  p01.x, p01.y, p01.z)
-			append(norms, n00.x, n00.y, n00.z,  n10.x, n10.y, n10.z,  n01.x, n01.y, n01.z)
+			append(verts, p00.x, p00.y, p00.z,  p01.x, p01.y, p01.z,  p10.x, p10.y, p10.z)
+			append(norms, n00.x, n00.y, n00.z,  n01.x, n01.y, n01.z,  n10.x, n10.y, n10.z)
 			append(cols, color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a)
 
-			append(verts, p01.x, p01.y, p01.z,  p10.x, p10.y, p10.z,  p11.x, p11.y, p11.z)
-			append(norms, n01.x, n01.y, n01.z,  n10.x, n10.y, n10.z,  n11.x, n11.y, n11.z)
+			append(verts, p01.x, p01.y, p01.z,  p11.x, p11.y, p11.z,  p10.x, p10.y, p10.z)
+			append(norms, n01.x, n01.y, n01.z,  n11.x, n11.y, n11.z,  n10.x, n10.y, n10.z)
 			append(cols, color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a,  color.r, color.g, color.b, color.a)
 		}
 	}
 }
 
-make_mesh_from_arrays :: proc(vertices: []f32, normals: []f32, colors: []u8) -> rl.Mesh {
+make_mesh_from_arrays :: proc(vertices: []f32, normals: []f32, colors: []u8, texcoords: []f32 = nil) -> rl.Mesh {
 	mesh := rl.Mesh{}
 	mesh.vertexCount = c.int(len(vertices) / 3)
 	mesh.triangleCount = c.int(len(vertices) / 9)
@@ -608,6 +344,9 @@ make_mesh_from_arrays :: proc(vertices: []f32, normals: []f32, colors: []u8) -> 
 
 	mesh.texcoords = cast([^]f32)rl.MemAlloc(c.uint(int(mesh.vertexCount) * 2 * size_of(f32)))
 	mem.zero(mesh.texcoords, int(mesh.vertexCount) * 2 * size_of(f32))
+	if len(texcoords) == int(mesh.vertexCount) * 2 {
+		mem.copy(mesh.texcoords, raw_data(texcoords), len(texcoords) * size_of(f32))
+	}
 
 	rl.UploadMesh(&mesh, false)
 	return mesh
