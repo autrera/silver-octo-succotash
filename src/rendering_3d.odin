@@ -4,6 +4,7 @@ import "core:c"
 import "core:math"
 import "core:mem"
 import rl "vendor:raylib"
+import "vendor:raylib/rlgl"
 
 draw_world :: proc() {
 	viewport_w := rl.GetScreenWidth() - SCREEN_PANEL_WIDTH
@@ -34,7 +35,9 @@ draw_world :: proc() {
 		hq_color = rl.Color{205, 50, 58, 255}
 		hq_trim = rl.Color{255, 120, 125, 255}
 	}
-	draw_hq_fortress(ENEMY_HQ_POSITION, hq_color, hq_trim, hq_glow)
+	if hq_on_screen() {
+		draw_hq_fortress(ENEMY_HQ_POSITION, hq_color, hq_trim, hq_glow)
+	}
 	draw_rally_flag()
 
 	sector_vis: [SECTOR_COUNT]bool
@@ -202,6 +205,18 @@ draw_world :: proc() {
 }
 
 
+hq_on_screen :: proc() -> bool {
+	if !planet_in_front(ENEMY_HQ_POSITION) { return false }
+	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
+	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
+	center := rl.GetWorldToScreen(ENEMY_HQ_POSITION, camera)
+	edge := rl.GetWorldToScreen(ENEMY_HQ_POSITION + cam_right * (ENEMY_HQ_RADIUS * 2.5), camera)
+	margin := rl.Vector2Distance(center, edge)
+	w := f32(rl.GetScreenWidth())
+	h := f32(rl.GetScreenHeight())
+	return center.x + margin >= 0 && center.x - margin <= w && center.y + margin >= 0 && center.y - margin <= h
+}
+
 draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
 	dark       := rl.Color{u8(f32(hull.r) * 0.46), u8(f32(hull.g) * 0.46), u8(f32(hull.b) * 0.46), 255}
 	darker     := rl.Color{u8(f32(hull.r) * 0.25), u8(f32(hull.g) * 0.25), u8(f32(hull.b) * 0.25), 255}
@@ -266,7 +281,7 @@ draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
 			for vc in 0..=1 {
 				cell_pos := vls_center + ctan * (f32(vr) * 0.24) + cdir * (f32(vc) * 0.24 - 0.12)
 				draw_oriented_box(cell_pos, 0.08, 0.025, 0.08, cdir, up, ctan, darker)
-				rl.DrawSphere(cell_pos + up * 0.02, 0.035, eff_glow)
+				draw_low_poly_sphere(cell_pos + up * 0.02, 0.035, eff_glow)
 			}
 		}
 	}
@@ -301,7 +316,7 @@ draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
 		bay_face := pod_c + b_dir * 0.86
 		draw_oriented_box(bay_face - b_dir * 0.08, 0.38, 0.24, 0.10, b_dir, up, b_tan, rl.Color{8, 10, 14, 255})
 		rl.DrawLine3D(bay_face - b_dir * 0.4 - up * 0.08, bay_face + b_dir * 0.15 - up * 0.08, eff_glow)
-		rl.DrawSphere(bay_face + b_dir * 0.05, 0.12, eff_glow)
+		draw_low_poly_sphere(bay_face + b_dir * 0.05, 0.12, eff_glow)
 
 		turret_pos := pod_c + up * 0.48
 		rl.DrawCylinderEx(turret_pos, turret_pos + up * 0.14, 0.20, 0.18, 8, gunmetal)
@@ -309,15 +324,15 @@ draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
 		b2 := turret_pos + up * 0.16 - b_tan * 0.09
 		rl.DrawCylinderEx(b1, b1 + b_dir * 0.55, 0.038, 0.034, 6, steel_lit)
 		rl.DrawCylinderEx(b2, b2 + b_dir * 0.55, 0.038, 0.034, 6, steel_lit)
-		rl.DrawSphere(b1 + b_dir * 0.56, 0.032, eff_glow)
-		rl.DrawSphere(b2 + b_dir * 0.56, 0.032, eff_glow)
+		draw_low_poly_sphere(b1 + b_dir * 0.56, 0.032, eff_glow)
+		draw_low_poly_sphere(b2 + b_dir * 0.56, 0.032, eff_glow)
 
 		strobe_col := (d_idx % 2 == 0) ? eff_glow : eff_amber
 		strobe_p   := (d_idx % 2 == 0) ? pulse_fast : (1.0 - pulse_fast)
 		tip_l := pod_c + b_tan * 0.65 + b_dir * 0.75 + up * 0.32
 		tip_r := pod_c - b_tan * 0.65 + b_dir * 0.75 + up * 0.32
-		rl.DrawSphere(tip_l, 0.07, rl.Fade(strobe_col, strobe_p))
-		rl.DrawSphere(tip_r, 0.07, rl.Fade(strobe_col, 1.0 - strobe_p))
+		draw_low_poly_sphere(tip_l, 0.07, rl.Fade(strobe_col, strobe_p))
+		draw_low_poly_sphere(tip_r, 0.07, rl.Fade(strobe_col, 1.0 - strobe_p))
 	}
 
 	draw_oriented_box(center + up * 1.1, 1.9, 0.40, 2.1, {1, 0, 0}, up, {0, 0, 1}, dark)
@@ -331,7 +346,7 @@ draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
 		if s == 0 { continue }
 		blister_p := center + up * 1.4 + rl.Vector3{0, 0, f32(s) * 1.65}
 		draw_oriented_box(blister_p, 0.28, 0.26, 0.28, {1, 0, 0}, up, {0, 0, 1}, gunmetal)
-		rl.DrawSphere(blister_p + rl.Vector3{0, 0.08, f32(s) * 0.22}, 0.12, eff_amber)
+		draw_low_poly_sphere(blister_p + rl.Vector3{0, 0.08, f32(s) * 0.22}, 0.12, eff_amber)
 		rl.DrawCylinderEx(blister_p + up * 0.26, blister_p + up * 0.85, 0.02, 0.01, 4, steel_lit)
 	}
 
@@ -427,8 +442,8 @@ draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
 
 	pod_c := pivot + barrel_normal * 0.32 + barrel_dir * 0.40
 	draw_oriented_box(pod_c, 0.18, 0.15, 0.22, barrel_dir, barrel_normal, b_right, gunmetal)
-	rl.DrawSphere(pod_c + barrel_dir * 0.23 + barrel_normal * 0.04, 0.08, eff_glow)
-	rl.DrawSphere(pod_c + barrel_dir * 0.23 - barrel_normal * 0.04, 0.07, eff_amber)
+	draw_low_poly_sphere(pod_c + barrel_dir * 0.23 + barrel_normal * 0.04, 0.08, eff_glow)
+	draw_low_poly_sphere(pod_c + barrel_dir * 0.23 - barrel_normal * 0.04, 0.07, eff_amber)
 
 	collimator_s := pivot + barrel_dir * 0.60
 	collimator_e := pivot + barrel_dir * 2.80
@@ -442,14 +457,14 @@ draw_hq_fortress :: proc(center: rl.Vector3, hull, trim, glow: rl.Color) {
 	rl.DrawCylinderEx(mast_root + up * 2.8 - b_right * 0.55, mast_root + up * 2.8 + b_right * 0.55, 0.03, 0.03, 4, steel_mid)
 
 	spire_tip := mast_root + up * 4.3
-	rl.DrawSphere(spire_tip, 0.28 * pulse_fast + 0.14, rl.Fade(eff_glow, 0.95))
+	draw_low_poly_sphere(spire_tip, 0.28 * pulse_fast + 0.14, rl.Fade(eff_glow, 0.95))
 
 	if !destroyed {
 		sweep_ang := laser_anim_time * 1.8
 		sweep_dir := rl.Vector3{math.cos(sweep_ang), 0.22, math.sin(sweep_ang)}
 		radar_hub := mast_root + up * 2.3
 		rl.DrawCylinderEx(radar_hub, radar_hub + sweep_dir * 0.75, 0.08, 0.26, 8, steel_mid)
-		rl.DrawSphere(radar_hub + sweep_dir * 0.78, 0.10, eff_glow)
+		draw_low_poly_sphere(radar_hub + sweep_dir * 0.78, 0.10, eff_glow)
 		rl.DrawLine3D(radar_hub, radar_hub + sweep_dir * 3.8, rl.Fade(eff_glow, 0.75))
 	}
 }
@@ -924,7 +939,7 @@ unload_drone_visuals :: proc() {
 
 draw_miner_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector3 = {1, 0, 0}) {
 	if !drone_visuals_ready {
-		rl.DrawSphere(position, 0.35, enemy ? rl.RED : rl.ORANGE)
+		draw_low_poly_sphere(position, 0.35, enemy ? rl.RED : rl.ORANGE)
 		return
 	}
 	h := heading
@@ -953,7 +968,7 @@ draw_miner_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector3 
 
 draw_fighter_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector3) {
 	if !drone_visuals_ready {
-		rl.DrawSphere(position, 0.35, enemy ? rl.RED : SCIFI_BLUE)
+		draw_low_poly_sphere(position, 0.35, enemy ? rl.RED : SCIFI_BLUE)
 		return
 	}
 	h := heading
@@ -1130,15 +1145,30 @@ generate_stars :: proc() {
 	}
 }
 
+star_dot_texture: rl.Texture2D
+
 draw_starfield :: proc() {
+	if star_dot_texture.id == 0 {
+		img := rl.GenImageColor(16, 16, rl.BLANK)
+		rl.ImageDrawCircle(&img, 8, 8, 7, rl.WHITE)
+		star_dot_texture = rl.LoadTextureFromImage(img)
+		rl.SetTextureFilter(star_dot_texture, .BILINEAR)
+		rl.UnloadImage(img)
+	}
 	w := f32(rl.GetScreenWidth())
 	h := f32(rl.GetScreenHeight())
+	view_proj := rl.MatrixPerspective(camera.fovy * rl.DEG2RAD, w / h, f32(rlgl.GetCullDistanceNear()), f32(rlgl.GetCullDistanceFar())) * rl.GetCameraMatrix(camera)
+	src := rl.Rectangle{0, 0, 16, 16}
 	for i in 0..<STAR_COUNT {
-		pos := rl.GetWorldToScreen(stars[i], camera)
-		if !(pos.x >= 0 && pos.x <= w && pos.y >= 0 && pos.y <= h) { continue }
+		clip := view_proj * [4]f32{stars[i].x, stars[i].y, stars[i].z, 1}
+		if clip.w <= 0 { continue }
+		x := (clip.x / clip.w + 1) / 2 * w
+		y := (-clip.y / clip.w + 1) / 2 * h
+		if !(x >= 0 && x <= w && y >= 0 && y <= h) { continue }
 		tint := rl.WHITE
 		if i % 4 == 0 { tint = rl.Color{170, 230, 255, 255} }
-		rl.DrawCircleV(pos, star_sizes[i], rl.Fade(tint, star_alphas[i]))
+		d := star_sizes[i] * 2
+		rl.DrawTexturePro(star_dot_texture, src, {x - d / 2, y - d / 2, d, d}, {}, 0, rl.Fade(tint, star_alphas[i]))
 	}
 }
 
@@ -1487,3 +1517,7 @@ draw_earth_industry_lights :: proc() {
 	}
 }
 
+
+draw_low_poly_sphere :: proc(center: rl.Vector3, radius: f32, color: rl.Color) {
+	rl.DrawSphereEx(center, radius, 6, 8, color)
+}

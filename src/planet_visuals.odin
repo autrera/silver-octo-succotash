@@ -481,7 +481,7 @@ draw_planet_body :: proc(p: int) {
 	planet := planets[p]
 	lit := has_vision(p)
 	if !planet_visuals_ready {
-		rl.DrawSphere(planet.position, planet.radius, lit ? planet.color : rl.Color{58, 62, 74, 255})
+		draw_low_poly_sphere(planet.position, planet.radius, lit ? planet.color : rl.Color{58, 62, 74, 255})
 		return
 	}
 	kind := c.int(p)

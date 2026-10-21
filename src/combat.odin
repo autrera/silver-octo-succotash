@@ -289,12 +289,12 @@ draw_orbital_defense_blasts :: proc() {
 		rl.DrawLine3D(b.from, b.to, line_color)
 
 		flash_r := 0.55 * fade + 0.08
-		rl.DrawSphere(b.from, flash_r * 0.6, core_color)
+		draw_low_poly_sphere(b.from, flash_r * 0.6, core_color)
 		rl.DrawSphereEx(b.from, flash_r, 8, 12, beam_color)
 		rl.DrawCircle3D(b.from, 0.5 + t * 1.0, {0, 1, 0}, 90, beam_color)
 
 		burst_r := 0.40 + 1.5 * math.sqrt(t)
-		rl.DrawSphere(b.to, 0.30 * fade, core_color)
+		draw_low_poly_sphere(b.to, 0.30 * fade, core_color)
 		rl.DrawSphereEx(b.to, burst_r * 0.75, 8, 12, beam_color)
 
 		shock_r := 0.45 + 2.4 * t
@@ -309,7 +309,7 @@ draw_orbital_defense_blasts :: proc() {
 			spark_pos := b.to + spark_dir * spark_dist
 			trail_pos := b.to + spark_dir * (spark_dist * 0.65)
 			rl.DrawLine3D(trail_pos, spark_pos, beam_color)
-			rl.DrawSphere(spark_pos, 0.08 * fade, spark_color)
+			draw_low_poly_sphere(spark_pos, 0.08 * fade, spark_color)
 		}
 	}
 }
@@ -1225,20 +1225,20 @@ draw_ambulance_hazard_lights :: proc(p_left, p_right: rl.Vector3, s: f32) {
 
 	rl.DrawCylinderEx(p_left - {0, 0.05 * s, 0}, p_left, 0.026 * s, 0.024 * s, 6, rl.Color{35, 38, 44, 255})
 	if pulse_l > 0.05 {
-		rl.DrawSphere(p_left, 0.038 * s, rl.Color{255, 245, 245, 255})
+		draw_low_poly_sphere(p_left, 0.038 * s, rl.Color{255, 245, 245, 255})
 		rl.DrawSphereEx(p_left, 0.09 * s * pulse_l + 0.02 * s, 8, 8, rl.Color{255, 30, 35, u8(230 * pulse_l)})
 		rl.DrawSphereEx(p_left, 0.18 * s * pulse_l + 0.03 * s, 6, 6, rl.Color{255, 10, 15, u8(95 * pulse_l)})
 	} else {
-		rl.DrawSphere(p_left, 0.032 * s, rl.Color{110, 20, 25, 255})
+		draw_low_poly_sphere(p_left, 0.032 * s, rl.Color{110, 20, 25, 255})
 	}
 
 	rl.DrawCylinderEx(p_right - {0, 0.05 * s, 0}, p_right, 0.026 * s, 0.024 * s, 6, rl.Color{35, 38, 44, 255})
 	if pulse_r > 0.05 {
-		rl.DrawSphere(p_right, 0.038 * s, rl.Color{255, 245, 245, 255})
+		draw_low_poly_sphere(p_right, 0.038 * s, rl.Color{255, 245, 245, 255})
 		rl.DrawSphereEx(p_right, 0.09 * s * pulse_r + 0.02 * s, 8, 8, rl.Color{255, 30, 35, u8(230 * pulse_r)})
 		rl.DrawSphereEx(p_right, 0.18 * s * pulse_r + 0.03 * s, 6, 6, rl.Color{255, 10, 15, u8(95 * pulse_r)})
 	} else {
-		rl.DrawSphere(p_right, 0.032 * s, rl.Color{110, 20, 25, 255})
+		draw_low_poly_sphere(p_right, 0.032 * s, rl.Color{110, 20, 25, 255})
 	}
 }
 
@@ -1373,7 +1373,7 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 	mast_t := mast_b + up * (0.30 * s) - fwd * (0.04 * s)
 	rl.DrawCylinderEx(mast_b, mast_t, 0.016 * s, 0.007 * s, 4, steel_bright)
 	beacon_pulse := 0.75 + 0.25 * math.sin(laser_anim_time * 8.0 + f32(planet_idx))
-	rl.DrawSphere(mast_t, 0.022 * s, rl.Fade(cyan_glow, beacon_pulse))
+	draw_low_poly_sphere(mast_t, 0.022 * s, rl.Fade(cyan_glow, beacon_pulse))
 
 	if is_upgrading {
 		light_l := sh_center - right * (0.16 * s) + up * (0.26 * s)
@@ -1453,7 +1453,7 @@ draw_cyberpunk_flak88 :: proc(planet_idx: int) {
 		r_dir := rl.Vector3{math.cos(radar_sweep), 0.35, math.sin(radar_sweep)}
 		rl.DrawCylinderEx(radar_t, radar_t + r_dir * (0.025 * s), 0.12 * s, 0.08 * s, 8, sand_light)
 		rl.DrawLine3D(radar_t, radar_t + r_dir * (0.13 * s), cyan_glow)
-		rl.DrawSphere(radar_t + r_dir * (0.035 * s), 0.022 * s, cyan_glow)
+		draw_low_poly_sphere(radar_t + r_dir * (0.035 * s), 0.022 * s, cyan_glow)
 	}
 
 	if level >= 4 {
@@ -1535,5 +1535,5 @@ draw_cyberpunk_flak88_construction_site :: proc(planet_idx: int) {
 	spark_pt := pole + up * (ring_y * s) + rl.Vector3{math.cos(spark_ang) * 0.45 * s, 0, math.sin(spark_ang) * 0.45 * s}
 	spark_target := pole + up * (0.15 * s)
 	rl.DrawLine3D(spark_pt, spark_target, rl.Color{255, 255, 200, 255})
-	rl.DrawSphere(spark_pt, 0.045 * s, rl.Color{255, 255, 220, 255})
+	draw_low_poly_sphere(spark_pt, 0.045 * s, rl.Color{255, 255, 220, 255})
 }
