@@ -463,75 +463,9 @@ pick_conquered_planet_overlay :: proc(mouse: rl.Vector2) -> int {
 }
 
 draw_tactical_container :: proc(rect: rl.Rectangle) {
-	x, y, w, h := rect.x, rect.y, rect.width, rect.height
-	ch: f32 = 6.0
-	wing: f32 = 20.0
-
-	rl.DrawRectangleGradientH(i32(x - 28), i32(y), 28, i32(h), rl.Color{0, 0, 0, 0}, rl.Color{0, 0, 0, 160})
-	glow_col := rl.Fade(SCIFI_GREEN, 0.08)
-	rl.DrawRectangleGradientV(i32(x), i32(y), i32(w), i32(h), glow_col, rl.Color{0, 0, 0, 0})
-
-	v0 := rl.Vector2{x + ch, y}
-	v1 := rl.Vector2{x + w - ch, y}
-	v2 := rl.Vector2{x + w, y + ch}
-	v3 := rl.Vector2{x + w, y + h - ch}
-	v4 := rl.Vector2{x + w - ch, y + h}
-	v5 := rl.Vector2{x + wing, y + h}
-	v6 := rl.Vector2{x, y + h - wing}
-	v7 := rl.Vector2{x, y + ch}
-
-	fill := SCIFI_PANEL
-	rl.DrawTriangle(v0, v2, v1, fill)
-	rl.DrawTriangle(v0, v3, v2, fill)
-	rl.DrawTriangle(v0, v4, v3, fill)
-	rl.DrawTriangle(v0, v5, v4, fill)
-	rl.DrawTriangle(v0, v6, v5, fill)
-	rl.DrawTriangle(v0, v7, v6, fill)
-
-	border := SCIFI_GREEN
-	rl.DrawLineV(v0, v1, border)
-	rl.DrawLineV(v1, v2, border)
-	rl.DrawLineV(v2, v3, border)
-	rl.DrawLineV(v3, v4, border)
-	rl.DrawLineV(v4, v5, border)
-	rl.DrawLineV(v5, v6, border)
-	rl.DrawLineV(v6, v7, border)
-	rl.DrawLineV(v7, v0, border)
-	rl.DrawPixelV(v0, border)
-	rl.DrawPixelV(v1, border)
-	rl.DrawPixelV(v2, border)
-	rl.DrawPixelV(v3, border)
-	rl.DrawPixelV(v4, border)
-	rl.DrawPixelV(v5, border)
-	rl.DrawPixelV(v6, border)
-	rl.DrawPixelV(v7, border)
-
-	inner := SCIFI_STEEL
-	iv0 := rl.Vector2{x + ch + 2, y + 3}
-	iv1 := rl.Vector2{x + w - ch - 2, y + 3}
-	iv2 := rl.Vector2{x + w - 3, y + ch + 2}
-	iv3 := rl.Vector2{x + w - 3, y + h - ch - 2}
-	iv4 := rl.Vector2{x + w - ch - 2, y + h - 3}
-	iv5 := rl.Vector2{x + wing, y + h - 3}
-	iv6 := rl.Vector2{x + 3, y + h - wing}
-	iv7 := rl.Vector2{x + 3, y + ch + 2}
-
-	rl.DrawLineV(iv0, iv1, inner)
-	rl.DrawLineV(iv1, iv2, inner)
-	rl.DrawLineV(iv2, iv3, inner)
-	rl.DrawLineV(iv3, iv4, inner)
-	rl.DrawLineV(iv4, iv5, inner)
-	rl.DrawLineV(iv5, iv6, inner)
-	rl.DrawLineV(iv6, iv7, inner)
-	rl.DrawLineV(iv7, iv0, inner)
-	rl.DrawPixelV(iv0, inner)
-	rl.DrawPixelV(iv1, inner)
-	rl.DrawPixelV(iv2, inner)
-	rl.DrawPixelV(iv3, inner)
-	rl.DrawPixelV(iv4, inner)
-	rl.DrawPixelV(iv5, inner)
-	rl.DrawPixelV(iv6, inner)
-	rl.DrawPixelV(iv7, inner)
+	round := menu_round(rect, 18)
+	rl.DrawRectangleRounded(rect, round, 16, SCIFI_PANEL)
+	rl.DrawRectangleRoundedLinesEx(rect, round, 16, 1.5, rl.Fade(SCIFI_GREEN, 0.55))
 }
 
 draw_section_header :: proc(x, y, w: f32, title: cstring, color: rl.Color) {

@@ -614,15 +614,8 @@ draw_resource_hud :: proc() {
 	x0 := f32(HUD_PAD)
 	y0 := f32(HUD_PAD)
 	w := f32(RESOURCE_HUD_W)
-	h := f32(RESOURCE_HUD_H)
 	rail := rl.Color{30, 168, 104, 255}
 	rail_dim := rl.Color{18, 96, 60, 255}
-
-	rl.DrawRectangleGradientH(i32(x0 - HUD_PAD), 0, i32(w * 0.75 + HUD_PAD), i32(y0 + h + 10), rl.Color{0, 6, 3, 190}, rl.Color{0, 6, 3, 130})
-	rl.DrawRectangleGradientH(i32(x0 + w * 0.75), 0, i32(w * 0.35), i32(y0 + h + 10), rl.Color{0, 6, 3, 130}, rl.Color{0, 6, 3, 0})
-	rl.DrawRectangleGradientV(i32(x0 - HUD_PAD), i32(y0 + h + 10), i32(w * 1.1 + HUD_PAD), 26, rl.Color{0, 6, 3, 110}, rl.Color{0, 6, 3, 0})
-	rl.DrawRectangleGradientH(i32(x0), i32(y0), 36, i32(h), rl.Color{40, 200, 120, 46}, rl.Color{40, 200, 120, 0})
-	rl.DrawRectangleGradientV(i32(x0), i32(y0), i32(w * 0.8), 18, rl.Color{40, 200, 120, 22}, rl.Color{40, 200, 120, 0})
 
 	num_size: f32 = 40
 	cell := measure_display_text("0", num_size) + display_spacing(num_size)
