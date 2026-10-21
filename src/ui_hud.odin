@@ -613,7 +613,6 @@ draw_game_over_overlay :: proc() {
 draw_resource_hud :: proc() {
 	x0 := f32(HUD_PAD)
 	y0 := f32(HUD_PAD)
-	w := f32(RESOURCE_HUD_W)
 	rail := rl.Color{30, 168, 104, 255}
 	rail_dim := rl.Color{18, 96, 60, 255}
 
@@ -621,17 +620,19 @@ draw_resource_hud :: proc() {
 	cell := measure_display_text("0", num_size) + display_spacing(num_size)
 	value := rl.TextFormat("%d", minerals)
 	digits := len(string(value))
-	num_x := x0 + 16
-	num_right := num_x + f32(max(digits, 3)) * cell
+	num_x := x0
+	num_right := num_x + 5 * cell
 	side_x := num_right + 14
+	side_w := max(measure_display_text("MINERALS", 15), measure_display_text(rl.TextFormat("+%.1f / S", global_mps()), 11))
+	w := side_x - x0 + side_w + 20 + 62
 
 	top_y := y0 + 16
 	tag: cstring = "RESOURCES"
 	tag_size: f32 = 10
 	tag_w := measure_display_text(tag, tag_size)
 	tag_x := x0 + w - 74 - tag_w
-	rl.DrawRectangleRec({x0 + 12, top_y - 1.5, 44, 3}, rail)
-	rl.DrawLineEx({x0 + 12, top_y}, {tag_x - 10, top_y}, 1.5, rail)
+	rl.DrawRectangleRec({x0, top_y - 1.5, 44, 3}, rail)
+	rl.DrawLineEx({x0, top_y}, {tag_x - 10, top_y}, 1.5, rail)
 	rl.DrawCircleV({tag_x - 6, top_y}, 1.6, rail)
 	draw_display_text(tag, {tag_x, top_y - 9}, tag_size, SCIFI_LABEL)
 
@@ -639,19 +640,19 @@ draw_resource_hud :: proc() {
 	for i in 0..<digits {
 		glyph := [2]u8{(transmute([]u8)string(value))[i], 0}
 		gw := measure_display_text(cstring(&glyph[0]), num_size)
-		gx := num_x + f32(i) * cell + (cell - display_spacing(num_size) - gw) / 2
+		gx := num_right - f32(digits - i) * cell + (cell - display_spacing(num_size) - gw) / 2
 		draw_display_text_glow(cstring(&glyph[0]), {gx, num_y}, num_size, SCIFI_MINT, rl.Color{20, 112, 96, 255}, rl.Color{60, 230, 160, 255})
 	}
 	for sy := num_y + 6; sy < num_y + num_size + 2; sy += 3 {
-		rl.DrawLineEx({num_x - 4, sy}, {num_right + 4, sy}, 1, rl.Color{0, 20, 10, 46})
+		rl.DrawLineEx({num_right - f32(digits) * cell - 4, sy}, {num_right + 4, sy}, 1, rl.Color{0, 20, 10, 46})
 	}
 
-	draw_display_text("MINERALS", {side_x, num_y + 7}, 15, SCIFI_LABEL)
-	draw_display_text(rl.TextFormat("+%.1f / S", global_mps()), {side_x, num_y + 29}, 11, SCIFI_MINT)
+	draw_display_text("MINERALS", {side_x, num_y + 8}, 15, SCIFI_LABEL)
+	draw_display_text(rl.TextFormat("+%.1f / S", global_mps()), {side_x, num_y + 26}, 11, SCIFI_MINT)
 
 	bot_y := y0 + 76
 	slash_x := x0 + w - 62
-	rl.DrawLineEx({x0 + 12, bot_y}, {slash_x, bot_y}, 1.5, rail)
+	rl.DrawLineEx({x0, bot_y}, {slash_x, bot_y}, 1.5, rail)
 	rl.DrawLineEx({slash_x, bot_y}, {slash_x + 6, bot_y - 6}, 1.5, rail)
 	rl.DrawLineEx({slash_x + 6, bot_y - 6}, {slash_x + 18, bot_y - 6}, 1.5, rail)
 	rl.DrawLineEx({slash_x + 18, bot_y - 6}, {slash_x + 38, top_y + 4}, 3, rail)
@@ -660,7 +661,7 @@ draw_resource_hud :: proc() {
 	rl.DrawLineEx({slash_x + 46, top_y + 4}, {slash_x + 52, top_y + 4}, 1.5, rail_dim)
 
 	sub_y := bot_y + 9
-	rl.DrawRectangleRec({x0 + 12, sub_y - 1.5, 44, 3}, rail)
+	rl.DrawRectangleRec({x0, sub_y - 1.5, 44, 3}, rail)
 	speed_x := x0 + 66
 	draw_display_text("DRONE SPEED", {speed_x, sub_y - 6}, 9, SCIFI_LABEL)
 	lvl := rl.TextFormat("LVL %d/%d", drone_speed_level, DRONE_SPEED_UPGRADE_MAX)

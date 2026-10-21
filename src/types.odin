@@ -42,7 +42,6 @@ DIALOG_BTN_H       :: 44
 HUD_PAD            :: 16
 BADGE_PAD          :: 8
 BADGE_GAP          :: 8
-RESOURCE_HUD_W     :: 400
 RESOURCE_HUD_H     :: 100
 BADGE_Y            :: HUD_PAD + RESOURCE_HUD_H + 4
 BADGE_H            :: 20
