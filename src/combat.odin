@@ -1045,9 +1045,29 @@ spawn_n_enemies_to :: proc(target: int, count: int) {
 	if enemy_hq_destroyed() { return }
 	spawn_count := min(count, MAX_UNITS - unit_count)
 	if spawn_count <= 0 { return }
+	target_pos := sector_pos(target)
+	to_target := target_pos - ENEMY_HQ_POSITION
+	to_len := rl.Vector3Length(to_target)
+	dir := to_len > 0.001 ? to_target / to_len : rl.Vector3{-1, 0, 0}
+	right := rl.Vector3CrossProduct(dir, {0, 1, 0})
+	if rl.Vector3Length(right) < 0.01 { right = rl.Vector3{0, 0, 1} }
+	right = rl.Vector3Normalize(right)
+	up := rl.Vector3Normalize(rl.Vector3CrossProduct(right, dir))
+	groups := rep_count(spawn_count)
+	origin := ENEMY_HQ_POSITION + dir * (ENEMY_HQ_RADIUS + 1.5)
+
 	for i in 0..<spawn_count {
-		angle := f32(i) * 1.26
-		pos := ENEMY_HQ_POSITION + rl.Vector3{math.cos(angle) * 1.5, 0.5, math.sin(angle) * 1.5}
+		angle := f32(i) * (2 * math.PI / f32(spawn_count))
+		group := i % groups
+		member := i / groups
+		col := f32(group % 5) - 2
+		row := f32(group / 5)
+		member_angle := f32(member) * 2.4
+		member_radius := 0.12 * f32(member)
+		pos := origin +
+			right * (col * 1.3 + math.cos(member_angle) * member_radius) +
+			up * (abs(col) * 0.2 + math.sin(member_angle) * member_radius) -
+			dir * (row * 1.6 + abs(col) * 0.3)
 		units[unit_count] = Unit{
 			kind = .COMBAT, state = .TRANSIT, position = pos,
 			home_planet = NEPTUNE, affiliation = target, target_planet = target,

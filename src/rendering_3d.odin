@@ -116,7 +116,7 @@ draw_world :: proc() {
 	for p in 0..<SECTOR_COUNT {
 		for side in 0..<2 {
 			if side == 1 && !sector_vis[p] { continue }
-			vis_combat[p][side] = max(min(transit_counts[p][side], 10), rep_count(transit_counts[p][side]))
+			vis_combat[p][side] = rep_count(transit_counts[p][side])
 			vis_miner_tr[p][side] = rep_count(miner_transit_counts[p][side])
 			vis_miner_ret[p][side] = rep_count(miner_return_counts[p][side])
 		}
