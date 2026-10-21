@@ -56,6 +56,7 @@ TILES_PER_ROW      :: 10
 DOUBLE_CLICK_TIME  :: 0.35
 
 CAMERA_START_Y     :: 200.0 - 185.0 * 0.60
+DRONE_LOD_DISTANCE   :: 70.0
 
 SCIFI_GREEN       :: rl.Color{71, 252, 175, 255}
 SCIFI_MINT        :: rl.Color{185, 239, 215, 255}

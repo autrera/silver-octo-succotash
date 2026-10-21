@@ -121,7 +121,7 @@ hud_save_notification_timer: f32
 save_feedback_timer: f32
 
 main :: proc() {
-	rl.SetConfigFlags({.VSYNC_HINT, .WINDOW_HIGHDPI, .WINDOW_RESIZABLE})
+	rl.SetConfigFlags({.VSYNC_HINT, .MSAA_4X_HINT, .WINDOW_HIGHDPI, .WINDOW_RESIZABLE})
 	rl.InitWindow(1280, 760, "STARFALL COMMAND: Planetary RTS Prototype")
 	defer rl.CloseWindow()
 	rl.ToggleBorderlessWindowed()
