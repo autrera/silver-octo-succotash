@@ -362,6 +362,10 @@ queue_unit_on_earth :: proc(kind: Unit_Type) -> bool {
 	return true
 }
 
+can_queue_unit :: proc(kind: Unit_Type) -> bool {
+	return minerals >= unit_cost(kind) && queued_count(EARTH) < base_counts[EARTH] * 5
+}
+
 queue_unit :: proc(kind: Unit_Type) {
 	if selected_planet != EARTH { return }
 	queue_unit_on_earth(kind)

@@ -129,6 +129,9 @@ orbital_defense_ammo_pending_kills = {}
 	last_unit_clicked_index = -1
 	last_unit_clicked_planet = -1
 	last_unit_click_time = {}
+	last_row_clicked_kind = -1
+	last_row_clicked_planet = -1
+	last_row_click_time = {}
 	rl.SetRandomSeed(7)
 }
 
@@ -255,6 +258,13 @@ update_input :: proc() {
 				selected_planet = btn_p
 				if can_build_orbital_ammo(btn_p) {
 					start_orbital_ammo_construction(btn_p)
+				}
+			} else if row_p, row_kind, on_plus := pick_overlay_drone_row(mouse); row_p >= 0 {
+				if on_plus {
+					selected_planet = row_p
+					queue_unit_on_earth(row_kind)
+				} else {
+					click_overlay_drone_row(row_p, row_kind)
 				}
 			} else if planet := pick_planet(mouse); planet >= 0 {
 				selected_planet = planet
@@ -484,6 +494,30 @@ click_unit_tiles :: proc(mouse: rl.Vector2, panel_x: f32, kind: Unit_Type) -> bo
 		ordinal += 1
 	}
 	return false
+}
+
+click_overlay_drone_row :: proc(p: int, kind: Unit_Type) {
+	selected_planet = p
+	now := time.tick_now()
+	is_double_click := false
+	if last_row_clicked_kind == int(kind) && last_row_clicked_planet == p {
+		elapsed := time.duration_seconds(time.tick_diff(last_row_click_time, now))
+		is_double_click = elapsed >= 0 && elapsed <= DOUBLE_CLICK_TIME
+	}
+	if !is_double_click {
+		last_row_clicked_kind = int(kind)
+		last_row_clicked_planet = p
+		last_row_click_time = now
+		return
+	}
+	last_row_clicked_kind = -1
+	if !ctrl_down() { clear_selection() }
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.enemy || u.kind != kind { continue }
+		owner := kind == .MINING ? u.target_planet : u.affiliation
+		if owner == p { selected_units[i] = true }
+	}
 }
 
 update_combat_vision :: proc(dt: f32) {

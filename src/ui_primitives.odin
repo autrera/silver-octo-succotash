@@ -191,7 +191,8 @@ draw_orbital_upgrade_spinner :: proc(center: rl.Vector2, size: f32, color: rl.Co
 	rl.DrawCircleV(center, max(1.5, size * 0.14), color)
 }
 
-draw_overlay_mini_button :: proc(rect: rl.Rectangle, label: cstring, enabled: bool, alpha_factor: f32) {
+draw_overlay_mini_button :: proc(src_rect: rl.Rectangle, enabled: bool, alpha_factor: f32) {
+	rect := rl.Rectangle{math.round(src_rect.x), math.round(src_rect.y), math.round(src_rect.width), math.round(src_rect.height)}
 	mouse := rl.GetMousePosition()
 	hovered := enabled && rl.CheckCollisionPointRec(mouse, rect)
 	pressed := hovered && rl.IsMouseButtonDown(.LEFT)
@@ -215,15 +216,17 @@ draw_overlay_mini_button :: proc(rect: rl.Rectangle, label: cstring, enabled: bo
 		text_col = rl.Color{180, 255, 220, 255}
 	}
 
-	draw_chamfered_panel(rect, 3, bg, border)
+	draw_chamfered_panel({rect.x, rect.y, rect.width - 1, rect.height - 1}, 3, bg, border)
 	if hovered {
-		draw_corner_brackets(rect, 1, 3, border)
+		draw_corner_brackets({rect.x, rect.y, rect.width - 1, rect.height - 1}, 1, 3, border)
 	}
 
-	tw := f32(rl.MeasureText(label, 14))
-	tx := i32(rect.x + (rect.width - tw) * 0.5)
-	ty := i32(rect.y + (rect.height - 14) * 0.5 + (pressed ? 1.0 : 0.0))
-	rl.DrawText(label, tx, ty, 14, text_col)
+	arm: f32 = 5.0
+	thick: f32 = 2.0
+	cx := math.round(rect.x + rect.width * 0.5)
+	cy := math.round(rect.y + rect.height * 0.5) + (pressed ? 1.0 : 0.0)
+	rl.DrawRectangleRec({cx - arm, cy - thick * 0.5, arm * 2, thick}, text_col)
+	rl.DrawRectangleRec({cx - thick * 0.5, cy - arm, thick, arm * 2}, text_col)
 }
 
 conquered_planet_overlay_ammo_btn_rect :: proc(badge_rect: rl.Rectangle) -> rl.Rectangle {
@@ -350,7 +353,11 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 
 	ammo_btn_rect := conquered_planet_overlay_ammo_btn_rect(rect)
 	can_ammo := can_build_orbital_ammo(p)
-	draw_overlay_mini_button(ammo_btn_rect, "+", can_ammo, alpha_factor)
+	draw_overlay_mini_button(ammo_btn_rect, can_ammo, alpha_factor)
+	if p == EARTH {
+		draw_overlay_mini_button(overlay_drone_plus_btn_rect(rect, rect.y + 51.0), can_queue_unit(.MINING), alpha_factor)
+		draw_overlay_mini_button(overlay_drone_plus_btn_rect(rect, rect.y + 85.0), can_queue_unit(.COMBAT), alpha_factor)
+	}
 
 	row2_cy := rect.y + 51.0
 	miner_col := miners > 0 ? rl.Color{240, 180, 60, icon_alpha} : rl.Color{140, 140, 140, muted_alpha}
@@ -398,6 +405,50 @@ draw_conquered_planet_overlays :: proc(viewport_w, screen_h: f32) {
 			}
 		}
 	}
+}
+
+overlay_drone_plus_btn_rect :: proc(badge_rect: rl.Rectangle, row_cy: f32) -> rl.Rectangle {
+	ammo := conquered_planet_overlay_ammo_btn_rect(badge_rect)
+	return rl.Rectangle{ammo.x, row_cy - ammo.height * 0.5, ammo.width, ammo.height}
+}
+
+overlay_drone_row_rect :: proc(badge_rect: rl.Rectangle, kind: Unit_Type) -> rl.Rectangle {
+	top := badge_rect.y + 34.0
+	if kind == .COMBAT { top += 34.0 }
+	return rl.Rectangle{badge_rect.x, top, badge_rect.width, 34.0}
+}
+
+overlay_drone_row_cy :: proc(badge_rect: rl.Rectangle, kind: Unit_Type) -> f32 {
+	return badge_rect.y + (kind == .MINING ? f32(51.0) : f32(85.0))
+}
+
+pick_overlay_drone_row :: proc(mouse: rl.Vector2) -> (planet: int, kind: Unit_Type, on_plus: bool) {
+	viewport_w := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
+	screen_h := f32(rl.GetScreenHeight())
+	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
+	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
+
+	for p in 0..<PLANET_COUNT {
+		if !planet_liberated(p) { continue }
+		to_planet := planets[p].position - camera.position
+		if rl.Vector3DotProduct(to_planet, cam_forward) <= 0.1 { continue }
+
+		center_screen := rl.GetWorldToScreen(planets[p].position, camera)
+		limb_screen := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
+		screen_r := rl.Vector2Distance(center_screen, limb_screen)
+
+		rect := conquered_planet_overlay_rect(p, center_screen, screen_r, p == selected_planet, viewport_w, screen_h)
+		if rect.y + rect.height > screen_h - 4.0 || rect.y < 4.0 { continue }
+		for k in Unit_Type {
+			if p == EARTH && rl.CheckCollisionPointRec(mouse, overlay_drone_plus_btn_rect(rect, overlay_drone_row_cy(rect, k))) {
+				return p, k, true
+			}
+			if rl.CheckCollisionPointRec(mouse, overlay_drone_row_rect(rect, k)) {
+				return p, k, false
+			}
+		}
+	}
+	return -1, .MINING, false
 }
 
 pick_conquered_planet_overlay_ammo_button :: proc(mouse: rl.Vector2) -> int {

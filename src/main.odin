@@ -86,6 +86,9 @@ inspector_drag_active: bool
 last_unit_click_time: time.Tick
 last_unit_clicked_index := -1
 last_unit_clicked_planet := -1
+last_row_click_time: time.Tick
+last_row_clicked_kind := -1
+last_row_clicked_planet := -1
 
 enemy_base_hp: [SECTOR_COUNT]int
 enemy_wave_timer: f32
