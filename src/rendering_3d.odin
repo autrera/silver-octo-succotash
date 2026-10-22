@@ -18,12 +18,9 @@ draw_world :: proc() {
 		draw_planet_body(p)
 		ring_col := has_vision(p) ? planet_atmospheres[p] : rl.Color{70, 76, 90, 255}
 		rl.DrawCircle3D(planet.position, planet.radius + 1.5, {1, 0, 0}, 90, rl.Fade(ring_col, 0.22))
-		if orbital_defense_level[p] > 0 {
-			draw_cyberpunk_flak88(p)
-		} else if orbital_defense_building[p] {
-			draw_cyberpunk_flak88_construction_site(p)
-		}
+		draw_orbital_defense(p)
 	}
+	flush_orbital_defenses()
 	if hq_on_screen(f32(viewport_w)) {
 		draw_hq_fortress(ENEMY_HQ_POSITION)
 	}

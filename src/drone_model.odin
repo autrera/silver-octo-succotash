@@ -10,6 +10,7 @@ SURF_METAL  :: 2.0
 SURF_HAZARD :: 3.0
 SURF_ENGINE :: 4.0
 SURF_FLOW   :: 5.0
+SURF_BEACON :: 6.0
 
 Fighter_Palette :: struct {
 	armor_main, armor_dark, armor_plate, metal_trim, gunmetal, hazard, energy_glow, energy_core: rl.Color,
@@ -53,16 +54,18 @@ out vec3 fragNormal;
 out vec4 fragColor;
 out vec2 fragMaterial;
 flat out float fragPhase;
+flat out float fragDim;
 void main() {
-	vec4 world = instanceTransform * vec4(vertexPosition, 1.0);
+	vec3 world = (instanceTransform * vec4(vertexPosition, 1.0)).xyz;
 	vec3 origin = instanceTransform[3].xyz;
 	fragObjPos = vertexPosition;
-	fragWorldPos = world.xyz;
+	fragWorldPos = world;
 	fragNormal = mat3(instanceTransform) * vertexNormal;
 	fragColor = vertexColor;
 	fragMaterial = vertexTexCoord;
 	fragPhase = fract(sin(dot(origin, vec3(12.9898, 78.233, 37.719))) * 43758.5453) * 6.2831;
-	gl_Position = mvp * world;
+	fragDim = instanceTransform[0].w;
+	gl_Position = mvp * vec4(world, 1.0);
 }
 `
 
@@ -73,6 +76,7 @@ in vec3 fragNormal;
 in vec4 fragColor;
 in vec2 fragMaterial;
 flat in float fragPhase;
+flat in float fragDim;
 uniform vec3 lightDir;
 uniform vec3 viewPos;
 uniform vec3 rimColor;
@@ -123,8 +127,8 @@ float hazard(vec3 p) {
 void main() {
 	vec3 n = normalize(fragNormal);
 	if (!gl_FrontFacing) n = -n;
-	vec3 base = fragColor.rgb;
-	float glow = fragMaterial.x;
+	vec3 base = mix(fragColor.rgb, vec3(0.2, 0.19, 0.18), fragMaterial.x * fragDim);
+	float glow = fragMaterial.x * (1.0 - fragDim);
 	float surf = floor(fragMaterial.y + 0.5);
 	float shine = 0.16;
 	float gloss = 22.0;
@@ -157,6 +161,8 @@ void main() {
 		pulse = 0.78 + 0.16 * sin(time * 21.0 + fragPhase) + 0.08 * sin(time * 37.0 + fragPhase * 2.3);
 	} else if (surf == 5.0) {
 		pulse = 0.45 + 0.55 * pow(0.5 + 0.5 * sin(time * 9.0 - fragObjPos.x * 34.0 + fragPhase), 2.0);
+	} else if (surf == 6.0) {
+		pulse = 0.2 + 0.9 * pow(0.5 + 0.5 * sin(time * 4.0 + fragPhase + dot(fragObjPos, vec3(7.0, 0.0, 13.0))), 4.0);
 	}
 	float facing = max(dot(n, v), 0.0);
 	vec3 hot = mix(base, vec3(1.0), 0.4 * pulse);
@@ -690,6 +696,15 @@ unload_drone_model :: proc(model: rl.Model) {
 	rl.UnloadModel(m)
 }
 
+instance_transform :: proc(origin, x, y, z: rl.Vector3, dim: f32 = 0) -> rl.Matrix {
+	return rl.Matrix{
+		x.x, y.x, z.x, origin.x,
+		x.y, y.y, z.y, origin.y,
+		x.z, y.z, z.z, origin.z,
+		dim, 0, 0, 1,
+	}
+}
+
 drone_transform :: proc(position, heading: rl.Vector3) -> rl.Matrix {
 	f := heading
 	if rl.Vector3Length(f) < 0.001 { f = {1, 0, 0} }
@@ -697,13 +712,7 @@ drone_transform :: proc(position, heading: rl.Vector3) -> rl.Matrix {
 	z := rl.Vector3CrossProduct(f, {0, 1, 0})
 	if rl.Vector3Length(z) < 0.001 { z = {0, 0, 1} }
 	z = rl.Vector3Normalize(z)
-	y := rl.Vector3CrossProduct(z, f)
-	return rl.Matrix{
-		f.x, y.x, z.x, position.x,
-		f.y, y.y, z.y, position.y,
-		f.z, y.z, z.z, position.z,
-		0, 0, 0, 1,
-	}
+	return instance_transform(position, f, rl.Vector3CrossProduct(z, f), z)
 }
 
 init_drone_visuals :: proc() {
@@ -763,17 +772,21 @@ draw_miner_drone :: proc(position: rl.Vector3, enemy: bool, heading: rl.Vector3 
 	queue_drone(enemy ? .ENEMY_MINER : .PLAYER_MINER, position + {0, bob, 0}, heading)
 }
 
-flush_drones :: proc() {
-	if !drone_visuals_ready { return }
+set_drone_shader_frame :: proc(rim: rl.Color) {
 	view := camera.position
 	t := laser_anim_time
+	r := rl.ColorNormalize(rim)
+	rim_rgb := rl.Vector3{r.x, r.y, r.z}
 	rl.SetShaderValue(drone_shader, drone_shader_locs.view_pos, &view, .VEC3)
 	rl.SetShaderValue(drone_shader, drone_shader_locs.time, &t, .FLOAT)
+	rl.SetShaderValue(drone_shader, drone_shader_locs.rim_color, &rim_rgb, .VEC3)
+}
+
+flush_drones :: proc() {
+	if !drone_visuals_ready { return }
 	for kind in Drone_Model_Kind {
 		enemy := kind == .ENEMY_MINER || kind == .ENEMY_FIGHTER
-		rim := rl.ColorNormalize(enemy ? DRONE_RIM_ENEMY : DRONE_RIM_PLAYER)
-		rim_rgb := rl.Vector3{rim.x, rim.y, rim.z}
-		rl.SetShaderValue(drone_shader, drone_shader_locs.rim_color, &rim_rgb, .VEC3)
+		set_drone_shader_frame(enemy ? DRONE_RIM_ENEMY : DRONE_RIM_PLAYER)
 		for lod in 0..<2 {
 			n := drone_instance_count[kind][lod]
 			if n == 0 { continue }
