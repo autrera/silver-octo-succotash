@@ -108,6 +108,12 @@ WAVE_FIGHTERS_PER_LIBERATED :: 15
 
 MINOR_WAVE_INTERVAL :: 75.0
 MINOR_WAVE_SIZE     :: 10
+ORBIT_SPEED               :: 0.9
+ORBIT_EVEN_SPACING_MAX    :: 25
+ORBIT_SPACING_CATCHUP     :: 1.25
+ORBIT_SPACING_SLOWDOWN    :: 0.85
+ORBIT_SPACING_GAIN       :: 3.0
+ORBIT_SPACING_SNAP        :: 0.003
 
 MINER_BUILD_TIME          :: 4.0
 COMBAT_BUILD_TIME         :: 8.0
@@ -226,7 +232,8 @@ Unit :: struct {
 	enemy:         bool,
 	progress:      f32,
 	orbit_angle:   f32,
-	squad:         int,
+	orbit_placed:  bool,
+	squad:        int,
 	build_target:  Build_Target,
 	mining_active: bool,
 }

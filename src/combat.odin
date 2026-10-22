@@ -983,10 +983,30 @@ update_combat :: proc(u: ^Unit, dt: f32) {
 		travel(u, target, COMBAT_TRANSIT_SPEED * dt)
 		if distance(u.position, target) <= sector_radius(u.target_planet) + 1.4 {
 			u.state = .GUARDING
+			u.orbit_placed = false
 			u.position = orbit_pos(sector_pos(u.affiliation), sector_radius(u.affiliation), u.orbit_angle)
 		}
 	} else if u.state == .GUARDING {
-		u.orbit_angle += dt * 0.9
+		side := u.enemy ? 1 : 0
+		s := u.affiliation
+		n := orbit_group_count[s][side]
+		if n > 1 && n < ORBIT_EVEN_SPACING_MAX {
+			rank := orbit_group_rank[s][side] % n
+			orbit_group_rank[s][side] += 1
+			slot := orbit_phase + f32(rank) * 2 * math.PI / f32(n)
+			diff := math.mod(slot - u.orbit_angle, 2 * math.PI)
+			if diff > math.PI { diff -= 2 * math.PI }
+			if diff < -math.PI { diff += 2 * math.PI }
+			speed := ORBIT_SPEED + clamp(diff * ORBIT_SPACING_GAIN, -ORBIT_SPEED * (1 - ORBIT_SPACING_SLOWDOWN), ORBIT_SPEED * (ORBIT_SPACING_CATCHUP - 1))
+			if !u.orbit_placed || abs(diff) < ORBIT_SPACING_SNAP {
+				u.orbit_placed = true
+				u.orbit_angle = slot
+			} else {
+				u.orbit_angle += speed * dt
+			}
+		} else {
+			u.orbit_angle += dt * ORBIT_SPEED
+		}
 		u.position = orbit_pos(sector_pos(u.affiliation), sector_radius(u.affiliation), u.orbit_angle)
 	}
 }

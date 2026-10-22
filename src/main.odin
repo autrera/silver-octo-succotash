@@ -109,6 +109,9 @@ earth_rally := NO_RALLY
 last_known_intel: [PLANET_COUNT]Intel
 intel_recorded: [PLANET_COUNT]bool
 laser_anim_time: f32
+orbit_phase: f32
+orbit_group_count: [SECTOR_COUNT][2]int
+orbit_group_rank: [SECTOR_COUNT][2]int
 combat_nebula_intensity: [SECTOR_COUNT]f32
 minor_wave_source_nebula_intensity: [SECTOR_COUNT]f32
 sector_combat_state: [SECTOR_COUNT]bool

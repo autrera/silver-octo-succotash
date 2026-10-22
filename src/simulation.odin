@@ -568,6 +568,15 @@ issue_group_order :: proc(planet: int) {
 update_units :: proc(dt: f32) {
 	update_mining_income(dt)
 	begin_miner_pass()
+	orbit_phase = math.mod(orbit_phase + dt * ORBIT_SPEED, 2 * math.PI)
+	orbit_group_count = {}
+	orbit_group_rank = {}
+	for i := 0; i < unit_count; i += 1 {
+		u := &units[i]
+		if u.kind == .COMBAT && u.state == .GUARDING && u.affiliation >= 0 && u.affiliation < SECTOR_COUNT {
+			orbit_group_count[u.affiliation][u.enemy ? 1 : 0] += 1
+		}
+	}
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.kind == .COMBAT {
