@@ -2,7 +2,6 @@ package main
 
 import "core:c"
 import "core:math"
-import "core:math/noise"
 import rl "vendor:raylib"
 import "vendor:raylib/rlgl"
 
@@ -12,7 +11,10 @@ PLANET_LABEL_GAP  :: 6
 PLANET_LABEL_H    :: 18
 HALO_TEX_SIZE     :: 128
 HALO_SPAN         :: 1.7
-NEBULA_TEX_SIZE   :: 256
+NEBULA_CELL_SIZE  :: 1024
+NEBULA_ATLAS_GRID :: 2
+NEBULA_CELLS      :: NEBULA_ATLAS_GRID * NEBULA_ATLAS_GRID
+NEBULA_CORE_SCALE :: 0.62
 
 planet_atmospheres := [PLANET_COUNT]rl.Color{
 	{170, 165, 160, 90},
@@ -33,22 +35,24 @@ Ambient_Nebula :: struct {
 	position: rl.Vector3,
 	size:     f32,
 	rotation: f32,
-	tint:     rl.Color,
-	texture:  int,
+	spin:     f32,
+	gas:      rl.Color,
+	core:     rl.Color,
+	cell:     int,
 }
 
 ambient_nebulae := [?]Ambient_Nebula{
-	{position = {-78, -60, -58}, size = 46, rotation = 20, tint = {120, 70, 255, 92}, texture = 0},
-	{position = {-66, -60, -70}, size = 30, rotation = 140, tint = {70, 140, 255, 84}, texture = 1},
-	{position = {96, -60, -76}, size = 50, rotation = 75, tint = {40, 190, 160, 64}, texture = 1},
-	{position = {30, -60, 84}, size = 40, rotation = 310, tint = {190, 80, 220, 56}, texture = 2},
-	{position = {-84, -60, 74}, size = 34, rotation = 250, tint = {50, 150, 230, 56}, texture = 2},
+	{position = {-74, -60, -62}, size = 52, rotation = 20, spin = 0.4, gas = {120, 70, 255, 92}, core = {70, 140, 255, 64}, cell = 0},
+	{position = {86, -60, -76}, size = 54, rotation = 75, spin = -0.3, gas = {40, 190, 160, 72}, core = {60, 120, 255, 64}, cell = 1},
+	{position = {20, -60, -200}, size = 84, rotation = 310, spin = 0.2, gas = {190, 80, 220, 48}, core = {110, 90, 255, 48}, cell = 2},
+	{position = {-46, -60, 18}, size = 30, rotation = 250, spin = -0.5, gas = {50, 150, 230, 60}, core = {60, 210, 190, 52}, cell = 3},
 }
 
 planet_shader: rl.Shader
 planet_shader_locs: Planet_Shader_Locs
 planet_halo_texture: rl.Texture2D
-nebula_textures: [3]rl.Texture2D
+nebula_shader: rl.Shader
+nebula_atlas: rl.RenderTexture2D
 saturn_ring_model: rl.Model
 
 PLANET_VS :: `#version 330
@@ -68,23 +72,7 @@ void main() {
 }
 `
 
-PLANET_FS :: `#version 330
-in vec3 fragObjNormal;
-in vec3 fragNormal;
-in vec3 fragPos;
-uniform vec4 colDiffuse;
-uniform int planetKind;
-uniform vec3 lightDir;
-uniform vec3 viewPos;
-uniform vec4 rimColor;
-uniform float time;
-uniform float fog;
-uniform float industry;
-uniform float industryLevel;
-out vec4 finalColor;
-
-vec3 emission = vec3(0.0);
-
+NOISE_GLSL :: `
 vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
 vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
 vec4 permute(vec4 x) { return mod289(((x * 34.0) + 1.0) * x); }
@@ -144,7 +132,25 @@ float fbm(vec3 p, int octaves) {
 	}
 	return sum;
 }
+`
 
+PLANET_FS :: `#version 330
+in vec3 fragObjNormal;
+in vec3 fragNormal;
+in vec3 fragPos;
+uniform vec4 colDiffuse;
+uniform int planetKind;
+uniform vec3 lightDir;
+uniform vec3 viewPos;
+uniform vec4 rimColor;
+uniform float time;
+uniform float fog;
+uniform float industry;
+uniform float industryLevel;
+out vec4 finalColor;
+
+vec3 emission = vec3(0.0);
+` + NOISE_GLSL + `
 vec3 ramp3(vec3 a, vec3 b, vec3 c, float t) {
 	t = clamp(t, 0.0, 1.0);
 	return t < 0.5 ? mix(a, b, t * 2.0) : mix(b, c, t * 2.0 - 1.0);
@@ -328,6 +334,68 @@ void main() {
 }
 `
 
+NEBULA_BAKE_FS :: `#version 330
+uniform vec2 size;
+out vec4 finalColor;
+` + NOISE_GLSL + `
+float ridged(vec3 p, int octaves) {
+	float amp = 0.5;
+	float sum = 0.0;
+	for (int i = 0; i < 6; i++) {
+		if (i >= octaves) break;
+		float n = 1.0 - abs(snoise(p));
+		sum += amp * n * n;
+		p = p * 2.03 + vec3(4.1, 2.7, 8.3);
+		amp *= 0.5;
+	}
+	return sum;
+}
+
+void main() {
+	vec2 uv = gl_FragCoord.xy / size;
+	vec2 cell = floor(uv * 2.0);
+	vec2 p = fract(uv * 2.0) * 2.0 - 1.0;
+	float seed = cell.x + cell.y * 2.0;
+	vec3 s = vec3(seed * 19.7 + 3.1, seed * 7.3 + 11.9, seed * 13.1 + 5.3);
+
+	vec2 bend = vec2(fbm(vec3(p * 1.4, 0.0) + s, 4), fbm(vec3(p * 1.4, 3.7) + s, 4));
+	float d = length((p + bend * 0.5) * vec2(1.0, 1.4));
+	d += 0.4 * fbm(vec3(p * 2.6, 1.3) + s, 5);
+	float fade = 1.0 - smoothstep(0.6, 0.97, length(p));
+	float env = (1.0 - smoothstep(0.05, 0.95, d)) * fade;
+
+	vec3 P = vec3(p * 1.6, 0.0) + s;
+	vec2 w = vec2(fbm(P + vec3(5.2, 1.3, 2.8), 4), fbm(P + vec3(1.7, 9.2, 4.4), 4));
+	float g = fbm(P + vec3(w * 0.6, 0.0), 7);
+	float gas = smoothstep(0.04, 1.0, env * clamp(0.6 + 0.9 * g, 0.0, 1.3));
+
+	float haze = 1.0 - smoothstep(0.1, 1.3, d);
+	haze *= haze * fade * clamp(0.6 + g, 0.0, 1.0);
+	gas = max(gas, haze * 0.2);
+
+	float lane = 1.0 - abs(fbm(vec3(p * 0.9 + w * 0.7, 6.2) + s, 3));
+	float dust = smoothstep(0.7, 0.95, lane) * smoothstep(0.15, 0.6, env);
+	gas *= 1.0 - 0.65 * dust;
+
+	float mask = smoothstep(0.0, 0.35, fbm(vec3(p * 0.8, 9.4) + s, 3));
+	float fil = smoothstep(0.55, 0.85, ridged(vec3(p * 2.4 + w * 0.8, 1.9) + s, 5)) * mask;
+	float glow = (pow(gas, 2.0) * 0.8 + fil * gas * 0.5) * (1.0 - dust);
+	finalColor = vec4(gas, glow, 0.0, 1.0);
+}
+`
+
+NEBULA_FS :: `#version 330
+in vec2 fragTexCoord;
+in vec4 fragColor;
+uniform sampler2D texture0;
+out vec4 finalColor;
+void main() {
+	vec4 t = texture(texture0, fragTexCoord);
+	vec3 hot = mix(fragColor.rgb, vec3(1.0), 0.35);
+	finalColor = vec4((fragColor.rgb * t.r + hot * t.g) * fragColor.a, 1.0);
+}
+`
+
 init_planet_visuals :: proc() {
 	if planet_visuals_ready { return }
 	planet_shader = rl.LoadShaderFromMemory(PLANET_VS, PLANET_FS)
@@ -352,9 +420,8 @@ init_planet_visuals :: proc() {
 	}
 
 	planet_halo_texture = bake_halo_texture()
-	for i in 0..<len(nebula_textures) {
-		nebula_textures[i] = bake_nebula_texture(i64(i * 7919 + 17))
-	}
+	nebula_shader = rl.LoadShaderFromMemory(nil, NEBULA_FS)
+	nebula_atlas = bake_nebula_atlas()
 	saturn_ring_model = build_saturn_ring_model()
 	planet_visuals_ready = true
 }
@@ -367,7 +434,8 @@ unload_planet_visuals :: proc() {
 	}
 	rl.UnloadShader(planet_shader)
 	rl.UnloadTexture(planet_halo_texture)
-	for t in nebula_textures { rl.UnloadTexture(t) }
+	rl.UnloadShader(nebula_shader)
+	rl.UnloadRenderTexture(nebula_atlas)
 	rl.UnloadModel(saturn_ring_model)
 	planet_visuals_ready = false
 }
@@ -397,43 +465,32 @@ bake_halo_texture :: proc() -> rl.Texture2D {
 	return tex
 }
 
-nebula_fbm :: proc(seed: i64, x, y: f32, octaves: int) -> f32 {
-	sum: f32 = 0
-	amp: f32 = 0.5
-	fx, fy := x, y
-	for _ in 0..<octaves {
-		sum += amp * noise.noise_2d(seed, {f64(fx), f64(fy)})
-		fx = fx * 2.07 + 13.1
-		fy = fy * 2.07 + 7.7
-		amp *= 0.5
-	}
-	return sum
+bake_nebula_atlas :: proc() -> rl.RenderTexture2D {
+	size := c.int(NEBULA_CELL_SIZE * NEBULA_ATLAS_GRID)
+	bake := rl.LoadShaderFromMemory(nil, NEBULA_BAKE_FS)
+	defer rl.UnloadShader(bake)
+	dims := [2]f32{f32(size), f32(size)}
+	rl.SetShaderValue(bake, rl.GetShaderLocation(bake, "size"), &dims, .VEC2)
+	target := rl.LoadRenderTexture(size, size)
+	rl.BeginTextureMode(target)
+	rl.ClearBackground(rl.BLANK)
+	rl.BeginShaderMode(bake)
+	rl.DrawRectangle(0, 0, size, size, rl.WHITE)
+	rl.EndShaderMode()
+	rl.EndTextureMode()
+	rl.GenTextureMipmaps(&target.texture)
+	rl.SetTextureFilter(target.texture, .TRILINEAR)
+	return target
 }
 
-bake_nebula_texture :: proc(seed: i64) -> rl.Texture2D {
-	img := rl.GenImageColor(NEBULA_TEX_SIZE, NEBULA_TEX_SIZE, rl.BLANK)
-	half := f32(NEBULA_TEX_SIZE) / 2
-	for y in 0..<NEBULA_TEX_SIZE {
-		for x in 0..<NEBULA_TEX_SIZE {
-			u := (f32(x) - half) / half
-			v := (f32(y) - half) / half
-			wx := nebula_fbm(seed + 1, u * 1.4, v * 1.4, 3)
-			wy := nebula_fbm(seed + 2, u * 1.4 + 3.3, v * 1.4 - 1.7, 3)
-			n := nebula_fbm(seed, u * 2.2 + wx * 1.2, v * 2.2 + wy * 1.2, 6)
-			d := math.sqrt(u * u + v * v)
-			falloff := clamp(1 - d, 0, 1)
-			falloff = falloff * falloff * (3 - 2 * falloff)
-			density := clamp(0.5 + n * 1.1, 0, 1)
-			density = density * density * falloff
-			wisps := clamp(1 - abs(n) * 4, 0, 1)
-			a := clamp(density * 0.9 + wisps * falloff * 0.35, 0, 1)
-			rl.ImageDrawPixel(&img, c.int(x), c.int(y), {255, 255, 255, u8(a * 255)})
-		}
+draw_nebula_layer :: proc(cell: int, center: rl.Vector2, r, angle: f32, tint: rl.Color) {
+	src := rl.Rectangle{
+		f32(cell % NEBULA_ATLAS_GRID * NEBULA_CELL_SIZE),
+		f32(cell / NEBULA_ATLAS_GRID * NEBULA_CELL_SIZE),
+		NEBULA_CELL_SIZE,
+		NEBULA_CELL_SIZE,
 	}
-	tex := rl.LoadTextureFromImage(img)
-	rl.SetTextureFilter(tex, .BILINEAR)
-	rl.UnloadImage(img)
-	return tex
+	rl.DrawTexturePro(nebula_atlas.texture, src, {center.x, center.y, r * 2, r * 2}, {r, r}, angle, tint)
 }
 
 build_saturn_ring_model :: proc() -> rl.Model {
@@ -505,22 +562,24 @@ planet_in_front :: proc(pos: rl.Vector3) -> bool {
 
 draw_ambient_nebulae :: proc() {
 	if !planet_visuals_ready { return }
+	rl.BeginShaderMode(nebula_shader)
+	defer rl.EndShaderMode()
 	rl.BeginBlendMode(.ADDITIVE)
 	defer rl.EndBlendMode()
 	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
 	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
+	screen_w := f32(rl.GetScreenWidth())
+	screen_h := f32(rl.GetScreenHeight())
 	for n in ambient_nebulae {
 		if !planet_in_front(n.position) { continue }
 		center := rl.GetWorldToScreen(n.position, camera)
 		edge := rl.GetWorldToScreen(n.position + cam_right * n.size, camera)
 		r := rl.Vector2Distance(center, edge)
 		if r < 4 { continue }
-		tex := nebula_textures[n.texture]
-		src := rl.Rectangle{0, 0, f32(tex.width), f32(tex.height)}
-		dst := rl.Rectangle{center.x, center.y, r * 2, r * 2}
-		rl.DrawTexturePro(tex, src, dst, {r, r}, n.rotation, n.tint)
-		core := rl.Color{n.tint.r, n.tint.g, n.tint.b, n.tint.a / 2}
-		rl.DrawTexturePro(tex, src, {center.x, center.y, r * 1.1, r * 1.1}, {r * 0.55, r * 0.55}, n.rotation + 90, core)
+		if center.x + r < 0 || center.x - r > screen_w || center.y + r < 0 || center.y - r > screen_h { continue }
+		turn := n.spin * laser_anim_time
+		draw_nebula_layer(n.cell, center, r, n.rotation + turn, n.gas)
+		draw_nebula_layer((n.cell + 2) % NEBULA_CELLS, center, r * NEBULA_CORE_SCALE, n.rotation + 90 - turn * 2, n.core)
 	}
 }
 
