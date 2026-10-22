@@ -163,7 +163,7 @@ serialize_game_state :: proc(allocator := context.temp_allocator) -> string {
 	}
 
 	for s in 0..<SECTOR_COUNT {
-		if s >= PLANET_COUNT && (orbital_defense_level[s] > 0 || orbital_defense_building[s] || orbital_defense_progress[s] > 0 || orbital_defense_ammo[s] > 0 || orbital_defense_ammo_building[s]) {
+		if s >= PLANET_COUNT {
 			fmt.sbprintf(&b, "ORBITAL_DEFENSE %d %d %d %.4f %d %d %d %.4f\n",
 				s,
 				orbital_defense_level[s],
@@ -230,6 +230,7 @@ deserialize_game_state :: proc(content: string) -> bool {
 	reset_world()
 	base_counts = {}
 	pending_count = {}
+	hq_defense_saved := false
 
 	for line in lines {
 		trimmed := strings.trim_space(line)
@@ -309,6 +310,7 @@ deserialize_game_state :: proc(content: string) -> bool {
 				} else if lvl > 0 {
 					ammo = ORBITAL_DEFENSE_START_AMMO
 				}
+				if p == ENEMY_HOME { hq_defense_saved = true }
 				if p >= 0 && p < SECTOR_COUNT {
 					orbital_defense_level[p] = lvl
 					orbital_defense_building[p] = bld
@@ -484,6 +486,12 @@ deserialize_game_state :: proc(content: string) -> bool {
 		auto_build_mode = .OFF
 	}
 	autobuild_retry_timer = 0
+
+	if !hq_defense_saved {
+		orbital_defense_level[ENEMY_HOME] = STARTING_HQ_ORBITAL_DEFENSE
+		orbital_defense_hp[ENEMY_HOME] = orbital_defense_max_hp(ENEMY_HOME)
+		orbital_defense_ammo[ENEMY_HOME] = ORBITAL_DEFENSE_AMMO_MAX
+	}
 
 	camera.target = camera_target
 	camera.up = {0, 1, 0}
