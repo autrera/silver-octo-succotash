@@ -13,7 +13,7 @@ display_font_loaded: [DISPLAY_FONT_MAX_PX + 1]bool
 display_font :: proc(size: f32) -> rl.Font {
 	scale := rl.GetWindowScaleDPI().x
 	if scale <= 0 { scale = 1 }
-	px := clamp(int(math.round(size * scale)), 6, DISPLAY_FONT_MAX_PX)
+	px := clamp(int(math.round(size * scale * ui_scale)), 6, DISPLAY_FONT_MAX_PX)
 	if !display_font_loaded[px] {
 		font := rl.LoadFontFromMemory(".ttf", raw_data(display_font_data), c.int(len(display_font_data)), c.int(px), nil, 0)
 		rl.SetTextureFilter(font.texture, .BILINEAR)

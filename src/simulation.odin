@@ -242,8 +242,8 @@ update_input :: proc() {
 			hud_save_notification_timer = 2.0
 		}
 	}
-	mouse := rl.GetMousePosition()
-	panel_x := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
+	mouse := ui_mouse()
+	panel_x := f32(ui_screen_w() - SCREEN_PANEL_WIDTH)
 	if rl.IsMouseButtonPressed(.LEFT) {
 		if rl.CheckCollisionPointRec(mouse, controls_button_rect()) {
 			last_unit_clicked_index = -1
@@ -297,7 +297,7 @@ ctrl_down :: proc() -> bool {
 }
 
 earth_camera_offset_x :: proc() -> f32 {
-	screen_h := f32(rl.GetScreenHeight() > 0 ? rl.GetScreenHeight() : 760)
+	screen_h := f32(ui_screen_h() > 0 ? ui_screen_h() : 760)
 	zoom_y := camera.position.y > 0 ? camera.position.y : CAMERA_START_Y
 	return f32(SCREEN_PANEL_WIDTH) * zoom_y * (2.0 - math.sqrt(f32(2.0))) / screen_h
 }
@@ -685,7 +685,7 @@ zoom_percent :: proc() -> int {
 }
 
 hq_picked :: proc(mouse: rl.Vector2) -> bool {
-	ray := rl.GetScreenToWorldRay(mouse, camera)
+	ray := ui_screen_to_world_ray(mouse)
 	oc := rl.Vector3{ray.position.x - ENEMY_HQ_POSITION.x, ray.position.y - ENEMY_HQ_POSITION.y, ray.position.z - ENEMY_HQ_POSITION.z}
 	b := rl.Vector3DotProduct(oc, ray.direction)
 	c := rl.Vector3DotProduct(oc, oc) - ENEMY_HQ_RADIUS * ENEMY_HQ_RADIUS
@@ -695,7 +695,7 @@ hq_picked :: proc(mouse: rl.Vector2) -> bool {
 }
 
 pick_planet :: proc(mouse: rl.Vector2) -> int {
-	ray := rl.GetScreenToWorldRay(mouse, camera)
+	ray := ui_screen_to_world_ray(mouse)
 	closest := f32(999999)
 	hit := -1
 	for p := 0; p < PLANET_COUNT; p += 1 {

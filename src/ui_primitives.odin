@@ -209,7 +209,7 @@ draw_orbital_upgrade_spinner :: proc(center: rl.Vector2, size: f32, progress: f3
 
 draw_overlay_mini_button :: proc(src_rect: rl.Rectangle, enabled: bool, alpha_factor: f32) {
 	rect := rl.Rectangle{math.round(src_rect.x), math.round(src_rect.y), math.round(src_rect.width), math.round(src_rect.height)}
-	mouse := rl.GetMousePosition()
+	mouse := ui_mouse()
 	hovered := enabled && rl.CheckCollisionPointRec(mouse, rect)
 	pressed := hovered && rl.IsMouseButtonDown(.LEFT)
 
@@ -312,7 +312,7 @@ draw_conquered_planet_overlay_badge :: proc(p: int, center_screen: rl.Vector2, s
 			scissor_y := c.int(math.floor(rect.y))
 			scissor_w := c.int(math.ceil(fill_w))
 			scissor_h := c.int(math.ceil(rect.y + 34.0)) - scissor_y
-			rl.BeginScissorMode(scissor_x, scissor_y, scissor_w, scissor_h)
+			rl.BeginScissorMode(c.int(f32(scissor_x) * ui_scale), c.int(f32(scissor_y) * ui_scale), c.int(math.ceil(f32(scissor_w) * ui_scale)), c.int(math.ceil(f32(scissor_h) * ui_scale)))
 			rl.DrawRectangleRounded(rect, 0.16, 4, rl.Color{0, 200, 120, u8(110.0 * alpha_factor)})
 			rl.EndScissorMode()
 		}
@@ -403,12 +403,12 @@ draw_conquered_planet_overlays :: proc(viewport_w, screen_h: f32) {
 		to_planet := planets[p].position - camera.position
 		if rl.Vector3DotProduct(to_planet, cam_forward) <= 0.1 { continue }
 
-		center_screen := rl.GetWorldToScreen(planets[p].position, camera)
+		center_screen := ui_world_to_screen(planets[p].position)
 		if center_screen.x < -100 || center_screen.x > viewport_w + 100 || center_screen.y < -100 || center_screen.y > screen_h + 100 {
 			continue
 		}
 
-		limb_screen := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
+		limb_screen := ui_world_to_screen(planets[p].position + cam_right * planets[p].radius)
 		screen_r := rl.Vector2Distance(center_screen, limb_screen)
 
 		draw_conquered_planet_overlay_badge(p, center_screen, screen_r, false, viewport_w, screen_h)
@@ -417,9 +417,9 @@ draw_conquered_planet_overlays :: proc(viewport_w, screen_h: f32) {
 	if selected_planet >= 0 && selected_planet < PLANET_COUNT && planet_liberated(selected_planet) {
 		to_planet := planets[selected_planet].position - camera.position
 		if rl.Vector3DotProduct(to_planet, cam_forward) > 0.1 {
-			center_screen := rl.GetWorldToScreen(planets[selected_planet].position, camera)
+			center_screen := ui_world_to_screen(planets[selected_planet].position)
 			if center_screen.x >= -100 && center_screen.x <= viewport_w + 100 && center_screen.y >= -100 && center_screen.y <= screen_h + 100 {
-				limb_screen := rl.GetWorldToScreen(planets[selected_planet].position + cam_right * planets[selected_planet].radius, camera)
+				limb_screen := ui_world_to_screen(planets[selected_planet].position + cam_right * planets[selected_planet].radius)
 				screen_r := rl.Vector2Distance(center_screen, limb_screen)
 
 				draw_conquered_planet_overlay_badge(selected_planet, center_screen, screen_r, true, viewport_w, screen_h)
@@ -444,8 +444,8 @@ overlay_drone_row_cy :: proc(badge_rect: rl.Rectangle, kind: Unit_Type) -> f32 {
 }
 
 pick_overlay_drone_row :: proc(mouse: rl.Vector2) -> (planet: int, kind: Unit_Type, on_plus: bool) {
-	viewport_w := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
-	screen_h := f32(rl.GetScreenHeight())
+	viewport_w := f32(ui_screen_w() - SCREEN_PANEL_WIDTH)
+	screen_h := f32(ui_screen_h())
 	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
 	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
 
@@ -454,8 +454,8 @@ pick_overlay_drone_row :: proc(mouse: rl.Vector2) -> (planet: int, kind: Unit_Ty
 		to_planet := planets[p].position - camera.position
 		if rl.Vector3DotProduct(to_planet, cam_forward) <= 0.1 { continue }
 
-		center_screen := rl.GetWorldToScreen(planets[p].position, camera)
-		limb_screen := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
+		center_screen := ui_world_to_screen(planets[p].position)
+		limb_screen := ui_world_to_screen(planets[p].position + cam_right * planets[p].radius)
 		screen_r := rl.Vector2Distance(center_screen, limb_screen)
 
 		rect := conquered_planet_overlay_rect(p, center_screen, screen_r, p == selected_planet, viewport_w, screen_h)
@@ -473,8 +473,8 @@ pick_overlay_drone_row :: proc(mouse: rl.Vector2) -> (planet: int, kind: Unit_Ty
 }
 
 pick_conquered_planet_overlay_ammo_button :: proc(mouse: rl.Vector2) -> int {
-	viewport_w := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
-	screen_h := f32(rl.GetScreenHeight())
+	viewport_w := f32(ui_screen_w() - SCREEN_PANEL_WIDTH)
+	screen_h := f32(ui_screen_h())
 	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
 	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
 
@@ -482,8 +482,8 @@ pick_conquered_planet_overlay_ammo_button :: proc(mouse: rl.Vector2) -> int {
 		p := selected_planet
 		to_planet := planets[p].position - camera.position
 		if rl.Vector3DotProduct(to_planet, cam_forward) > 0.1 {
-			center_screen := rl.GetWorldToScreen(planets[p].position, camera)
-			limb_screen := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
+			center_screen := ui_world_to_screen(planets[p].position)
+			limb_screen := ui_world_to_screen(planets[p].position + cam_right * planets[p].radius)
 			screen_r := rl.Vector2Distance(center_screen, limb_screen)
 			rect := conquered_planet_overlay_rect(p, center_screen, screen_r, true, viewport_w, screen_h)
 			btn_rect := conquered_planet_overlay_ammo_btn_rect(rect)
@@ -498,8 +498,8 @@ pick_conquered_planet_overlay_ammo_button :: proc(mouse: rl.Vector2) -> int {
 		to_planet := planets[p].position - camera.position
 		if rl.Vector3DotProduct(to_planet, cam_forward) <= 0.1 { continue }
 
-		center_screen := rl.GetWorldToScreen(planets[p].position, camera)
-		limb_screen := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
+		center_screen := ui_world_to_screen(planets[p].position)
+		limb_screen := ui_world_to_screen(planets[p].position + cam_right * planets[p].radius)
 		screen_r := rl.Vector2Distance(center_screen, limb_screen)
 
 		rect := conquered_planet_overlay_rect(p, center_screen, screen_r, false, viewport_w, screen_h)
@@ -512,8 +512,8 @@ pick_conquered_planet_overlay_ammo_button :: proc(mouse: rl.Vector2) -> int {
 }
 
 pick_conquered_planet_overlay :: proc(mouse: rl.Vector2) -> int {
-	viewport_w := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
-	screen_h := f32(rl.GetScreenHeight())
+	viewport_w := f32(ui_screen_w() - SCREEN_PANEL_WIDTH)
+	screen_h := f32(ui_screen_h())
 	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
 	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
 
@@ -522,8 +522,8 @@ pick_conquered_planet_overlay :: proc(mouse: rl.Vector2) -> int {
 		to_planet := planets[p].position - camera.position
 		if rl.Vector3DotProduct(to_planet, cam_forward) <= 0.1 { continue }
 
-		center_screen := rl.GetWorldToScreen(planets[p].position, camera)
-		limb_screen := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
+		center_screen := ui_world_to_screen(planets[p].position)
+		limb_screen := ui_world_to_screen(planets[p].position + cam_right * planets[p].radius)
 		screen_r := rl.Vector2Distance(center_screen, limb_screen)
 
 		rect := conquered_planet_overlay_rect(p, center_screen, screen_r, p == selected_planet, viewport_w, screen_h)
@@ -578,7 +578,7 @@ draw_segmented_meter :: proc(rect: rl.Rectangle, value: f32, segments: int, fill
 }
 
 draw_button :: proc(rect: rl.Rectangle, label: cstring, color: rl.Color = SCIFI_PANEL_SOLID, enabled: bool = true) {
-	hovered := enabled && rl.CheckCollisionPointRec(rl.GetMousePosition(), rect)
+	hovered := enabled && rl.CheckCollisionPointRec(ui_mouse(), rect)
 	pressed := enabled && hovered && rl.IsMouseButtonDown(.LEFT)
 
 	chamfer: f32 = 6.0
@@ -644,7 +644,7 @@ draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type, progr
 draw_autobuild_radio_buttons :: proc(panel_x: f32) {
 	off_rect, miner_rect, combat_rect := autobuild_radio_rects(panel_x)
 	total_rect := rl.Rectangle{off_rect.x, off_rect.y, (combat_rect.x + combat_rect.width) - off_rect.x, off_rect.height}
-	mouse := rl.GetMousePosition()
+	mouse := ui_mouse()
 
 	lbl: cstring = "AUTO:"
 	lbl_w := f32(rl.MeasureText(lbl, 11))

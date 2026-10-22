@@ -16,8 +16,8 @@ Menu_Hint :: struct {
 }
 
 menu_box :: proc(item_count: int, extra_h: f32 = 0, width: f32 = MENU_W) -> rl.Rectangle {
-	sw := f32(rl.GetScreenWidth())
-	sh := f32(rl.GetScreenHeight())
+	sw := f32(ui_screen_w())
+	sh := f32(ui_screen_h())
 	h := f32(MENU_TITLE_H) + 18 + extra_h + f32(item_count) * (MENU_ITEM_H + MENU_ITEM_GAP) - MENU_ITEM_GAP + 26
 	y := (sh - MENU_FOOTER_H - h) / 2
 	return rl.Rectangle{math.round((sw - width) / 2), math.round(y), width, h}
@@ -29,9 +29,9 @@ menu_item_rect :: proc(box: rl.Rectangle, index: int, extra_h: f32 = 0) -> rl.Re
 }
 
 menu_hover_index :: proc(rects: []rl.Rectangle) -> int {
-	delta := rl.GetMouseDelta()
+	delta := ui_mouse_delta()
 	if delta.x == 0 && delta.y == 0 && !rl.IsMouseButtonPressed(.LEFT) { return -1 }
-	mouse := rl.GetMousePosition()
+	mouse := ui_mouse()
 	for r, i in rects {
 		if r.width > 0 && rl.CheckCollisionPointRec(mouse, r) { return i }
 	}
@@ -50,8 +50,8 @@ scale_color :: proc(col: rl.Color, k: f32) -> rl.Color {
 }
 
 draw_menu_backdrop :: proc(hints: []Menu_Hint, accent: rl.Color = SCIFI_GREEN) {
-	sw := f32(rl.GetScreenWidth())
-	sh := f32(rl.GetScreenHeight())
+	sw := f32(ui_screen_w())
+	sh := f32(ui_screen_h())
 	rl.DrawRectangleRec({0, 0, sw, sh}, rl.Color{0, 6, 4, 150})
 	bar_y := sh - MENU_FOOTER_H
 	rl.DrawRectangleRec({0, bar_y, sw, MENU_FOOTER_H}, rl.Color{0, 4, 2, 245})

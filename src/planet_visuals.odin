@@ -541,8 +541,8 @@ build_saturn_ring_model :: proc() -> rl.Model {
 planet_screen_radius :: proc(p: int) -> f32 {
 	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
 	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
-	center := rl.GetWorldToScreen(planets[p].position, camera)
-	limb := rl.GetWorldToScreen(planets[p].position + cam_right * planets[p].radius, camera)
+	center := ui_world_to_screen(planets[p].position)
+	limb := ui_world_to_screen(planets[p].position + cam_right * planets[p].radius)
 	return rl.Vector2Distance(center, limb)
 }
 
@@ -568,12 +568,12 @@ draw_ambient_nebulae :: proc() {
 	defer rl.EndBlendMode()
 	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
 	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
-	screen_w := f32(rl.GetScreenWidth())
-	screen_h := f32(rl.GetScreenHeight())
+	screen_w := f32(ui_screen_w())
+	screen_h := f32(ui_screen_h())
 	for n in ambient_nebulae {
 		if !planet_in_front(n.position) { continue }
-		center := rl.GetWorldToScreen(n.position, camera)
-		edge := rl.GetWorldToScreen(n.position + cam_right * n.size, camera)
+		center := ui_world_to_screen(n.position)
+		edge := ui_world_to_screen(n.position + cam_right * n.size)
 		r := rl.Vector2Distance(center, edge)
 		if r < 4 { continue }
 		if center.x + r < 0 || center.x - r > screen_w || center.y + r < 0 || center.y - r > screen_h { continue }
@@ -590,7 +590,7 @@ draw_planet_halos :: proc() {
 	src := rl.Rectangle{0, 0, f32(planet_halo_texture.width), f32(planet_halo_texture.height)}
 	for p in 0..<PLANET_COUNT {
 		if !planet_in_front(planets[p].position) { continue }
-		center := rl.GetWorldToScreen(planets[p].position, camera)
+		center := ui_world_to_screen(planets[p].position)
 		r := planet_screen_radius(p) * HALO_SPAN
 		tint := planet_atmospheres[p]
 		strength := f32(tint.a) / 255 * 0.75
@@ -656,10 +656,10 @@ draw_planet_label :: proc(label: cstring, center_x, y: f32, color: rl.Color) {
 }
 
 draw_planet_labels :: proc(viewport_w: f32) {
-	screen_h := f32(rl.GetScreenHeight())
+	screen_h := f32(ui_screen_h())
 	for p in 0..<PLANET_COUNT {
 		if !planet_in_front(planets[p].position) { continue }
-		pos := rl.GetWorldToScreen(planets[p].position, camera)
+		pos := ui_world_to_screen(planets[p].position)
 		if !(pos.x > 0 && pos.x < viewport_w && pos.y > 0 && pos.y < screen_h) { continue }
 		screen_r := planet_screen_radius(p)
 		selected := p == selected_planet
@@ -676,11 +676,11 @@ draw_planet_labels :: proc(viewport_w: f32) {
 	}
 
 	if !planet_in_front(ENEMY_HQ_POSITION) { return }
-	hq := rl.GetWorldToScreen(ENEMY_HQ_POSITION, camera)
+	hq := ui_world_to_screen(ENEMY_HQ_POSITION)
 	if !(hq.x > 0 && hq.x < viewport_w && hq.y > 0 && hq.y < screen_h) { return }
 	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
 	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
-	hq_r := rl.Vector2Distance(hq, rl.GetWorldToScreen(ENEMY_HQ_POSITION + cam_right * ENEMY_HQ_RADIUS, camera))
+	hq_r := rl.Vector2Distance(hq, ui_world_to_screen(ENEMY_HQ_POSITION + cam_right * ENEMY_HQ_RADIUS))
 	selected := selected_planet == ENEMY_HOME
 	if selected {
 		draw_planet_reticle(hq, hq_r, SCIFI_RED)

@@ -248,7 +248,7 @@ update_pause_menu :: proc(dt: f32 = 0) {
 		return
 	}
 	if !rl.IsMouseButtonPressed(.LEFT) { return }
-	mouse := rl.GetMousePosition()
+	mouse := ui_mouse()
 	for r, i in rects {
 		if rl.CheckCollisionPointRec(mouse, r) {
 			pause_menu_selection = i
@@ -287,8 +287,8 @@ close_controls_overlay :: proc() {
 CONTROLS_HINTS := [?]Menu_Hint{{"ESC", "CLOSE"}, {"ENTER", "RESUME"}}
 
 controls_overlay_rects :: proc() -> (box: rl.Rectangle, close_btn: rl.Rectangle) {
-	w := f32(rl.GetScreenWidth())
-	h := f32(rl.GetScreenHeight())
+	w := f32(ui_screen_w())
+	h := f32(ui_screen_h())
 	box_w: f32 = 760.0
 	box_h: f32 = 540.0
 	box = rl.Rectangle{math.round((w - box_w) / 2), math.round((h - MENU_FOOTER_H - box_h) / 2), box_w, box_h}
@@ -303,7 +303,7 @@ update_controls_overlay :: proc() {
 		return
 	}
 	if rl.IsMouseButtonPressed(.LEFT) {
-		mouse := rl.GetMousePosition()
+		mouse := ui_mouse()
 		box, close_btn := controls_overlay_rects()
 		if rl.CheckCollisionPointRec(mouse, close_btn) || !rl.CheckCollisionPointRec(mouse, box) {
 			close_controls_overlay()
@@ -495,7 +495,7 @@ update_start_menu :: proc(dt: f32) {
 	}
 
 	if !rl.IsMouseButtonPressed(.LEFT) { return }
-	mouse := rl.GetMousePosition()
+	mouse := ui_mouse()
 	for r, i in rects {
 		if rl.CheckCollisionPointRec(mouse, r) {
 			start_menu_selection = i
@@ -559,7 +559,7 @@ update_end_menu :: proc() {
 	if rl.IsKeyPressed(.Q) || rl.IsKeyPressed(.ESCAPE) { activate = 1 }
 	if rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) { activate = end_menu_selection }
 	if rl.IsMouseButtonPressed(.LEFT) {
-		mouse := rl.GetMousePosition()
+		mouse := ui_mouse()
 		for r, i in rects {
 			if rl.CheckCollisionPointRec(mouse, r) { activate = i }
 		}

@@ -4,8 +4,8 @@ import "core:c"
 import rl "vendor:raylib"
 
 draw_inspector :: proc() {
-	panel_orig_x := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
-	h := f32(rl.GetScreenHeight())
+	panel_orig_x := f32(ui_screen_w() - SCREEN_PANEL_WIDTH)
+	h := f32(ui_screen_h())
 
 	container_x := panel_orig_x + 4.0
 	container_y: f32 = 12.0
@@ -97,7 +97,7 @@ draw_inspector :: proc() {
 		}
 	}
 	if h > 700 {
-		sel_y := f32(rl.GetScreenHeight() - 36)
+		sel_y := f32(ui_screen_h() - 36)
 		sel_rect := rl.Rectangle{x + PANEL_PAD_X, sel_y, PANEL_CONTENT_W, 22}
 		sel_count := selection_count()
 		if sel_count > 0 {
@@ -110,7 +110,7 @@ draw_inspector :: proc() {
 		}
 	}
 	if inspector_drag_active {
-		rect := rect_between(inspector_drag_start, rl.GetMousePosition())
+		rect := rect_between(inspector_drag_start, ui_mouse())
 		rl.DrawRectangleRec(rect, rl.Fade(SCIFI_GREEN, 0.18))
 		rl.DrawRectangleLinesEx(rect, 1, SCIFI_GREEN)
 		draw_corner_brackets(rect, 0, 6, SCIFI_MINT)
@@ -293,7 +293,7 @@ draw_ghost_rosters :: proc(x: f32) {
 	}
 
 	top := f32(unit_tile_y(.MINING) - 22)
-	rl.DrawRectangleRec(rl.Rectangle{x, top, SCREEN_PANEL_WIDTH - 6, f32(rl.GetScreenHeight() - 40) - top}, rl.Color{6, 16, 22, 160})
+	rl.DrawRectangleRec(rl.Rectangle{x, top, SCREEN_PANEL_WIDTH - 6, f32(ui_screen_h() - 40) - top}, rl.Color{6, 16, 22, 160})
 }
 
 production_title_y :: proc() -> int {
@@ -440,7 +440,7 @@ draw_unit_tile :: proc(index: int, x: f32, y: int, ordinal: int, enemy: bool) {
 
 draw_unit_tile_data :: proc(kind: Unit_Type, state: Unit_State, selected: bool, x: f32, y: int, ordinal: int, enemy: bool) {
 	rect := unit_tile_rect(x, y, ordinal)
-	if rect.y > f32(rl.GetScreenHeight()) || rect.y + rect.height < 0 { return }
+	if rect.y > f32(ui_screen_h()) || rect.y + rect.height < 0 { return }
 	accent := SCIFI_AMBER
 	if kind == .COMBAT { accent = SCIFI_BLUE }
 	if enemy { accent = SCIFI_RED }

@@ -498,7 +498,7 @@ queue_5_combat_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
 }
 
 controls_button_rect :: proc() -> rl.Rectangle {
-	dock_y := f32(rl.GetScreenHeight() - BOTTOM_DOCK_H - 12)
+	dock_y := f32(ui_screen_h() - BOTTOM_DOCK_H - 12)
 	return rl.Rectangle{HUD_PAD, dock_y, 110, BOTTOM_DOCK_H}
 }
 

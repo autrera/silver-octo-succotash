@@ -158,6 +158,7 @@ main :: proc() {
 		if rl.IsKeyPressed(.F11) || ((rl.IsKeyDown(.LEFT_ALT) || rl.IsKeyDown(.RIGHT_ALT)) && rl.IsKeyPressed(.ENTER)) {
 			rl.ToggleBorderlessWindowed()
 		}
+		update_ui_scale()
 		dt := rl.GetFrameTime()
 		if in_start_menu {
 			update_start_menu(dt)
@@ -178,6 +179,7 @@ main :: proc() {
 
 		rl.BeginDrawing()
 		rl.ClearBackground(rl.Color{8, 12, 24, 255})
+		apply_ui_scale()
 		draw_world()
 		if in_start_menu {
 			draw_start_menu()

@@ -7,7 +7,7 @@ import rl "vendor:raylib"
 import "vendor:raylib/rlgl"
 
 draw_world :: proc() {
-	viewport_w := rl.GetScreenWidth() - SCREEN_PANEL_WIDTH
+	viewport_w := ui_screen_w() - SCREEN_PANEL_WIDTH
 	draw_starfield()
 	draw_ambient_nebulae()
 	draw_planet_halos()
@@ -159,13 +159,14 @@ draw_world :: proc() {
 	draw_refinery_mineral_beams()
 	draw_orbital_defense_blasts()
 	rl.EndMode3D()
+	apply_ui_scale()
 	if in_start_menu {
 		return
 	}
 
 	draw_planet_labels(f32(viewport_w))
 
-	draw_conquered_planet_overlays(f32(viewport_w), f32(rl.GetScreenHeight()))
+	draw_conquered_planet_overlays(f32(viewport_w), f32(ui_screen_h()))
 
 	draw_resource_hud()
 
@@ -195,10 +196,10 @@ hq_on_screen :: proc(viewport_w: f32) -> bool {
 	if !planet_in_front(ENEMY_HQ_POSITION) { return false }
 	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
 	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
-	center := rl.GetWorldToScreen(ENEMY_HQ_POSITION, camera)
-	edge := rl.GetWorldToScreen(ENEMY_HQ_POSITION + cam_right * (ENEMY_HQ_RADIUS * 2.5), camera)
+	center := ui_world_to_screen(ENEMY_HQ_POSITION)
+	edge := ui_world_to_screen(ENEMY_HQ_POSITION + cam_right * (ENEMY_HQ_RADIUS * 2.5))
 	margin := rl.Vector2Distance(center, edge)
-	h := f32(rl.GetScreenHeight())
+	h := f32(ui_screen_h())
 	return center.x + margin >= 0 && center.x - margin <= viewport_w && center.y + margin >= 0 && center.y - margin <= h
 }
 
@@ -621,8 +622,8 @@ draw_starfield :: proc() {
 		rl.SetTextureFilter(star_dot_texture, .BILINEAR)
 		rl.UnloadImage(img)
 	}
-	w := f32(rl.GetScreenWidth())
-	h := f32(rl.GetScreenHeight())
+	w := f32(ui_screen_w())
+	h := f32(ui_screen_h())
 	view_proj := rl.MatrixPerspective(camera.fovy * rl.DEG2RAD, w / h, f32(rlgl.GetCullDistanceNear()), f32(rlgl.GetCullDistanceFar())) * rl.GetCameraMatrix(camera)
 	src := rl.Rectangle{0, 0, 16, 16}
 	for i in 0..<STAR_COUNT {
@@ -648,8 +649,8 @@ draw_combat_nebulae :: proc() {
 	}
 	if !has_any { return }
 
-	viewport_w := f32(rl.GetScreenWidth() - SCREEN_PANEL_WIDTH)
-	screen_h := f32(rl.GetScreenHeight())
+	viewport_w := f32(ui_screen_w() - SCREEN_PANEL_WIDTH)
+	screen_h := f32(ui_screen_h())
 	cam_forward := rl.Vector3Normalize(camera.target - camera.position)
 	cam_right := rl.Vector3Normalize(rl.Vector3CrossProduct(cam_forward, camera.up))
 
@@ -673,14 +674,14 @@ draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, is_yellow: b
 	cam_to_pos := pos_3d - camera.position
 	if rl.Vector3DotProduct(cam_to_pos, cam_forward) <= 0.1 { return }
 
-	screen_pos := rl.GetWorldToScreen(pos_3d, camera)
+	screen_pos := ui_world_to_screen(pos_3d)
 	if screen_pos.x < -250 || screen_pos.x > viewport_w + 250 || screen_pos.y < -250 || screen_pos.y > screen_h + 250 {
 		return
 	}
 
 	rad := sector_radius(s)
 	limb_3d := pos_3d + cam_right * rad
-	limb_screen := rl.GetWorldToScreen(limb_3d, camera)
+	limb_screen := ui_world_to_screen(limb_3d)
 	base_r := max(rl.Vector2Distance(screen_pos, limb_screen), 14.0)
 
 	t := laser_anim_time
