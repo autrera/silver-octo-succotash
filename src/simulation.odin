@@ -113,6 +113,7 @@ orbital_defense_ammo_pending_kills = {}
 	combat_nebula_intensity = {}
 	minor_wave_source_nebula_intensity = {}
 	earth_industry_intensity = 0
+	earth_industry_level = 0
 	drone_speed_level = 0
 	earth_rally = NO_RALLY
 	auto_build_mode = .OFF

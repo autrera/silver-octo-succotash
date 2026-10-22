@@ -114,6 +114,7 @@ sector_combat_state: [SECTOR_COUNT]bool
 world_sector_spots: [SECTOR_COUNT]World_Sector_Spots
 
 earth_industry_intensity: f32
+earth_industry_level: f32
 
 in_start_menu := true
 start_menu_selection := 0

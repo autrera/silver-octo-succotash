@@ -26,7 +26,7 @@ planet_atmospheres := [PLANET_COUNT]rl.Color{
 }
 
 Planet_Shader_Locs :: struct {
-	kind, light_dir, view_pos, rim, time, fog: c.int,
+	kind, light_dir, view_pos, rim, time, fog, industry, industry_level: c.int,
 }
 
 Ambient_Nebula :: struct {
@@ -79,7 +79,11 @@ uniform vec3 viewPos;
 uniform vec4 rimColor;
 uniform float time;
 uniform float fog;
+uniform float industry;
+uniform float industryLevel;
 out vec4 finalColor;
+
+vec3 emission = vec3(0.0);
 
 vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
 vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
@@ -166,6 +170,58 @@ vec4 gas_giant(vec3 p, float freq, float turb, vec3 a, vec3 b, vec3 c) {
 	return vec4(col, 0.0);
 }
 
+vec3 city_lights(vec3 p, float h, float coast, float land, float pw) {
+	float temperate = 1.0 - smoothstep(0.62, 0.84, abs(p.z));
+	if (land * temperate <= 0.0) return vec3(0.0);
+	float shore = 1.0 - smoothstep(coast, coast + 0.3, h);
+	float region = fbm(p * 2.4 + vec3(19.0, 4.0, 7.0), 3);
+	float growth = industry * (0.3 + 0.7 * industryLevel);
+	float density = smoothstep(0.0, 0.7, 0.3 + 1.4 * region + 0.3 * shore + mix(-0.8, 0.15, growth)) * temperate * land;
+	if (density <= 0.0) return vec3(0.0);
+
+	float ff = 1.0 - smoothstep(0.3, 0.8, pw * 70.0);
+	float fine = 0.5;
+	if (ff > 0.0) fine = mix(0.5, snoise(p * 70.0) * 0.5 + 0.5, ff);
+
+	float cl = snoise(p * 7.0 + vec3(11.0, 2.0, 5.0)) * 0.5 + 0.5;
+	float cluster = smoothstep(0.4, 0.85, cl + (density - 0.5) * 0.5);
+
+	float sprawl = density * (0.03 + 0.12 * cluster) * (0.5 + fine);
+
+	float c = snoise(p * 22.0 + vec3(3.0, 8.0, 1.0)) * 0.5 + 0.5;
+	float city = smoothstep(0.62, 0.9, c + (density - 0.6) * 0.5);
+	city *= (0.2 + 0.8 * cluster) * (0.45 + 0.75 * fine);
+
+	float m = snoise(p * 11.0 + vec3(7.0, 1.0, 9.0)) * 0.5 + 0.5;
+	float metro = pow(smoothstep(0.7, 0.95, m), 2.0) * cluster * density;
+	city += metro * 1.2;
+
+	float tf = 1.0 - smoothstep(0.25, 0.7, pw * 46.0);
+	float town = 0.08;
+	if (tf > 0.0) town = mix(0.08, smoothstep(0.66, 0.86, snoise(p * 46.0) * 0.5 + 0.5), tf);
+	town *= smoothstep(0.15, 0.7, density) * (0.35 + 0.65 * cluster);
+
+	float ridge = 1.0 - abs(snoise(p * 6.5 + region * vec3(0.35, -0.25, 0.3)));
+	float rw = pw * 12.0;
+	float road = smoothstep(0.976 - rw, 0.99 + rw * 0.5, ridge) * smoothstep(0.25, 0.6, density);
+	road *= mix(0.3, 1.0, 1.0 - smoothstep(0.05, 0.12, rw));
+
+	float b = sprawl + city * 0.95 + town * 0.5 + road * 0.35;
+
+	float tech = smoothstep(0.55, 0.8, snoise(p * 4.2 + vec3(50.0)));
+	float pulse = 0.7 + 0.3 * sin(time * 2.6 + m * 12.0);
+	vec3 warm = mix(vec3(1.0, 0.52, 0.16), vec3(1.0, 0.84, 0.55), smoothstep(0.5, 1.1, b));
+	vec3 cool = mix(vec3(0.1, 0.8, 0.78), vec3(0.65, 1.0, 0.95), smoothstep(0.5, 1.1, b));
+	vec3 col = mix(warm, cool * pulse, tech * 0.85) * b;
+
+	if (city * tf > 0.01) {
+		float spark = snoise(p * 38.0 + time * vec3(0.9, 1.3, 0.7));
+		col += vec3(0.75, 0.9, 1.0) * pow(smoothstep(0.75, 0.98, spark), 2.0) * city * 1.6 * tf;
+	}
+
+	return col;
+}
+
 vec4 surface(vec3 p) {
 	float lat = p.z;
 	if (planetKind == 0) {
@@ -189,19 +245,19 @@ vec4 surface(vec3 p) {
 	if (planetKind == 2) {
 		float h = fbm(p * 1.7 + vec3(3.1, 1.2, 7.4), 7);
 		float coast = 0.03;
-		vec3 col;
-		float spec;
-		if (h < coast) {
-			col = mix(vec3(0.015, 0.06, 0.22), vec3(0.05, 0.30, 0.55), smoothstep(-0.35, coast, h));
-			spec = 1.0;
-		} else {
+		float aw = fwidth(h) * 0.75;
+		float landMix = smoothstep(coast - aw, coast + aw, h);
+		float pw = length(fwidth(p));
+		vec3 col = mix(vec3(0.015, 0.06, 0.22), vec3(0.05, 0.30, 0.55), smoothstep(-0.35, coast, h));
+		if (landMix > 0.0) {
 			float moist = fbm(p * 3.3 + 11.0, 5);
 			float elev = smoothstep(coast, 0.45, h);
-			col = mix(vec3(0.12, 0.30, 0.10), vec3(0.55, 0.47, 0.29), smoothstep(-0.15, 0.35, moist));
-			col = mix(col, vec3(0.45, 0.40, 0.35), elev * 0.6);
-			col = mix(vec3(0.70, 0.66, 0.50), col, smoothstep(coast, coast + 0.03, h));
-			spec = 0.0;
+			vec3 ground = mix(vec3(0.12, 0.30, 0.10), vec3(0.55, 0.47, 0.29), smoothstep(-0.15, 0.35, moist));
+			ground = mix(ground, vec3(0.45, 0.40, 0.35), elev * 0.6);
+			ground = mix(vec3(0.70, 0.66, 0.50), ground, smoothstep(coast, coast + 0.03, h));
+			col = mix(col, ground, landMix);
 		}
+		float spec = 1.0 - landMix;
 		float ice = smoothstep(0.78, 0.86, abs(lat) + 0.06 * fbm(p * 4.0, 3));
 		col = mix(col, vec3(0.92, 0.95, 1.0), ice);
 		spec *= 1.0 - ice;
@@ -209,6 +265,10 @@ vec4 surface(vec3 p) {
 		float cloud = smoothstep(0.02, 0.5, cl);
 		col = mix(col, vec3(0.97, 0.98, 1.0), cloud * 0.9);
 		spec *= 1.0 - cloud;
+		if (industry > 0.001) {
+			vec3 lights = city_lights(p, h, coast, landMix, pw) * (1.0 - ice);
+			emission = lights * (1.0 - 0.8 * cloud) + vec3(1.0, 0.6, 0.3) * cloud * min(dot(lights, vec3(0.33)), 1.0) * 0.18;
+		}
 		return vec4(col, spec);
 	}
 	if (planetKind == 3) {
@@ -253,7 +313,11 @@ void main() {
 	vec3 V = normalize(viewPos - fragPos);
 	float ndl = dot(N, L);
 	float diff = smoothstep(-0.18, 0.95, ndl);
-	vec3 col = s.rgb * (0.06 + 1.12 * diff);
+	vec3 sun = mix(vec3(1.0), vec3(0.5, 0.56, 0.72), industry);
+	vec3 col = s.rgb * (0.06 + 1.12 * diff * sun);
+	float night = 1.0 - smoothstep(-0.2, 0.6, ndl);
+	vec3 glow = emission * industry * (0.8 + 0.5 * night) * (1.0 - fog);
+	col += 1.0 - exp(-glow * 1.6);
 	vec3 H = normalize(L + V);
 	col += vec3(1.0, 0.97, 0.90) * pow(max(dot(N, H), 0.0), 48.0) * 0.6 * s.a * step(0.0, ndl);
 	float fres = pow(1.0 - max(dot(N, V), 0.0), 2.4);
@@ -274,6 +338,8 @@ init_planet_visuals :: proc() {
 		rim       = rl.GetShaderLocation(planet_shader, "rimColor"),
 		time      = rl.GetShaderLocation(planet_shader, "time"),
 		fog       = rl.GetShaderLocation(planet_shader, "fog"),
+		industry  = rl.GetShaderLocation(planet_shader, "industry"),
+		industry_level = rl.GetShaderLocation(planet_shader, "industryLevel"),
 	}
 	light := rl.Vector3Normalize(PLANET_LIGHT_DIR)
 	rl.SetShaderValue(planet_shader, planet_shader_locs.light_dir, &light, .VEC3)
@@ -490,6 +556,10 @@ draw_planet_body :: proc(p: int) {
 	rim := [4]f32{f32(atmo.r) / 255, f32(atmo.g) / 255, f32(atmo.b) / 255, f32(atmo.a) / 255}
 	view := camera.position
 	t := laser_anim_time
+	industry: f32 = p == EARTH ? earth_industry_intensity : 0
+	industry_level := earth_industry_level
+	rl.SetShaderValue(planet_shader, planet_shader_locs.industry, &industry, .FLOAT)
+	rl.SetShaderValue(planet_shader, planet_shader_locs.industry_level, &industry_level, .FLOAT)
 	rl.SetShaderValue(planet_shader, planet_shader_locs.kind, &kind, .INT)
 	rl.SetShaderValue(planet_shader, planet_shader_locs.fog, &fog, .FLOAT)
 	rl.SetShaderValue(planet_shader, planet_shader_locs.rim, &rim, .VEC4)

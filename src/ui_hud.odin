@@ -106,18 +106,18 @@ step_simulation :: proc(dt: f32) {
 	update_planet_spin(dt)
 	update_intel()
 	laser_anim_time = math.mod(laser_anim_time + dt, 3600.0)
-	is_earth_producing := false
+	active_lines := 0
 	for b in 0..<base_counts[EARTH] {
-		if production[EARTH][b].active {
-			is_earth_producing = true
-			break
-		}
+		if production[EARTH][b].active { active_lines += 1 }
 	}
-	if is_earth_producing || base_build_planet == EARTH {
-		earth_industry_intensity = min(earth_industry_intensity + dt * 2.8, 1.0)
+	if base_build_planet == EARTH { active_lines += 1 }
+	if active_lines > 0 {
+		earth_industry_intensity = min(earth_industry_intensity + dt * 1.4, 1.0)
 	} else {
-		earth_industry_intensity = max(earth_industry_intensity - dt * 1.8, 0.0)
+		earth_industry_intensity = max(earth_industry_intensity - dt * 0.9, 0.0)
 	}
+	level_target := f32(active_lines) / f32(MAX_BASES + 1)
+	earth_industry_level += (level_target - earth_industry_level) * min(dt * 1.5, 1.0)
 	update_combat_nebula_intensity(dt)
 	if !victory && victory_achieved() { victory = true }
 	if !victory && !defeated && defeat_condition() { defeated = true }
