@@ -576,7 +576,16 @@ update_orbital_defenses :: proc(dt: f32) {
 			target_pos := sector_pos(p)
 			r := sector_radius(p)
 			engage_dist := r + 3.8
-			for orbital_defense_ammo[p] > 0 {
+			remaining := inbound_count
+			for orbital_defense_ammo[p] > 0 && remaining > 0 {
+				in_range := 0
+				for i in 0..<unit_count {
+					u := &units[i]
+					if !u.enemy || u.kind != .COMBAT || u.state != .TRANSIT || u.target_planet != p { continue }
+					if distance(u.position, target_pos) <= engage_dist { in_range += 1 }
+				}
+				volley := min(ORBITAL_DEFENSE_KILLS_PER_SHOT, remaining)
+				if in_range < volley { break }
 				kills := 0
 				shot_fired := false
 				for i := unit_count - 1; i >= 0; i -= 1 {
@@ -591,10 +600,11 @@ update_orbital_defenses :: proc(dt: f32) {
 						orbital_defense_wave_kills[p] += 1
 						orbital_defense_ammo_pending_kills[p] += 1
 						shot_fired = true
-						if kills >= ORBITAL_DEFENSE_KILLS_PER_SHOT { break }
+						if kills >= volley { break }
 					}
 				}
 				if !shot_fired { break }
+				remaining -= kills
 				if orbital_defense_ammo_pending_kills[p] >= ORBITAL_DEFENSE_KILLS_PER_SHOT {
 					orbital_defense_ammo[p] -= 1
 					orbital_defense_ammo_pending_kills[p] -= ORBITAL_DEFENSE_KILLS_PER_SHOT
