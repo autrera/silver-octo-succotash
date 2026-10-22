@@ -52,47 +52,23 @@ draw_inspector :: proc() {
 		mining_hdr := selected_planet != ENEMY_HOME ? rl.TextFormat("MINING DRONES (%d/%d)", mining_count, planet_mining_cap(selected_planet)) : rl.TextFormat("MINING DRONES (%d)", mining_count)
 		y_mining := unit_tile_y(.MINING)
 		draw_section_header(x + PANEL_PAD_X, f32(y_mining - 23), PANEL_CONTENT_W, mining_hdr, SCIFI_AMBER)
-		m_ord := 0
-		for i := 0; i < unit_count; i += 1 {
-			if unit_in_roster(i, .MINING) {
-				draw_unit_tile(i, x, y_mining, m_ord, false)
-				m_ord += 1
-			}
-		}
+		draw_roster_tiles(x, y_mining, .MINING, false)
 		combat_count := roster_count(.COMBAT)
 		y_combat := unit_tile_y(.COMBAT)
 		draw_section_header(x + PANEL_PAD_X, f32(y_combat - 23), PANEL_CONTENT_W, rl.TextFormat("FIGHTING DRONES (%d)", combat_count), SCIFI_BLUE)
-		c_ord := 0
-		for i := 0; i < unit_count; i += 1 {
-			if unit_in_roster(i, .COMBAT) {
-				draw_unit_tile(i, x, y_combat, c_ord, false)
-				c_ord += 1
-			}
-		}
+		draw_roster_tiles(x, y_combat, .COMBAT, false)
 		if has_vision(selected_planet) {
 			enemy_mining := enemy_roster_count(.MINING)
 			if enemy_mining > 0 {
 				y_em := enemy_tile_y(.MINING)
 				draw_section_header(x + PANEL_PAD_X, f32(y_em - 23), PANEL_CONTENT_W, rl.TextFormat("HOSTILE MINING (%d)", enemy_mining), SCIFI_RED)
-				em_ord := 0
-				for i := 0; i < unit_count; i += 1 {
-					if enemy_in_roster(i, .MINING) {
-						draw_unit_tile(i, x, y_em, em_ord, true)
-						em_ord += 1
-					}
-				}
+				draw_roster_tiles(x, y_em, .MINING, true)
 			}
 			enemy_combat := enemy_roster_count(.COMBAT)
 			if enemy_combat > 0 {
 				y_ec := enemy_tile_y(.COMBAT)
 				draw_section_header(x + PANEL_PAD_X, f32(y_ec - 23), PANEL_CONTENT_W, rl.TextFormat("HOSTILE FIGHTERS (%d)", enemy_combat), SCIFI_RED)
-				ec_ord := 0
-				for i := 0; i < unit_count; i += 1 {
-					if enemy_in_roster(i, .COMBAT) {
-						draw_unit_tile(i, x, y_ec, ec_ord, true)
-						ec_ord += 1
-					}
-				}
+				draw_roster_tiles(x, y_ec, .COMBAT, true)
 			}
 		}
 	}
@@ -127,8 +103,8 @@ draw_earth_inspector :: proc(x: f32) {
 			fill_rect := rl.Rectangle{base_button.x, base_button.y, fill_w, base_button.height}
 			rl.DrawRectangleRec(fill_rect, rl.Color{0, 200, 120, 120})
 			draw_corner_brackets(base_button, 2, 6, SCIFI_GREEN)
-			if base_constructing_miners(EARTH) < BASE_CONSTRUCT_MINERS {
-				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", base_constructing_miners(EARTH), BASE_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 12, 11, rl.WHITE)
+			if crew_short(EARTH, .BASE) {
+				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", crew_size(EARTH, .BASE), BASE_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 12, 11, rl.WHITE)
 			} else {
 				rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), i32(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 11, 13, rl.WHITE)
 			}
@@ -232,8 +208,8 @@ draw_outpost_inspector :: proc(x: f32) {
 			fill_rect := rl.Rectangle{btn.x, btn.y, btn.width * (refinery_progress[selected_planet] / REFINERY_BUILD_TIME), btn.height}
 			rl.DrawRectangleRec(fill_rect, rl.Color{0, 200, 120, 120})
 			draw_corner_brackets(btn, 2, 6, SCIFI_GREEN)
-			if refinery_constructing_miners(selected_planet) < REFINERY_CONSTRUCT_MINERS {
-				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", refinery_constructing_miners(selected_planet), REFINERY_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 12), 11, SCIFI_GREEN)
+			if crew_short(selected_planet, .REFINERY) {
+				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", crew_size(selected_planet, .REFINERY), REFINERY_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 12), 11, SCIFI_GREEN)
 			} else {
 				remaining := REFINERY_BUILD_TIME - refinery_progress[selected_planet]
 				rl.DrawText(rl.TextFormat("REFINERY  %3.1fs", remaining), i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 11), 13, SCIFI_GREEN)
@@ -273,6 +249,7 @@ draw_ghost_rosters :: proc(x: f32) {
 			draw_unit_tile_data(u.kind, u.state, false, x, y, ordinal, false)
 			ordinal += 1
 		}
+		flush_unit_tile_overlays()
 	}
 
 	for section in 0..<2 {
@@ -290,21 +267,11 @@ draw_ghost_rosters :: proc(x: f32) {
 			draw_unit_tile_data(u.kind, u.state, false, x, y, ordinal, true)
 			ordinal += 1
 		}
+		flush_unit_tile_overlays()
 	}
 
 	top := f32(unit_tile_y(.MINING) - 22)
 	rl.DrawRectangleRec(rl.Rectangle{x, top, SCREEN_PANEL_WIDTH - 6, f32(ui_screen_h() - 40) - top}, rl.Color{6, 16, 22, 160})
-}
-
-production_title_y :: proc() -> int {
-	if selected_planet == EARTH {
-		return int(earth_orbital_defense_bottom_y() + 10)
-	}
-	return PROD_TITLE_Y
-}
-
-production_first_y :: proc() -> int {
-	return production_title_y() + 23
 }
 
 production_orders_y :: proc() -> int {
@@ -389,12 +356,6 @@ enemy_roster_count :: proc(kind: Unit_Type) -> int {
 	return count
 }
 
-enemy_roster_ordinal :: proc(index: int, kind: Unit_Type) -> int {
-	ordinal := 0
-	for i := 0; i < index; i += 1 { if enemy_in_roster(i, kind) { ordinal += 1 } }
-	return ordinal
-}
-
 enemy_tile_y :: proc(kind: Unit_Type) -> int {
 	combat_rows := (view_count(.COMBAT, false) + TILES_PER_ROW - 1) / TILES_PER_ROW
 	y := unit_tile_y(.COMBAT) + SECTION_PAD_Y + combat_rows * (TILE_SIZE + TILE_GAP)
@@ -438,6 +399,29 @@ draw_unit_tile :: proc(index: int, x: f32, y: int, ordinal: int, enemy: bool) {
 	draw_unit_tile_data(units[index].kind, units[index].state, selected_units[index], x, y, ordinal, enemy)
 }
 
+draw_roster_tiles :: proc(x: f32, y: int, kind: Unit_Type, enemy: bool) {
+	ordinal := 0
+	for i := 0; i < unit_count; i += 1 {
+		in_roster := enemy ? enemy_in_roster(i, kind) : unit_in_roster(i, kind)
+		if !in_roster { continue }
+		draw_unit_tile(i, x, y, ordinal, enemy)
+		ordinal += 1
+	}
+	flush_unit_tile_overlays()
+}
+
+TILE_DOT_SEGMENTS :: 12
+
+Tile_Dot :: struct {
+	x, y:  c.int,
+	color: rl.Color,
+}
+
+tile_brackets: [MAX_UNITS]rl.Rectangle
+tile_bracket_count: int
+tile_dots: [MAX_UNITS]Tile_Dot
+tile_dot_count: int
+
 draw_unit_tile_data :: proc(kind: Unit_Type, state: Unit_State, selected: bool, x: f32, y: int, ordinal: int, enemy: bool) {
 	rect := unit_tile_rect(x, y, ordinal)
 	if rect.y > f32(ui_screen_h()) || rect.y + rect.height < 0 { return }
@@ -446,9 +430,24 @@ draw_unit_tile_data :: proc(kind: Unit_Type, state: Unit_State, selected: bool, 
 	if enemy { accent = SCIFI_RED }
 	center := rl.Vector2{rect.x + rect.width * 0.5, rect.y + rect.height * 0.5}
 	draw_unit_icon(kind, center, rect.width, accent)
-	if selected && !enemy {
-		draw_corner_brackets(rect, 1, 4, SCIFI_GREEN)
+	if selected && !enemy && tile_bracket_count < MAX_UNITS {
+		tile_brackets[tile_bracket_count] = rect
+		tile_bracket_count += 1
 	}
-	rl.DrawCircle(c.int(rect.x + rect.width - 2), c.int(rect.y + 2), 3, state_color(state))
+	if tile_dot_count < MAX_UNITS {
+		tile_dots[tile_dot_count] = {c.int(rect.x + rect.width - 2), c.int(rect.y + 2), state_color(state)}
+		tile_dot_count += 1
+	}
+}
+
+flush_unit_tile_overlays :: proc() {
+	for i in 0..<tile_bracket_count {
+		draw_corner_brackets(tile_brackets[i], 1, 4, SCIFI_GREEN)
+	}
+	for i in 0..<tile_dot_count {
+		rl.DrawCircleSector({f32(tile_dots[i].x), f32(tile_dots[i].y)}, 3, 0, 360, TILE_DOT_SEGMENTS, tile_dots[i].color)
+	}
+	tile_bracket_count = 0
+	tile_dot_count = 0
 }
 

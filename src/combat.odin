@@ -66,16 +66,12 @@ closest_approaching_enemy :: proc(planet: int) -> (^Unit, bool) {
 
 orbital_defense_aim_toward :: proc(planet_idx: int, target: rl.Vector3) -> (azimuth: f32, elev: f32) {
 	if planet_idx < 0 || planet_idx >= SECTOR_COUNT { return 0, 0 }
+	pivot: rl.Vector3
 	if planet_idx == ENEMY_HOME {
-		pivot := ENEMY_HQ_POSITION + HQ_BATTERY_PIVOT
-		diff := target - pivot
-		horiz_d := math.sqrt(diff.x * diff.x + diff.z * diff.z)
-		azimuth = math.atan2(diff.z, diff.x)
-		raw_elev := horiz_d > 0.001 ? math.atan2(diff.y, horiz_d) : (math.PI * 0.25)
-		elev = clamp(raw_elev, 8.0 * rl.DEG2RAD, 85.0 * rl.DEG2RAD)
-		return
+		pivot = ENEMY_HQ_POSITION + HQ_BATTERY_PIVOT
+	} else {
+		pivot = orbital_defense_pole(planet_idx) + rl.Vector3{0, ORBITAL_DEFENSE_PIVOT.y * orbital_defense_scale(planet_idx), 0}
 	}
-	pivot := orbital_defense_pole(planet_idx) + rl.Vector3{0, ORBITAL_DEFENSE_PIVOT.y * orbital_defense_scale(planet_idx), 0}
 	diff := target - pivot
 	horiz_d := math.sqrt(diff.x * diff.x + diff.z * diff.z)
 	azimuth = math.atan2(diff.z, diff.x)
@@ -101,26 +97,25 @@ shortest_angle_diff :: proc(target, current: f32) -> f32 {
 	return diff
 }
 
+slew_toward :: proc(current, target, max_step: f32) -> f32 {
+	diff := target - current
+	if abs(diff) <= max_step { return target }
+	return current + math.sign(diff) * max_step
+}
+
 advance_orbital_defense_aim :: proc(planet_idx: int, dt: f32) {
 	if planet_idx < 0 || planet_idx >= SECTOR_COUNT { return }
 	if orbital_defense_level[planet_idx] <= 0 { return }
 
+	max_el := ORBITAL_DEFENSE_ELEV_SPEED * dt
 	if planet_idx < PLANET_COUNT && orbital_defense_building[planet_idx] {
-		target_el: f32 = ORBITAL_DEFENSE_PARK_ELEV
-		el_diff := target_el - orbital_defense_elevation[planet_idx]
-		max_el := ORBITAL_DEFENSE_ELEV_SPEED * dt
-		if abs(el_diff) <= max_el {
-			orbital_defense_elevation[planet_idx] = target_el
-		} else {
-			orbital_defense_elevation[planet_idx] += math.sign(el_diff) * max_el
-		}
+		orbital_defense_elevation[planet_idx] = slew_toward(orbital_defense_elevation[planet_idx], ORBITAL_DEFENSE_PARK_ELEV, max_el)
 		return
 	}
 
 	enemy, has_enemy := closest_approaching_enemy(planet_idx)
 	if has_enemy {
 		target_az, target_el := orbital_defense_aim_toward(planet_idx, enemy.position)
-
 		az_diff := shortest_angle_diff(target_az, orbital_defense_angle[planet_idx])
 		max_az := ORBITAL_DEFENSE_TRACK_SPEED * dt
 		if abs(az_diff) <= max_az {
@@ -128,25 +123,10 @@ advance_orbital_defense_aim :: proc(planet_idx: int, dt: f32) {
 		} else {
 			orbital_defense_angle[planet_idx] += math.sign(az_diff) * max_az
 		}
-
-		el_diff := target_el - orbital_defense_elevation[planet_idx]
-		max_el := ORBITAL_DEFENSE_ELEV_SPEED * dt
-		if abs(el_diff) <= max_el {
-			orbital_defense_elevation[planet_idx] = target_el
-		} else {
-			orbital_defense_elevation[planet_idx] += math.sign(el_diff) * max_el
-		}
+		orbital_defense_elevation[planet_idx] = slew_toward(orbital_defense_elevation[planet_idx], target_el, max_el)
 	} else {
 		orbital_defense_angle[planet_idx] += ORBITAL_DEFENSE_SCAN_SPEED * dt
-
-		target_el: f32 = ORBITAL_DEFENSE_IDLE_ELEV
-		el_diff := target_el - orbital_defense_elevation[planet_idx]
-		max_el := ORBITAL_DEFENSE_ELEV_SPEED * dt
-		if abs(el_diff) <= max_el {
-			orbital_defense_elevation[planet_idx] = target_el
-		} else {
-			orbital_defense_elevation[planet_idx] += math.sign(el_diff) * max_el
-		}
+		orbital_defense_elevation[planet_idx] = slew_toward(orbital_defense_elevation[planet_idx], ORBITAL_DEFENSE_IDLE_ELEV, max_el)
 	}
 
 	for orbital_defense_angle[planet_idx] < -math.PI {
@@ -274,17 +254,6 @@ can_build_orbital_defense :: proc(planet: int) -> bool {
 	return true
 }
 
-orbital_ammo_constructing_miners :: proc(p: int) -> int {
-	count := 0
-	for i := 0; i < unit_count; i += 1 {
-		u := &units[i]
-		if u.kind == .MINING && !u.enemy && u.state == .CONSTRUCTING && u.target_planet == p && u.build_target == .ORBITAL_DEFENSE_AMMO {
-			count += 1
-		}
-	}
-	return count
-}
-
 can_build_orbital_ammo :: proc(planet: int) -> bool {
 	if planet < 0 || planet >= PLANET_COUNT || planet == ENEMY_HOME { return false }
 	if orbital_defense_level[planet] <= 0 { return false }
@@ -305,10 +274,6 @@ start_orbital_ammo_construction :: proc(planet: int) {
 	}
 }
 
-queued_ammo_at :: proc(p: int, slot: int) -> bool {
-	return slot >= orbital_defense_ammo[p] && slot < orbital_defense_ammo[p] + orbital_defense_ammo_pending_count[p]
-}
-
 start_orbital_defense_construction :: proc(planet: int) {
 	if !can_build_orbital_defense(planet) { return }
 	minerals -= ORBITAL_DEFENSE_COST
@@ -317,50 +282,7 @@ start_orbital_defense_construction :: proc(planet: int) {
 	orbital_defense_elevation[planet] = ORBITAL_DEFENSE_PARK_ELEV
 	construction_seq_counter += 1
 	orbital_defense_build_order[planet] = construction_seq_counter
-
-	for i := 0; i < unit_count; i += 1 {
-		u := &units[i]
-		if u.kind == .MINING && !u.enemy && u.state == .IDLE {
-			is_match := false
-			if planet == EARTH {
-				is_match = (u.target_planet == EARTH || u.affiliation == EARTH)
-			} else {
-				is_match = (u.target_planet == planet)
-			}
-			if is_match {
-				if orbital_defense_constructing_miners(planet) < ORBITAL_DEFENSE_CONSTRUCT_MINERS {
-					u.state = .CONSTRUCTING
-					u.build_target = .ORBITAL_DEFENSE
-					u.progress = 0
-					u.target_planet = planet
-					u.affiliation = planet
-					u.mining_active = false
-				}
-			}
-		}
-	}
-
-	for i := 0; i < unit_count; i += 1 {
-		u := &units[i]
-		if u.kind == .MINING && !u.enemy && u.state != .CONSTRUCTING && u.state != .IDLE {
-			is_match := false
-			if planet == EARTH {
-				is_match = (u.target_planet == EARTH || u.affiliation == EARTH) && (u.state == .MINING || u.state == .DEPOSITING)
-			} else {
-				is_match = (u.target_planet == planet) && (u.state == .MINING)
-			}
-			if is_match {
-				if orbital_defense_constructing_miners(planet) < ORBITAL_DEFENSE_CONSTRUCT_MINERS {
-					u.state = .CONSTRUCTING
-					u.build_target = .ORBITAL_DEFENSE
-					u.progress = 0
-					u.target_planet = planet
-					u.affiliation = planet
-					u.mining_active = false
-				}
-			}
-		}
-	}
+	recruit_build_crew(planet, .ORBITAL_DEFENSE, ORBITAL_DEFENSE_CONSTRUCT_MINERS)
 }
 
 destroy_orbital_defense :: proc(planet: int) {
@@ -443,10 +365,6 @@ orbital_ammo_slot_rect :: proc(panel_x: f32, planet: int, slot: int) -> rl.Recta
 	return rl.Rectangle{x, base_y, slot_w, QUEUE_SLOT_H}
 }
 
-orbital_ammo_queue_head :: proc(p: int) -> int {
-	return orbital_defense_ammo[p]
-}
-
 draw_orbital_ammo_slot :: proc(rect: rl.Rectangle, filled: bool, progress: f32 = -1) {
 	charging := progress >= 0 && !filled
 	outline := SCIFI_DIM
@@ -495,8 +413,8 @@ draw_orbital_defense_inspector_section :: proc(x: f32, btn: rl.Rectangle, p: int
 		fill_rect := rl.Rectangle{btn.x, btn.y, btn.width * progress, btn.height}
 		rl.DrawRectangleRec(fill_rect, rl.Color{0, 200, 120, 120})
 		draw_corner_brackets(btn, 2, 6, SCIFI_GREEN)
-		if orbital_defense_constructing_miners(p) < ORBITAL_DEFENSE_CONSTRUCT_MINERS {
-			rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", orbital_defense_constructing_miners(p), ORBITAL_DEFENSE_CONSTRUCT_MINERS), i32(btn.x + CARD_INSET), i32(btn.y + 12), 11, rl.WHITE)
+		if crew_short(p, .ORBITAL_DEFENSE) {
+			rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", crew_size(p, .ORBITAL_DEFENSE), ORBITAL_DEFENSE_CONSTRUCT_MINERS), i32(btn.x + CARD_INSET), i32(btn.y + 12), 11, rl.WHITE)
 		} else {
 			remaining := ORBITAL_DEFENSE_BUILD_TIME - orbital_defense_progress[p]
 			rl.DrawText(rl.TextFormat("BUILDING DEFENSE  %3.1fs", remaining), i32(btn.x + CARD_INSET), i32(btn.y + 11), 12, rl.WHITE)
@@ -705,30 +623,6 @@ planet_is_minor_wave_source :: proc(p: int) -> bool {
 	return false
 }
 
-minor_wave_warning_planet :: proc() -> int {
-	if minor_wave_timer < MINOR_WAVE_INTERVAL - 3.0 { return -1 }
-	_, targets, count := collect_minor_wave_attacks()
-	if count == 0 { return -1 }
-	for i in 0..<count {
-		if targets[i] == EARTH { return EARTH }
-	}
-	return targets[0]
-}
-
-minor_wave_warning_source_planet :: proc() -> int {
-	if minor_wave_timer < MINOR_WAVE_INTERVAL - 3.0 { return -1 }
-	sources, targets, count := collect_minor_wave_attacks()
-	if count == 0 { return -1 }
-	for i in 0..<count {
-		if targets[i] == EARTH { return sources[i] }
-	}
-	return sources[0]
-}
-
-minor_wave_source_warning_planet :: proc() -> int {
-	return minor_wave_warning_source_planet()
-}
-
 planet_attack_source_warning :: proc(p: int) -> bool {
 	if p < 0 || p >= PLANET_COUNT { return false }
 	return planet_is_minor_wave_source(p)
@@ -738,44 +632,6 @@ planet_under_attack_warning :: proc(p: int) -> bool {
 	if p < 0 || p >= PLANET_COUNT { return false }
 	if planet_is_minor_wave_target(p) { return true }
 	return transit_fighters_at(p, true) > 0
-}
-
-closest_unliberated_planet_to_earth :: proc() -> (int, bool) {
-	best := -1
-	best_d: f32 = 1e9
-	earth_pos := planets[EARTH].position
-	for p in 0..<PLANET_COUNT {
-		if p == EARTH { continue }
-		if planet_liberated(p) { continue }
-		d := distance(planets[p].position, earth_pos)
-		if best < 0 || d < best_d {
-			best = p
-			best_d = d
-		}
-	}
-	return best, best >= 0
-}
-
-closest_liberated_planet_to :: proc(attacker: int) -> int {
-	attacker_pos := planets[attacker].position
-	best_other := -1
-	best_other_d: f32 = 1e9
-
-	for p in 0..<PLANET_COUNT {
-		if p == EARTH || p == attacker { continue }
-		if !planet_liberated(p) { continue }
-		d := distance(planets[p].position, attacker_pos)
-		if best_other < 0 || d < best_other_d {
-			best_other = p
-			best_other_d = d
-		}
-	}
-
-	earth_d := distance(planets[EARTH].position, attacker_pos)
-	if best_other >= 0 && best_other_d <= earth_d {
-		return best_other
-	}
-	return EARTH
 }
 
 spawn_minor_wave :: proc(source, target: int, count: int = MINOR_WAVE_SIZE) {
@@ -855,18 +711,12 @@ launch_wave :: proc() {
 	spawn_n_enemies_to(closest_liberated_planet_to_hq(), size)
 }
 
-launch_attack_wave :: proc() {
-	launch_wave()
-}
-
 combat_tick_for :: proc(p: int) -> f32 {
 	if p == ENEMY_HOME {
 		return HQ_COMBAT_TICK
 	}
 	return COMBAT_TICK
 }
-combat_tick :: combat_tick_for
-planet_combat_tick :: combat_tick_for
 
 update_planet_combat :: proc(dt: f32, p: int) {
 	tick := combat_tick_for(p)
@@ -996,8 +846,6 @@ spawn_hq_defenders :: proc(count: int) {
 		unit_count += 1
 	}
 }
-
-spawn_enemy_wave :: proc() { launch_attack_wave() }
 
 spawn_n_enemies_to :: proc(target: int, count: int) {
 	if enemy_hq_destroyed() { return }

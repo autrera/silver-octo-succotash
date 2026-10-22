@@ -42,8 +42,6 @@ unit_state_to_string :: proc(s: Unit_State) -> string {
 	case .IDLE: return "IDLE"
 	case .TRANSIT: return "TRANSIT"
 	case .MINING: return "MINING"
-	case .RETURNING: return "RETURNING"
-	case .DEPOSITING: return "DEPOSITING"
 	case .GUARDING: return "GUARDING"
 	case .CONSTRUCTING: return "CONSTRUCTING"
 	}
@@ -63,8 +61,6 @@ parse_unit_state :: proc(s: string) -> (Unit_State, bool) {
 	case "IDLE": return .IDLE, true
 	case "TRANSIT": return .TRANSIT, true
 	case "MINING": return .MINING, true
-	case "RETURNING": return .RETURNING, true
-	case "DEPOSITING": return .DEPOSITING, true
 	case "GUARDING": return .GUARDING, true
 	case "CONSTRUCTING": return .CONSTRUCTING, true
 	case: return .IDLE, false
@@ -460,7 +456,7 @@ deserialize_game_state :: proc(content: string) -> bool {
 				mining_active := false
 				if len(fields) >= 15 {
 					mining_active = fields[14] == "1"
-				} else if kind == .MINING && !enemy && (state == .MINING || state == .RETURNING || state == .DEPOSITING) {
+				} else if kind == .MINING && !enemy && state == .MINING {
 					mining_active = true
 				}
 				if unit_count < MAX_UNITS {
@@ -496,7 +492,7 @@ deserialize_game_state :: proc(content: string) -> bool {
 	in_start_menu = false
 	game_paused = false
 	controls_overlay_open = false
-	planet_unit_cache_dirty = true
+	units_changed()
 	return true
 }
 
@@ -528,27 +524,5 @@ load_game :: proc(path: string = "") -> bool {
 		return false
 	}
 	return deserialize_game_state(string(data))
-}
-
-delete_save_game :: proc(custom_path: string = "") -> bool {
-	if len(custom_path) > 0 {
-		if os.exists(custom_path) {
-			return os.remove(custom_path) == nil
-		}
-		return false
-	}
-	removed := false
-	if os.exists("savegame.txt") {
-		if os.remove("savegame.txt") == nil {
-			removed = true
-		}
-	}
-	exe_target := save_game_path("")
-	if exe_target != "savegame.txt" && os.exists(exe_target) {
-		if os.remove(exe_target) == nil {
-			removed = true
-		}
-	}
-	return removed
 }
 

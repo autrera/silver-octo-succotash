@@ -5,7 +5,6 @@ import "core:time"
 import rl "vendor:raylib"
 
 initialize_game :: proc() {
-	planet_unit_cache_dirty = true
 	auto_build_mode = .OFF
 	auto_build_last_mode = .MINERS
 	autobuild_retry_timer = 0
@@ -22,12 +21,10 @@ initialize_game :: proc() {
 	orbital_defense_ammo = {}
 	orbital_defense_ammo[EARTH] = ORBITAL_DEFENSE_START_AMMO
 	orbital_defense_ammo[ENEMY_HOME] = ORBITAL_DEFENSE_AMMO_MAX
-orbital_defense_ammo_pending_count = {}
-orbital_defense_ammo_pending_kills = {}
+	orbital_defense_ammo_pending_count = {}
+	orbital_defense_ammo_pending_kills = {}
 	orbital_defense_ammo_building = {}
 	orbital_defense_ammo_progress = {}
-	orbital_defense_ammo_pending_count = {}
-orbital_defense_ammo_pending_kills = {}
 	orbital_defense_elevation[EARTH] = ORBITAL_DEFENSE_IDLE_ELEV
 	orbital_defense_elevation[ENEMY_HOME] = ORBITAL_DEFENSE_IDLE_ELEV
 	enemy_base_hp = GARRISON_BASE_HP
@@ -55,20 +52,17 @@ orbital_defense_ammo_pending_kills = {}
 		spawn_garrison(p, GARRISON_FIGHTERS[p], GARRISON_MINERS[p])
 	}
 	combat_nebula_intensity[ENEMY_HOME] = 0.65
+	units_changed()
 }
 
 reset_world :: proc() {
 	unit_count = 0
-	for i := 0; i < MAX_UNITS; i += 1 {
-		units[i] = {}
-		selected_units[i] = false
-	}
-	for p in 0..<SECTOR_COUNT {
-		combat_timer[p] = 0
-		miner_timer[p] = 0
-		base_timer[p] = 0
-		combat_vision_timer[p] = 0
-	}
+	units = {}
+	selected_units = {}
+	combat_timer = {}
+	miner_timer = {}
+	base_timer = {}
+	combat_vision_timer = {}
 	enemy_base_hp = GARRISON_BASE_HP
 	base_counts = {}
 	base_counts[EARTH] = STARTING_EARTH_BASES
@@ -93,7 +87,7 @@ reset_world :: proc() {
 	orbital_defense_ammo_building = {}
 	orbital_defense_ammo_progress = {}
 	orbital_defense_ammo_pending_count = {}
-orbital_defense_ammo_pending_kills = {}
+	orbital_defense_ammo_pending_kills = {}
 	orbital_defense_blasts = {}
 	construction_seq_counter = 0
 	refinery_build_order = {}
@@ -119,7 +113,7 @@ orbital_defense_ammo_pending_kills = {}
 	auto_build_mode = .OFF
 	auto_build_last_mode = .MINERS
 	autobuild_retry_timer = 0
-	planet_unit_cache_dirty = true
+	units_changed()
 	victory = false
 	defeated = false
 	game_paused = false
@@ -155,6 +149,7 @@ spawn_garrison :: proc(p, fighters, miners: int) {
 		}
 		unit_count += 1
 	}
+	units_changed()
 }
 
 sector_pos :: proc(s: int) -> rl.Vector3 {
@@ -236,7 +231,7 @@ update_input :: proc() {
 	if group := squad_key_pressed(); group > 0 {
 		if shift_down() { save_squad(group) } else { recall_squad(group) }
 	}
-	if ctrl_down() && rl.IsKeyPressed(.N) { spawn_enemy_wave() }
+	if ctrl_down() && rl.IsKeyPressed(.N) { launch_wave() }
 	if rl.IsKeyPressed(.F5) {
 		if save_game() {
 			hud_save_notification_timer = 2.0
@@ -535,12 +530,10 @@ remove_unit_at :: proc(index: int) {
 	} else if last_unit_clicked_index > index {
 		last_unit_clicked_index -= 1
 	}
-	for i := index; i < unit_count - 1; i += 1 {
-		units[i] = units[i + 1]
-		selected_units[i] = selected_units[i + 1]
-	}
+	copy(units[index:unit_count - 1], units[index + 1:unit_count])
+	copy(selected_units[index:unit_count - 1], selected_units[index + 1:unit_count])
 	unit_count -= 1
-	planet_unit_cache_dirty = true
+	units_changed()
 }
 
 handle_planet_right_click :: proc(planet: int) {
@@ -574,15 +567,19 @@ issue_group_order :: proc(planet: int) {
 
 update_units :: proc(dt: f32) {
 	update_mining_income(dt)
+	begin_miner_pass()
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.kind == .COMBAT {
 			update_combat(u, dt)
 		} else {
-			update_miner(u, i, dt)
+			before := u^
+			update_miner(u, dt)
+			note_miner_change(before, u^)
 		}
 	}
-	planet_unit_cache_dirty = true
+	end_miner_pass()
+	units_changed()
 }
 
 refresh_planet_unit_cache :: proc() {
@@ -635,39 +632,45 @@ has_player_structure :: proc(p: int) -> bool {
 	return false
 }
 
+units_changed :: proc() {
+	planet_unit_cache_dirty = true
+	unit_vision_dirty = true
+}
+
+refresh_unit_vision :: proc() {
+	for p in 0..<SECTOR_COUNT {
+		r := sector_radius(p) + 2.0
+		r2 := r * r
+		sp := sector_pos(p)
+		seen := false
+		for i := 0; i < unit_count; i += 1 {
+			u := &units[i]
+			if u.enemy { continue }
+			dx := u.position.x - sp.x
+			dy := u.position.y - sp.y
+			dz := u.position.z - sp.z
+			if dx*dx + dy*dy + dz*dz <= r2 {
+				seen = true
+				break
+			}
+		}
+		unit_vision[p] = seen
+	}
+	unit_vision_dirty = false
+}
+
 has_vision :: proc(p: int) -> bool {
 	if p < 0 || p >= SECTOR_COUNT { return false }
 	if p == EARTH { return true }
 	if combat_vision_timer[p] > 0 { return true }
 	if has_player_structure(p) { return true }
-	r := sector_radius(p) + 2.0
-	r2 := r * r
-	sp := sector_pos(p)
-	for i := 0; i < unit_count; i += 1 {
-		u := &units[i]
-		if u.enemy { continue }
-		dx := u.position.x - sp.x
-		dy := u.position.y - sp.y
-		dz := u.position.z - sp.z
-		if dx*dx + dy*dy + dz*dz <= r2 {
-			return true
-		}
-	}
-	return false
-}
-
-is_concealed :: proc(u: ^Unit) -> bool {
-	if !u.enemy { return false }
-	p := u.affiliation
-	if u.state == .TRANSIT { p = u.target_planet }
-	return !has_vision(p)
+	if unit_vision_dirty { refresh_unit_vision() }
+	return unit_vision[p]
 }
 
 set_earth_rally :: proc(target: int) {
 	if target == EARTH { earth_rally = NO_RALLY } else if target != ENEMY_HOME { earth_rally = target }
 }
-
-rally_flag_planet :: proc() -> int { return earth_rally }
 
 draw_rally_flag :: proc() {
 	if earth_rally == NO_RALLY { return }

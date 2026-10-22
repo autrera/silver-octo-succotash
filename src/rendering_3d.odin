@@ -13,6 +13,31 @@ draw_world :: proc() {
 	draw_planet_halos()
 	draw_combat_nebulae()
 	rl.BeginMode3D(camera)
+	draw_planets_and_batteries()
+	flush_orbital_defenses()
+	if hq_on_screen(f32(viewport_w)) {
+		draw_hq_fortress(ENEMY_HQ_POSITION)
+	}
+	draw_rally_flag()
+	draw_selection_rings()
+
+	sector_vis: [SECTOR_COUNT]bool
+	for p in 0..<SECTOR_COUNT { sector_vis[p] = has_vision(p) }
+	collect_sector_spots(sector_vis)
+	draw_stationed_units(sector_vis)
+	draw_transit_units(sector_vis)
+	flush_drones()
+	draw_refinery_mineral_beams()
+	draw_orbital_defense_blasts()
+	rl.EndMode3D()
+	apply_ui_scale()
+	if in_start_menu {
+		return
+	}
+	draw_hud(viewport_w)
+}
+
+draw_planets_and_batteries :: proc() {
 	for p in 0..<PLANET_COUNT {
 		planet := planets[p]
 		draw_planet_body(p)
@@ -20,71 +45,41 @@ draw_world :: proc() {
 		rl.DrawCircle3D(planet.position, planet.radius + 1.5, {1, 0, 0}, 90, rl.Fade(ring_col, 0.22))
 		draw_orbital_defense(p)
 	}
-	flush_orbital_defenses()
-	if hq_on_screen(f32(viewport_w)) {
-		draw_hq_fortress(ENEMY_HQ_POSITION)
-	}
-	draw_rally_flag()
+}
 
-	sector_vis: [SECTOR_COUNT]bool
+collect_sector_spots :: proc(sector_vis: [SECTOR_COUNT]bool) {
 	for p in 0..<SECTOR_COUNT {
-		sector_vis[p] = has_vision(p)
-		world_sector_spots[p].pc = 0
-		world_sector_spots[p].ec = 0
-		world_sector_spots[p].pmc = 0
-		world_sector_spots[p].emc = 0
+		s := &world_sector_spots[p]
+		s.pc, s.ec, s.pmc, s.emc = 0, 0, 0, 0
 	}
-
-	transit_counts: [SECTOR_COUNT][2]int
-	miner_transit_counts: [SECTOR_COUNT][2]int
-	miner_return_counts: [SECTOR_COUNT][2]int
-
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
-		if selected_units[i] {
-			draw_selection_ring(u.position, 0.78)
-		}
+		p := -1
 		if u.kind == .COMBAT {
-			if u.state == .GUARDING {
-				p := u.affiliation
-				if p >= 0 && p < SECTOR_COUNT && sector_vis[p] {
-					s := &world_sector_spots[p]
-					if u.enemy {
-						if s.ec < MAX_UNITS { s.enemy_combat[s.ec] = u.position }
-						s.ec += 1
-					} else {
-						if s.pc < MAX_UNITS { s.player_combat[s.pc] = u.position }
-						s.pc += 1
-					}
-				}
-			} else if u.state == .TRANSIT {
-				p := u.target_planet
-				if p >= 0 && p < SECTOR_COUNT {
-					transit_counts[p][u.enemy ? 1 : 0] += 1
-				}
-			}
-		} else if u.kind == .MINING {
-			p := miner_stationed_planet(u)
-			if p >= 0 && p < SECTOR_COUNT && sector_vis[p] {
-				s := &world_sector_spots[p]
-				if u.enemy {
-					if s.emc < MAX_UNITS { s.enemy_miners[s.emc] = u.position }
-					s.emc += 1
-				} else {
-					if s.pmc < MAX_UNITS { s.player_miners[s.pmc] = u.position }
-					s.pmc += 1
-				}
-			} else if u.target_planet >= 0 && u.target_planet < SECTOR_COUNT {
-				side := u.enemy ? 1 : 0
-				if u.state == .TRANSIT {
-					miner_transit_counts[u.target_planet][side] += 1
-				} else if u.state == .RETURNING {
-					miner_return_counts[u.target_planet][side] += 1
-				}
-			}
+			if u.state == .GUARDING { p = u.affiliation }
+		} else {
+			p = miner_stationed_planet(u)
+		}
+		if p < 0 || p >= SECTOR_COUNT || !sector_vis[p] { continue }
+		s := &world_sector_spots[p]
+		switch {
+		case u.kind == .COMBAT && u.enemy:
+			if s.ec < MAX_UNITS { s.enemy_combat[s.ec] = u.position }
+			s.ec += 1
+		case u.kind == .COMBAT:
+			if s.pc < MAX_UNITS { s.player_combat[s.pc] = u.position }
+			s.pc += 1
+		case u.enemy:
+			if s.emc < MAX_UNITS { s.enemy_miners[s.emc] = u.position }
+			s.emc += 1
+		case:
+			if s.pmc < MAX_UNITS { s.player_miners[s.pmc] = u.position }
+			s.pmc += 1
 		}
 	}
+}
 
+draw_stationed_units :: proc(sector_vis: [SECTOR_COUNT]bool) {
 	for p in 0..<SECTOR_COUNT {
 		if !sector_vis[p] { continue }
 		s := &world_sector_spots[p]
@@ -94,80 +89,34 @@ draw_world :: proc() {
 		draw_combat_lasers(p, s.player_combat[:], s.enemy_combat[:], s.pc, s.ec, s.player_miners[:], s.enemy_miners[:], s.pmc, s.emc)
 		for d in 0..<s.emc { draw_miner_drone(s.enemy_miners[d], true, drone_heading(s.enemy_miners[d], sp)) }
 	}
+}
 
-	vis_combat: [SECTOR_COUNT][2]int
-	vis_miner_tr: [SECTOR_COUNT][2]int
-	vis_miner_ret: [SECTOR_COUNT][2]int
-	drawn_combat: [SECTOR_COUNT][2]int
-	drawn_miner_tr: [SECTOR_COUNT][2]int
-	drawn_miner_ret: [SECTOR_COUNT][2]int
-
-	for p in 0..<SECTOR_COUNT {
-		for side in 0..<2 {
-			if side == 1 && !sector_vis[p] { continue }
-			vis_combat[p][side] = transit_counts[p][side]
-			vis_miner_tr[p][side] = miner_transit_counts[p][side]
-			vis_miner_ret[p][side] = miner_return_counts[p][side]
-		}
-	}
-
+draw_transit_units :: proc(sector_vis: [SECTOR_COUNT]bool) {
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
-		if u.state == .TRANSIT {
-			p := u.target_planet
-			if p >= 0 && p < SECTOR_COUNT {
-				side := u.enemy ? 1 : 0
-				can_see := !u.enemy || sector_vis[p]
-				if u.kind == .COMBAT {
-					if can_see && drawn_combat[p][side] < vis_combat[p][side] {
-						drawn_combat[p][side] += 1
-						to := sector_pos(p)
-						heading := to - u.position
-						draw_fighter_drone(u.position, u.enemy, heading)
-						if rl.Vector3Length(heading) > 0.001 {
-							trail := u.position - rl.Vector3Normalize(heading) * 1.2
-							rl.DrawLine3D(u.position, trail, rl.Fade(u.enemy ? rl.RED : SCIFI_GREEN, 0.6))
-						}
-					}
-				} else if u.kind == .MINING {
-					if can_see && drawn_miner_tr[p][side] < vis_miner_tr[p][side] {
-						drawn_miner_tr[p][side] += 1
-						to := sector_pos(p)
-						heading := to - u.position
-						draw_miner_drone(u.position, u.enemy, heading)
-					}
-				}
-				if can_see {
-					line_col := u.enemy ? rl.Color{255, 60, 75, 70} : rl.Color{0, 225, 255, 90}
-					rl.DrawLine3D(u.position, sector_pos(p), line_col)
-				}
+		if u.state != .TRANSIT { continue }
+		p := u.target_planet
+		if p < 0 || p >= SECTOR_COUNT { continue }
+		if u.enemy && !sector_vis[p] { continue }
+		to := sector_pos(p)
+		heading := to - u.position
+		if u.kind == .COMBAT {
+			draw_fighter_drone(u.position, u.enemy, heading)
+			if rl.Vector3Length(heading) > 0.001 {
+				trail := u.position - rl.Vector3Normalize(heading) * 1.2
+				rl.DrawLine3D(u.position, trail, rl.Fade(u.enemy ? rl.RED : SCIFI_GREEN, 0.6))
 			}
-		} else if u.state == .RETURNING {
-			p := u.target_planet
-			if p >= 0 && p < SECTOR_COUNT && u.kind == .MINING {
-				side := u.enemy ? 1 : 0
-				if (!u.enemy || sector_vis[p]) && drawn_miner_ret[p][side] < vis_miner_ret[p][side] {
-					drawn_miner_ret[p][side] += 1
-					to := planets[EARTH].position
-					heading := to - u.position
-					draw_miner_drone(u.position, u.enemy, heading)
-				}
-			}
+		} else {
+			draw_miner_drone(u.position, u.enemy, heading)
 		}
+		line_col := u.enemy ? rl.Color{255, 60, 75, 70} : rl.Color{0, 225, 255, 90}
+		rl.DrawLine3D(u.position, to, line_col)
 	}
-	flush_drones()
-	draw_refinery_mineral_beams()
-	draw_orbital_defense_blasts()
-	rl.EndMode3D()
-	apply_ui_scale()
-	if in_start_menu {
-		return
-	}
+}
 
+draw_hud :: proc(viewport_w: i32) {
 	draw_planet_labels(f32(viewport_w))
-
 	draw_conquered_planet_overlays(f32(viewport_w), f32(ui_screen_h()))
-
 	draw_resource_hud()
 
 	if hud_save_notification_timer > 0 {
@@ -190,7 +139,6 @@ draw_world :: proc() {
 
 	draw_squad_hud()
 }
-
 
 hq_on_screen :: proc(viewport_w: f32) -> bool {
 	if !planet_in_front(ENEMY_HQ_POSITION) { return false }
@@ -376,7 +324,9 @@ project_icon_point :: proc(p: rl.Vector3, yaw, pitch: f32) -> (rl.Vector2, f32) 
 
 bake_drone_icon :: proc(model: rl.Model, yaw, pitch: f32) -> rl.RenderTexture2D {
 	mesh := model.meshes[0]
-	edges := make(map[[6]i32]Icon_Edge)
+	edge_index := make(map[[6]i32]int)
+	defer delete(edge_index)
+	edges := make([dynamic]Icon_Edge)
 	defer delete(edges)
 
 	for t in 0..<int(mesh.triangleCount) {
@@ -402,14 +352,13 @@ bake_drone_icon :: proc(model: rl.Model, yaw, pitch: f32) -> rl.RenderTexture2D 
 			} else {
 				key = {qb.x, qb.y, qb.z, qa.x, qa.y, qa.z}
 			}
-			existing, found := edges[key]
-			if !found {
-				edges[key] = Icon_Edge{a = a, b = b, normal = n, keep = true}
-			} else {
-				if math.abs(rl.Vector3DotProduct(existing.normal, n)) > 0.995 {
-					existing.keep = false
+			if index, found := edge_index[key]; found {
+				if math.abs(rl.Vector3DotProduct(edges[index].normal, n)) > 0.995 {
+					edges[index].keep = false
 				}
-				edges[key] = existing
+			} else {
+				edge_index[key] = len(edges)
+				append(&edges, Icon_Edge{a = a, b = b, normal = n, keep = true})
 			}
 		}
 	}
@@ -418,7 +367,7 @@ bake_drone_icon :: proc(model: rl.Model, yaw, pitch: f32) -> rl.RenderTexture2D 
 	max_p := rl.Vector2{-1e9, -1e9}
 	min_d: f32 = 1e9
 	max_d: f32 = -1e9
-	for _, e in edges {
+	for e in edges {
 		if !e.keep { continue }
 		for v in ([2]rl.Vector3{e.a, e.b}) {
 			pt, d := project_icon_point(v, yaw, pitch)
@@ -438,7 +387,7 @@ bake_drone_icon :: proc(model: rl.Model, yaw, pitch: f32) -> rl.RenderTexture2D 
 	target := rl.LoadRenderTexture(DRONE_ICON_RES, DRONE_ICON_RES)
 	rl.BeginTextureMode(target)
 	rl.ClearBackground(rl.Color{255, 255, 255, 0})
-	for _, e in edges {
+	for e in edges {
 		if !e.keep { continue }
 		pa, da := project_icon_point(e.a, yaw, pitch)
 		pb, db := project_icon_point(e.b, yaw, pitch)
@@ -515,60 +464,54 @@ transit_fighters_at :: proc(target_planet: int, enemy: bool) -> int {
 	return count
 }
 
-transit_miners_at :: proc(target_planet: int, enemy: bool = false) -> int {
-	count := 0
-	for i := 0; i < unit_count; i += 1 {
-		u := &units[i]
-		if u.kind == .MINING && u.state == .TRANSIT && u.target_planet == target_planet && u.enemy == enemy { count += 1 }
-	}
-	return count
-}
-
-returning_miners_at :: proc(target_planet: int, enemy: bool = false) -> int {
-	count := 0
-	for i := 0; i < unit_count; i += 1 {
-		u := &units[i]
-		if u.kind == .MINING && u.state == .RETURNING && u.target_planet == target_planet && u.enemy == enemy { count += 1 }
-	}
-	return count
-}
-
 miner_stationed_planet :: proc(u: ^Unit) -> int {
-	if u.state == .TRANSIT || u.state == .RETURNING { return -1 }
-	if u.state == .DEPOSITING { return EARTH }
+	if u.state == .TRANSIT { return -1 }
 	if u.enemy { return u.affiliation }
 	if u.target_planet >= 0 && u.target_planet < SECTOR_COUNT { return u.target_planet }
 	if u.affiliation >= 0 && u.affiliation < SECTOR_COUNT { return u.affiliation }
 	return EARTH
 }
 
-stationed_miners_at :: proc(p: int, enemy: bool) -> int {
-	count := 0
-	for i := 0; i < unit_count; i += 1 {
-		u := &units[i]
-		if u.kind != .MINING || u.enemy != enemy { continue }
-		if miner_stationed_planet(u) == p { count += 1 }
+SELECTION_RING_SEGMENTS :: 24
+SELECTION_RING_RADIUS   :: 0.78
+SELECTION_RING_GAP      :: 0.22
+
+selection_ring_dirs: [SELECTION_RING_SEGMENTS + 1][2]f32
+
+@(init)
+init_selection_ring_dirs :: proc "contextless" () {
+	for i in 0..=SELECTION_RING_SEGMENTS {
+		angle := f32(i) * 2 * math.PI / f32(SELECTION_RING_SEGMENTS)
+		selection_ring_dirs[i] = {math.cos(angle), math.sin(angle)}
 	}
-	return count
 }
 
-draw_selection_ring :: proc(center: rl.Vector3, radius: f32) {
-	segments :: 24
+draw_selection_rings :: proc() {
 	pulse := 0.65 + 0.35 * math.sin(laser_anim_time * 5.0)
-	for segment := 0; segment < segments; segment += 1 {
-		a := f32(segment) * 2 * math.PI / f32(segments)
-		b := f32(segment + 1) * 2 * math.PI / f32(segments)
-		rl.DrawLine3D(
-			{center.x + math.cos(a) * radius, center.y - 0.25, center.z + math.sin(a) * radius},
-			{center.x + math.cos(b) * radius, center.y - 0.25, center.z + math.sin(b) * radius},
-			rl.Fade(SCIFI_GREEN, pulse),
-		)
-		or_ := radius + 0.22
-		rl.DrawLine3D(
-			{center.x + math.cos(a) * or_, center.y - 0.25, center.z + math.sin(a) * or_},
-			{center.x + math.cos(b) * or_, center.y - 0.25, center.z + math.sin(b) * or_},
-			rl.Fade(SCIFI_GREEN, 0.25 * pulse),
-		)
+	inner := rl.Fade(SCIFI_GREEN, pulse)
+	outer := rl.Fade(SCIFI_GREEN, 0.25 * pulse)
+	outer_radius :: SELECTION_RING_RADIUS + SELECTION_RING_GAP
+	for i := 0; i < unit_count; i += 1 {
+		if !selected_units[i] { continue }
+		center := units[i].position
+		y := center.y - 0.25
+		rlgl.CheckRenderBatchLimit(4 * SELECTION_RING_SEGMENTS)
+		rlgl.Begin(rlgl.LINES)
+		rlgl.Color4ub(inner.r, inner.g, inner.b, inner.a)
+		for segment in 0..<SELECTION_RING_SEGMENTS {
+			a := selection_ring_dirs[segment]
+			b := selection_ring_dirs[segment + 1]
+			rlgl.Vertex3f(center.x + a.x * SELECTION_RING_RADIUS, y, center.z + a.y * SELECTION_RING_RADIUS)
+			rlgl.Vertex3f(center.x + b.x * SELECTION_RING_RADIUS, y, center.z + b.y * SELECTION_RING_RADIUS)
+		}
+		rlgl.Color4ub(outer.r, outer.g, outer.b, outer.a)
+		for segment in 0..<SELECTION_RING_SEGMENTS {
+			a := selection_ring_dirs[segment]
+			b := selection_ring_dirs[segment + 1]
+			rlgl.Vertex3f(center.x + a.x * outer_radius, y, center.z + a.y * outer_radius)
+			rlgl.Vertex3f(center.x + b.x * outer_radius, y, center.z + b.y * outer_radius)
+		}
+		rlgl.End()
 	}
 }
 
@@ -659,15 +602,36 @@ draw_combat_nebulae :: proc() {
 
 	for s in 0..<SECTOR_COUNT {
 		if combat_nebula_intensity[s] > 0.005 {
-			draw_sector_nebula(s, combat_nebula_intensity[s], sector_combat_state[s], false, viewport_w, screen_h, cam_forward, cam_right)
+			draw_sector_nebula(s, combat_nebula_intensity[s], sector_combat_state[s], NEBULA_PALETTE_COMBAT, viewport_w, screen_h, cam_forward, cam_right)
 		}
 		if minor_wave_source_nebula_intensity[s] > 0.005 {
-			draw_sector_nebula(s, minor_wave_source_nebula_intensity[s], false, true, viewport_w, screen_h, cam_forward, cam_right)
+			draw_sector_nebula(s, minor_wave_source_nebula_intensity[s], false, NEBULA_PALETTE_WARNING, viewport_w, screen_h, cam_forward, cam_right)
 		}
 	}
 }
 
-draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, is_yellow: bool, viewport_w, screen_h: f32, cam_forward, cam_right: rl.Vector3) {
+Nebula_Palette :: struct {
+	grand, secondary, far_lobe, near_lobe, corona, inner, spark: [3]u8,
+	mid_r, mid_g, mid_b: [2]f32,
+}
+
+NEBULA_PALETTE_COMBAT :: Nebula_Palette{
+	grand = {160, 12, 35}, secondary = {190, 20, 50}, far_lobe = {195, 18, 42}, near_lobe = {255, 60, 32},
+	corona = {255, 55, 28}, inner = {255, 125, 45}, spark = {255, 135, 50},
+	mid_r = {235, 20}, mid_g = {35, 25}, mid_b = {30, 20},
+}
+
+NEBULA_PALETTE_WARNING :: Nebula_Palette{
+	grand = {170, 150, 15}, secondary = {195, 170, 20}, far_lobe = {205, 185, 20}, near_lobe = {255, 225, 30},
+	corona = {255, 230, 30}, inner = {255, 245, 90}, spark = {255, 235, 50},
+	mid_r = {245, 10}, mid_g = {215, 25}, mid_b = {25, 15},
+}
+
+nebula_color :: proc(rgb: [3]u8, alpha: u8) -> rl.Color {
+	return rl.Color{rgb.r, rgb.g, rgb.b, alpha}
+}
+
+draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, pal: Nebula_Palette, viewport_w, screen_h: f32, cam_forward, cam_right: rl.Vector3) {
 	if intensity <= 0.005 { return }
 
 	pos_3d := sector_pos(s)
@@ -703,120 +667,62 @@ draw_sector_nebula :: proc(s: int, intensity: f32, in_combat: bool, is_yellow: b
 	secondary_r := max(base_r * 4.75, 100.0) * radius_pulse
 	secondary_alpha := u8(clamp(60.0 * effective_intensity, 0, 255))
 
-	if is_yellow {
-		rl.DrawCircleGradient(screen_pos, grand_r, rl.Color{170, 150, 15, grand_alpha}, rl.Color{0, 0, 0, 0})
-		rl.DrawCircleGradient(secondary_grand_pos, secondary_r, rl.Color{195, 170, 20, secondary_alpha}, rl.Color{0, 0, 0, 0})
+	clear := rl.Color{0, 0, 0, 0}
+	rl.DrawCircleGradient(screen_pos, grand_r, nebula_color(pal.grand, grand_alpha), clear)
+	rl.DrawCircleGradient(secondary_grand_pos, secondary_r, nebula_color(pal.secondary, secondary_alpha), clear)
 
-		for i in 0..<4 {
-			fi := f32(i)
-			ang := fi * (math.PI * 0.5) + math.sin(t * 0.35 + fi * 1.7 + f32(s)) * 0.45 + f32(s) * 0.8
-			dist := max(base_r * (1.9 + 0.3 * math.sin(t * 0.6 + fi * 2.2 + f32(s))), 35.0)
-			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.82}
-			r := max(base_r * (1.9 + 0.25 * math.cos(t * 1.0 + fi * 1.5)) * radius_pulse, 32.5)
-			alpha := u8(clamp(65.0 * effective_intensity, 0, 255))
-			rl.DrawCircleGradient(center, r, rl.Color{205, 185, 20, alpha}, rl.Color{0, 0, 0, 0})
+	for i in 0..<4 {
+		fi := f32(i)
+		ang := fi * (math.PI * 0.5) + math.sin(t * 0.35 + fi * 1.7 + f32(s)) * 0.45 + f32(s) * 0.8
+		dist := max(base_r * (1.9 + 0.3 * math.sin(t * 0.6 + fi * 2.2 + f32(s))), 35.0)
+		center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.82}
+		r := max(base_r * (1.9 + 0.25 * math.cos(t * 1.0 + fi * 1.5)) * radius_pulse, 32.5)
+		alpha := u8(clamp(65.0 * effective_intensity, 0, 255))
+		rl.DrawCircleGradient(center, r, nebula_color(pal.far_lobe, alpha), clear)
+	}
+
+	for i in 0..<5 {
+		fi := f32(i)
+		ang := fi * (2.0 * math.PI / 5.0) + math.sin(t * 0.45 + fi * 1.5 + f32(s)) * 0.38 + f32(s) * 1.3
+		dist := max(base_r * (1.15 + 0.225 * math.sin(t * 0.75 + fi * 1.9 + f32(s))), 22.5)
+		center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.84}
+		r := max(base_r * (1.5 + 0.225 * math.cos(t * 1.2 + fi * 1.8)) * radius_pulse, 25.0)
+		alpha := u8(clamp(90.0 * effective_intensity, 0, 255))
+		r_val := u8(clamp(pal.mid_r[0] + pal.mid_r[1] * math.sin(fi * 2.0), 0, 255))
+		g_val := u8(clamp(pal.mid_g[0] + pal.mid_g[1] * math.cos(fi * 1.6), 0, 255))
+		b_val := u8(clamp(pal.mid_b[0] + pal.mid_b[1] * math.sin(fi * 3.0), 0, 255))
+		rl.DrawCircleGradient(center, r, rl.Color{r_val, g_val, b_val, alpha}, clear)
+	}
+
+	for i in 0..<3 {
+		fi := f32(i)
+		ang := fi * (2.0 * math.PI / 3.0) + math.sin(t * 0.5 + fi * 2.1 + f32(s)) * 0.3 + f32(s) * 0.4
+		dist := max(base_r * (0.65 + 0.15 * math.sin(t * 0.9 + fi * 2.5)), 12.5)
+		center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.86}
+		r := max(base_r * (1.2 + 0.175 * math.cos(t * 1.3 + fi * 2.0)) * radius_pulse, 20.0)
+		alpha := u8(clamp(110.0 * effective_intensity, 0, 255))
+		rl.DrawCircleGradient(center, r, nebula_color(pal.near_lobe, alpha), clear)
+	}
+
+	corona_r := max(base_r * 1.4, 22.5) * radius_pulse
+	corona_alpha := u8(clamp(135.0 * effective_intensity, 0, 255))
+	rl.DrawCircleGradient(screen_pos, corona_r, nebula_color(pal.corona, corona_alpha), clear)
+
+	inner_core_r := max(base_r * 1.2, 16.0) * (0.95 + 0.1 * palpitation)
+	inner_alpha := u8(clamp(115.0 * effective_intensity, 0, 255))
+	rl.DrawCircleGradient(screen_pos, inner_core_r, nebula_color(pal.inner, inner_alpha), clear)
+
+	for k in 0..<8 {
+		fk := f32(k)
+		spark_angle := fk * 0.785 + t * 0.55 + f32(s) * 1.4
+		spark_dist := max(base_r * (1.4 + 0.25 * math.sin(t * 1.4 + fk * 2.2)), 22.5)
+		spark_pos := rl.Vector2{
+			screen_pos.x + math.cos(spark_angle) * spark_dist,
+			screen_pos.y + math.sin(spark_angle) * spark_dist * 0.88,
 		}
-
-		for i in 0..<5 {
-			fi := f32(i)
-			ang := fi * (2.0 * math.PI / 5.0) + math.sin(t * 0.45 + fi * 1.5 + f32(s)) * 0.38 + f32(s) * 1.3
-			dist := max(base_r * (1.15 + 0.225 * math.sin(t * 0.75 + fi * 1.9 + f32(s))), 22.5)
-			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.84}
-			r := max(base_r * (1.5 + 0.225 * math.cos(t * 1.2 + fi * 1.8)) * radius_pulse, 25.0)
-			alpha := u8(clamp(90.0 * effective_intensity, 0, 255))
-			r_val := u8(clamp(245.0 + 10.0 * math.sin(fi * 2.0), 0, 255))
-			g_val := u8(clamp(215.0 + 25.0 * math.cos(fi * 1.6), 0, 255))
-			b_val := u8(clamp(25.0 + 15.0 * math.sin(fi * 3.0), 0, 255))
-			rl.DrawCircleGradient(center, r, rl.Color{r_val, g_val, b_val, alpha}, rl.Color{0, 0, 0, 0})
-		}
-
-		for i in 0..<3 {
-			fi := f32(i)
-			ang := fi * (2.0 * math.PI / 3.0) + math.sin(t * 0.5 + fi * 2.1 + f32(s)) * 0.3 + f32(s) * 0.4
-			dist := max(base_r * (0.65 + 0.15 * math.sin(t * 0.9 + fi * 2.5)), 12.5)
-			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.86}
-			r := max(base_r * (1.2 + 0.175 * math.cos(t * 1.3 + fi * 2.0)) * radius_pulse, 20.0)
-			alpha := u8(clamp(110.0 * effective_intensity, 0, 255))
-			rl.DrawCircleGradient(center, r, rl.Color{255, 225, 30, alpha}, rl.Color{0, 0, 0, 0})
-		}
-
-		corona_r := max(base_r * 1.4, 22.5) * radius_pulse
-		corona_alpha := u8(clamp(135.0 * effective_intensity, 0, 255))
-		rl.DrawCircleGradient(screen_pos, corona_r, rl.Color{255, 230, 30, corona_alpha}, rl.Color{0, 0, 0, 0})
-
-		inner_core_r := max(base_r * 1.2, 16.0) * (0.95 + 0.1 * palpitation)
-		inner_alpha := u8(clamp(115.0 * effective_intensity, 0, 255))
-		rl.DrawCircleGradient(screen_pos, inner_core_r, rl.Color{255, 245, 90, inner_alpha}, rl.Color{0, 0, 0, 0})
-
-		for k in 0..<8 {
-			fk := f32(k)
-			spark_angle := fk * 0.785 + t * 0.55 + f32(s) * 1.4
-			spark_dist := max(base_r * (1.4 + 0.25 * math.sin(t * 1.4 + fk * 2.2)), 22.5)
-			spark_pos := rl.Vector2{
-				screen_pos.x + math.cos(spark_angle) * spark_dist,
-				screen_pos.y + math.sin(spark_angle) * spark_dist * 0.88,
-			}
-			spark_r := max(base_r * (0.7 + 0.175 * math.cos(t * 2.1 + fk)), 12.5)
-			spark_alpha := u8(clamp(50.0 * effective_intensity, 0, 255))
-			rl.DrawCircleGradient(spark_pos, spark_r, rl.Color{255, 235, 50, spark_alpha}, rl.Color{0, 0, 0, 0})
-		}
-	} else {
-		rl.DrawCircleGradient(screen_pos, grand_r, rl.Color{160, 12, 35, grand_alpha}, rl.Color{0, 0, 0, 0})
-		rl.DrawCircleGradient(secondary_grand_pos, secondary_r, rl.Color{190, 20, 50, secondary_alpha}, rl.Color{0, 0, 0, 0})
-
-		for i in 0..<4 {
-			fi := f32(i)
-			ang := fi * (math.PI * 0.5) + math.sin(t * 0.35 + fi * 1.7 + f32(s)) * 0.45 + f32(s) * 0.8
-			dist := max(base_r * (1.9 + 0.3 * math.sin(t * 0.6 + fi * 2.2 + f32(s))), 35.0)
-			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.82}
-			r := max(base_r * (1.9 + 0.25 * math.cos(t * 1.0 + fi * 1.5)) * radius_pulse, 32.5)
-			alpha := u8(clamp(65.0 * effective_intensity, 0, 255))
-			rl.DrawCircleGradient(center, r, rl.Color{195, 18, 42, alpha}, rl.Color{0, 0, 0, 0})
-		}
-
-		for i in 0..<5 {
-			fi := f32(i)
-			ang := fi * (2.0 * math.PI / 5.0) + math.sin(t * 0.45 + fi * 1.5 + f32(s)) * 0.38 + f32(s) * 1.3
-			dist := max(base_r * (1.15 + 0.225 * math.sin(t * 0.75 + fi * 1.9 + f32(s))), 22.5)
-			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.84}
-			r := max(base_r * (1.5 + 0.225 * math.cos(t * 1.2 + fi * 1.8)) * radius_pulse, 25.0)
-			alpha := u8(clamp(90.0 * effective_intensity, 0, 255))
-			r_val := u8(clamp(235.0 + 20.0 * math.sin(fi * 2.0), 0, 255))
-			g_val := u8(clamp(35.0 + 25.0 * math.cos(fi * 1.6), 0, 255))
-			b_val := u8(clamp(30.0 + 20.0 * math.sin(fi * 3.0), 0, 255))
-			rl.DrawCircleGradient(center, r, rl.Color{r_val, g_val, b_val, alpha}, rl.Color{0, 0, 0, 0})
-		}
-
-		for i in 0..<3 {
-			fi := f32(i)
-			ang := fi * (2.0 * math.PI / 3.0) + math.sin(t * 0.5 + fi * 2.1 + f32(s)) * 0.3 + f32(s) * 0.4
-			dist := max(base_r * (0.65 + 0.15 * math.sin(t * 0.9 + fi * 2.5)), 12.5)
-			center := rl.Vector2{screen_pos.x + math.cos(ang) * dist, screen_pos.y + math.sin(ang) * dist * 0.86}
-			r := max(base_r * (1.2 + 0.175 * math.cos(t * 1.3 + fi * 2.0)) * radius_pulse, 20.0)
-			alpha := u8(clamp(110.0 * effective_intensity, 0, 255))
-			rl.DrawCircleGradient(center, r, rl.Color{255, 60, 32, alpha}, rl.Color{0, 0, 0, 0})
-		}
-
-		corona_r := max(base_r * 1.4, 22.5) * radius_pulse
-		corona_alpha := u8(clamp(135.0 * effective_intensity, 0, 255))
-		rl.DrawCircleGradient(screen_pos, corona_r, rl.Color{255, 55, 28, corona_alpha}, rl.Color{0, 0, 0, 0})
-
-		inner_core_r := max(base_r * 1.2, 16.0) * (0.95 + 0.1 * palpitation)
-		inner_alpha := u8(clamp(115.0 * effective_intensity, 0, 255))
-		rl.DrawCircleGradient(screen_pos, inner_core_r, rl.Color{255, 125, 45, inner_alpha}, rl.Color{0, 0, 0, 0})
-
-		for k in 0..<8 {
-			fk := f32(k)
-			spark_angle := fk * 0.785 + t * 0.55 + f32(s) * 1.4
-			spark_dist := max(base_r * (1.4 + 0.25 * math.sin(t * 1.4 + fk * 2.2)), 22.5)
-			spark_pos := rl.Vector2{
-				screen_pos.x + math.cos(spark_angle) * spark_dist,
-				screen_pos.y + math.sin(spark_angle) * spark_dist * 0.88,
-			}
-			spark_r := max(base_r * (0.7 + 0.175 * math.cos(t * 2.1 + fk)), 12.5)
-			spark_alpha := u8(clamp(50.0 * effective_intensity, 0, 255))
-			rl.DrawCircleGradient(spark_pos, spark_r, rl.Color{255, 135, 50, spark_alpha}, rl.Color{0, 0, 0, 0})
-		}
+		spark_r := max(base_r * (0.7 + 0.175 * math.cos(t * 2.1 + fk)), 12.5)
+		spark_alpha := u8(clamp(50.0 * effective_intensity, 0, 255))
+		rl.DrawCircleGradient(spark_pos, spark_r, nebula_color(pal.spark, spark_alpha), clear)
 	}
 }
 

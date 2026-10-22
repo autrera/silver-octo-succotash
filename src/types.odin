@@ -20,25 +20,16 @@ OUTPOST_CARD_Y     :: PANEL_SUB_Y
 SECTION_TOP        :: PANEL_SUB_Y
 CARD_H             :: 54
 SECTION_PAD_Y      :: 26
-PROD_BAR_W         :: PANEL_CONTENT_W
-BAR_H              :: 8
 
 CARD_LINE_1        :: OUTPOST_CARD_Y + 14
 CARD_LINE_2        :: OUTPOST_CARD_Y + 33
 REFINERY_BTN_Y     :: SECTION_TOP
 ORBITAL_DEFENSE_BTN_Y :: 104
-BASE_PROGRESS_Y    :: SECTION_TOP + BASE_BTN_H + 4
-PROD_TITLE_Y       :: 150
-PROD_FIRST_Y       :: 173
-PROD_BAR_DY        :: 16
 ORDERS_BASE_Y      :: 244
-BASE_COLLAPSE_Y    :: BASE_BTN_H + 8
 UPGRADE_DY         :: 48
 UPGRADE_H          :: 36
 QUEUE_DY           :: 108
 QUEUE_LABEL_GAP    :: 23
-DIALOG_PAD         :: 28
-DIALOG_BTN_H       :: 44
 HUD_PAD            :: 16
 BADGE_PAD          :: 8
 BADGE_GAP          :: 8
@@ -65,7 +56,6 @@ SCIFI_BLUE        :: rl.Color{0, 200, 245, 255}
 SCIFI_AMBER       :: rl.Color{255, 128, 36, 255}
 SCIFI_AMBER_DIM   :: rl.Color{140, 65, 18, 255}
 SCIFI_RED         :: rl.Color{255, 60, 75, 255}
-SCIFI_RED_DIM     :: rl.Color{120, 30, 40, 255}
 SCIFI_STEEL       :: rl.Color{24, 128, 84, 255}
 SCIFI_DIM         :: rl.Color{10, 62, 40, 255}
 SCIFI_PANEL       :: rl.Color{2, 12, 8, 255}
@@ -89,32 +79,9 @@ SATURN  :: 5
 URANUS  :: 6
 NEPTUNE :: 7
 
-Planet_Index :: enum {
-	MERCURY = 0,
-	VENUS   = 1,
-	EARTH   = 2,
-	MARS    = 3,
-	JUPITER = 4,
-	SATURN  = 5,
-	URANUS  = 6,
-	NEPTUNE = 7,
-}
-
 SECTOR_COUNT :: PLANET_COUNT + 1
 ENEMY_HOME   :: PLANET_COUNT
 NO_RALLY     :: -1
-
-Sector_Index :: enum {
-	MERCURY  = 0,
-	VENUS    = 1,
-	EARTH    = 2,
-	MARS     = 3,
-	JUPITER  = 4,
-	SATURN   = 5,
-	URANUS   = 6,
-	NEPTUNE  = 7,
-	ENEMY_HQ = 8,
-}
 
 MINER_COST          :: 50
 COMBAT_COST         :: 125
@@ -132,15 +99,11 @@ ORBITAL_DEFENSE_MUZZLE_REACH :: 1.97
 
 COMBAT_TICK          :: 0.2
 HQ_COMBAT_TICK       :: COMBAT_TICK / 5
-COMBAT_TICK_HQ       :: HQ_COMBAT_TICK
-ENEMY_HQ_COMBAT_TICK :: HQ_COMBAT_TICK
-COMBAT_TICK_ENEMY_HQ :: HQ_COMBAT_TICK
 BASE_SIEGE_TIME      :: 2.0
 
 WAVE_FIRST_DELAY            :: 180
 WAVE_INTERVAL               :: 180
 WAVE_MIN_LIBERATED_PLANETS  :: 2
-WAVE_MIN_MINING_PLANETS     :: 2
 WAVE_FIGHTERS_PER_LIBERATED :: 15
 
 MINOR_WAVE_INTERVAL :: 75.0
@@ -169,7 +132,6 @@ LASER_BOLT_SPEED     :: 14.0
 LASER_BOLT_LEN       :: 0.65
 
 ORBITAL_DEFENSE_COST                  :: 1000
-ORBITAL_DEFENSE_MAX_LEVEL             :: 10
 ORBITAL_DEFENSE_BUILD_TIME            :: 60.0
 ORBITAL_DEFENSE_CONSTRUCT_MINERS      :: 10
 ORBITAL_DEFENSE_HP_PER_LEVEL          :: 100
@@ -188,7 +150,6 @@ ORBITAL_DEFENSE_AMMO_COST             :: 200
 ORBITAL_DEFENSE_AMMO_BUILD_TIME       :: 20.0
 ORBITAL_DEFENSE_AMMO_CONSTRUCT_MINERS :: 1
 ORBITAL_DEFENSE_KILLS_PER_SHOT        :: 10
-ORBITAL_DEFENSE_FIRE_COOLDOWN         :: 0.5
 
 MAX_ORBITAL_BLASTS :: 32
 
@@ -201,8 +162,6 @@ Unit_State :: enum {
 	IDLE,
 	TRANSIT,
 	MINING,
-	RETURNING,
-	DEPOSITING,
 	GUARDING,
 	CONSTRUCTING,
 }
@@ -290,12 +249,4 @@ World_Sector_Spots :: struct {
 	ec:            int,
 	pmc:           int,
 	emc:           int,
-}
-
-is_valid_planet :: proc(p: int) -> bool {
-	return p >= 0 && p < PLANET_COUNT
-}
-
-is_valid_sector :: proc(s: int) -> bool {
-	return s >= 0 && s < SECTOR_COUNT
 }

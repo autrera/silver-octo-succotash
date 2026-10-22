@@ -13,7 +13,7 @@ This project uses Odin, importing raylib via the bindings bundled with the Odin 
   - On Windows, Odin automatically links the prebuilt static `vendor/raylib/windows/raylib.lib`.
   - On Linux, ensure standard Raylib dependencies (X11, GL, etc.) are present.
 
-## Building and Running
+## Building and running
 
 ### Using Make
 
@@ -81,7 +81,7 @@ odin build src -out:bin/release/odin-raylib-test -o:speed
 > [!WARNING]
 > Do not run `premake5` or attempt to regenerate C/C++ project files. This repository contains only Odin source code; running premake would overwrite the handwritten `Makefile`.
 
-## Game Overview & Controls
+## Game overview and controls
 
 Starfall Command is an RTS prototype where you manage planetary mining operations across the solar system (Mercury through Neptune) while defending against and ultimately assaulting an enemy fortress sector.
 
@@ -100,7 +100,7 @@ Starfall Command is an RTS prototype where you manage planetary mining operation
 - **F5**: Quick-save game to `savegame.txt`
 - **ESC**: Cancel most recently queued unit build / dismiss modal overlays
 - **U**: Purchase drone build speed upgrade (Earth command base)
-- **Shift + M / Shift + C**: Batch-queue 5 miners / 5 combat drones (available at max build speed)
+- **Shift + M / Shift + C**: Batch-queue 5 miners / 5 combat drones (available once Earth has 5 command bases)
 
 ## Project Structure
 

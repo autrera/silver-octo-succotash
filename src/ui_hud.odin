@@ -25,14 +25,6 @@ recall_squad :: proc(group: int) -> int {
 	return count
 }
 
-squad_count :: proc(group: int) -> int {
-	count := 0
-	for i := 0; i < unit_count; i += 1 {
-		if units[i].squad == group && !units[i].enemy { count += 1 }
-	}
-	return count
-}
-
 draw_squad_hud :: proc() {
 	counts: [SQUAD_COUNT + 1]int
 	for i := 0; i < unit_count; i += 1 {
@@ -623,7 +615,8 @@ draw_resource_hud :: proc() {
 	num_x := x0
 	num_right := num_x + 5 * cell
 	side_x := num_right + 14
-	side_w := max(measure_display_text("MINERALS", 15), measure_display_text(rl.TextFormat("+%.1f / S", global_mps()), 11))
+	income := rl.TextFormat("+%.1f / S", global_mps())
+	side_w := max(measure_display_text("MINERALS", 15), measure_display_text(income, 11))
 	w := side_x - x0 + side_w + 20 + 62
 
 	top_y := y0 + 16
@@ -648,7 +641,7 @@ draw_resource_hud :: proc() {
 	}
 
 	draw_display_text("MINERALS", {side_x, num_y + 8}, 15, SCIFI_LABEL)
-	draw_display_text(rl.TextFormat("+%.1f / S", global_mps()), {side_x, num_y + 26}, 11, SCIFI_MINT)
+	draw_display_text(income, {side_x, num_y + 26}, 11, SCIFI_MINT)
 
 	bot_y := y0 + 76
 	slash_x := x0 + w - 62

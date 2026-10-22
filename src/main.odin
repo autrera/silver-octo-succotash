@@ -40,6 +40,8 @@ planet_miner_counts: [PLANET_COUNT]int
 planet_combat_counts: [PLANET_COUNT]int
 planet_mining_miners: [PLANET_COUNT]int
 planet_unit_cache_dirty := true
+unit_vision: [SECTOR_COUNT]bool
+unit_vision_dirty := true
 selected_planet := EARTH
 minerals := 350
 mineral_accumulator: f32 = 0
@@ -69,7 +71,6 @@ orbital_defense_reset_timer: [SECTOR_COUNT]f32
 orbital_defense_fire_timer: [SECTOR_COUNT]f32
 orbital_defense_ammo: [SECTOR_COUNT]int
 orbital_defense_ammo_pending_kills: [SECTOR_COUNT]int
-orbital_defense_ammo_pending: [SECTOR_COUNT][ORBITAL_DEFENSE_AMMO_MAX]int
 orbital_defense_ammo_pending_count: [SECTOR_COUNT]int
 orbital_defense_ammo_building: [SECTOR_COUNT]bool
 orbital_defense_ammo_progress: [SECTOR_COUNT]f32

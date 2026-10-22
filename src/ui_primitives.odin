@@ -57,130 +57,6 @@ draw_corner_brackets :: proc(rect: rl.Rectangle, offset: f32, length: f32, color
 	rl.DrawLineV({x + w, y + h - l}, {x + w, y + h}, color)
 }
 
-draw_winged_panel_left :: proc(rect: rl.Rectangle, chamfer: f32, wing_cut: f32, fill: rl.Color, border: rl.Color) {
-	x, y, w, h := rect.x, rect.y, rect.width, rect.height
-	ch := clamp(chamfer, 2, 8)
-	wing := clamp(wing_cut, 8, min(w * 0.4, h * 0.8))
-
-	v0 := rl.Vector2{x + ch, y}
-	v1 := rl.Vector2{x + w - ch, y}
-	v2 := rl.Vector2{x + w, y + ch}
-	v3 := rl.Vector2{x + w, y + h - wing}
-	v4 := rl.Vector2{x + w - wing, y + h}
-	v5 := rl.Vector2{x + ch, y + h}
-	v6 := rl.Vector2{x, y + h - ch}
-	v7 := rl.Vector2{x, y + ch}
-
-	glow_col := rl.Fade(border, 0.12)
-	rl.DrawRectangleGradientV(i32(x), i32(y), i32(w), i32(h), glow_col, rl.Color{0, 0, 0, 0})
-
-	rl.DrawTriangle(v0, v1, v2, fill)
-	rl.DrawTriangle(v0, v2, v3, fill)
-	rl.DrawTriangle(v0, v3, v4, fill)
-	rl.DrawTriangle(v0, v4, v5, fill)
-	rl.DrawTriangle(v0, v5, v6, fill)
-	rl.DrawTriangle(v0, v6, v7, fill)
-
-	rl.DrawLineV(v0, v1, border)
-	rl.DrawLineV(v1, v2, border)
-	rl.DrawLineV(v2, v3, border)
-	rl.DrawLineV(v3, v4, border)
-	rl.DrawLineV(v4, v5, border)
-	rl.DrawLineV(v5, v6, border)
-	rl.DrawLineV(v6, v7, border)
-	rl.DrawLineV(v7, v0, border)
-	rl.DrawPixelV(v0, border)
-	rl.DrawPixelV(v1, border)
-	rl.DrawPixelV(v2, border)
-	rl.DrawPixelV(v3, border)
-	rl.DrawPixelV(v4, border)
-	rl.DrawPixelV(v5, border)
-	rl.DrawPixelV(v6, border)
-	rl.DrawPixelV(v7, border)
-
-	inner_border := SCIFI_STEEL
-	iv0 := rl.Vector2{x + ch + 2, y + 3}
-	iv1 := rl.Vector2{x + w - ch - 2, y + 3}
-	iv2 := rl.Vector2{x + w - 3, y + ch + 2}
-	iv3 := rl.Vector2{x + w - 3, y + h - wing}
-	iv4 := rl.Vector2{x + w - wing, y + h - 3}
-	iv5 := rl.Vector2{x + ch + 2, y + h - 3}
-	iv6 := rl.Vector2{x + 3, y + h - ch - 2}
-	iv7 := rl.Vector2{x + 3, y + ch + 2}
-	rl.DrawLineV(iv0, iv1, inner_border)
-	rl.DrawLineV(iv1, iv2, inner_border)
-	rl.DrawLineV(iv2, iv3, inner_border)
-	rl.DrawLineV(iv3, iv4, inner_border)
-	rl.DrawLineV(iv4, iv5, inner_border)
-	rl.DrawLineV(iv5, iv6, inner_border)
-	rl.DrawLineV(iv6, iv7, inner_border)
-	rl.DrawLineV(iv7, iv0, inner_border)
-	rl.DrawPixelV(iv0, inner_border)
-	rl.DrawPixelV(iv1, inner_border)
-	rl.DrawPixelV(iv2, inner_border)
-	rl.DrawPixelV(iv3, inner_border)
-	rl.DrawPixelV(iv4, inner_border)
-	rl.DrawPixelV(iv5, inner_border)
-	rl.DrawPixelV(iv6, inner_border)
-	rl.DrawPixelV(iv7, inner_border)
-}
-
-draw_winged_panel_right :: proc(rect: rl.Rectangle, chamfer: f32, wing_cut: f32, fill: rl.Color, border: rl.Color) {
-	x, y, w, h := rect.x, rect.y, rect.width, rect.height
-	ch := clamp(chamfer, 2, 8)
-	wing := clamp(wing_cut, 8, min(w * 0.4, h * 0.8))
-
-	v0 := rl.Vector2{x + ch, y}
-	v1 := rl.Vector2{x + w - ch, y}
-	v2 := rl.Vector2{x + w, y + ch}
-	v3 := rl.Vector2{x + w, y + h - ch}
-	v4 := rl.Vector2{x + w - ch, y + h}
-	v5 := rl.Vector2{x + wing, y + h}
-	v6 := rl.Vector2{x, y + h - wing}
-	v7 := rl.Vector2{x, y + ch}
-
-	glow_col := rl.Fade(border, 0.12)
-	rl.DrawRectangleGradientV(i32(x), i32(y), i32(w), i32(h), glow_col, rl.Color{0, 0, 0, 0})
-
-	rl.DrawTriangle(v1, v2, v3, fill)
-	rl.DrawTriangle(v1, v3, v4, fill)
-	rl.DrawTriangle(v1, v4, v5, fill)
-	rl.DrawTriangle(v1, v5, v6, fill)
-	rl.DrawTriangle(v1, v6, v7, fill)
-	rl.DrawTriangle(v1, v7, v0, fill)
-
-	rl.DrawLineV(v0, v1, border)
-	rl.DrawLineV(v1, v2, border)
-	rl.DrawLineV(v2, v3, border)
-	rl.DrawLineV(v3, v4, border)
-	rl.DrawLineV(v4, v5, border)
-	rl.DrawLineV(v5, v6, border)
-	rl.DrawLineV(v6, v7, border)
-	rl.DrawLineV(v7, v0, border)
-
-	inner_border := SCIFI_STEEL
-	iv0 := rl.Vector2{x + ch + 2, y + 3}
-	iv1 := rl.Vector2{x + w - ch - 2, y + 3}
-	iv2 := rl.Vector2{x + w - 3, y + ch + 2}
-	iv3 := rl.Vector2{x + w - 3, y + h - ch - 2}
-	iv4 := rl.Vector2{x + w - ch - 2, y + h - 3}
-	iv5 := rl.Vector2{x + wing, y + h - 3}
-	iv6 := rl.Vector2{x + 3, y + h - wing}
-	iv7 := rl.Vector2{x + 3, y + ch + 2}
-	rl.DrawLineV(iv0, iv1, inner_border)
-	rl.DrawLineV(iv2, iv3, inner_border)
-	rl.DrawLineV(iv4, iv5, inner_border)
-	rl.DrawLineV(iv5, iv6, inner_border)
-	rl.DrawLineV(iv7, iv0, inner_border)
-
-	bracket_col := SCIFI_MINT
-	rl.DrawLineV({x + w + 3, y - 3}, {x + w - 12, y - 3}, bracket_col)
-	rl.DrawLineV({x + w + 3, y - 3}, {x + w + 3, y + 12}, bracket_col)
-	rl.DrawLineV({x + w + 3, y + h + 3}, {x + w - 12, y + h + 3}, bracket_col)
-	rl.DrawLineV({x + w + 3, y + h + 3}, {x + w + 3, y + h - 12}, bracket_col)
-	rl.DrawLineV({x + wing - 4, y + h + 3}, {x - 3, y + h - wing - 4}, rl.Fade(bracket_col, 0.7))
-}
-
 draw_orbital_upgrade_spinner :: proc(center: rl.Vector2, size: f32, progress: f32, color: rl.Color) {
 	r_out := size
 	r_in := size - max(2.5, size * 0.22)
@@ -641,6 +517,34 @@ draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type, progr
 	}
 }
 
+Radio_Style :: struct {
+	selected_fill, selected_border, selected_text: rl.Color,
+	hover_fill, hover_border:                      rl.Color,
+}
+
+draw_radio_segment :: proc(rect: rl.Rectangle, label: cstring, selected, hovered: bool, style: Radio_Style) {
+	fill := SCIFI_PANEL_SOLID
+	border := rl.Color{0, 0, 0, 0}
+	text_col := SCIFI_MUTED
+	if selected {
+		fill = style.selected_fill
+		border = style.selected_border
+		text_col = style.selected_text
+	} else if hovered {
+		fill = style.hover_fill
+		border = style.hover_border
+		text_col = SCIFI_TEXT
+	}
+	if selected || hovered {
+		draw_chamfered_panel(rect, 2, fill, border)
+	}
+	if selected {
+		rl.DrawLineV({rect.x + 2, rect.y + 1}, {rect.x + rect.width - 2, rect.y + 1}, style.selected_text)
+	}
+	tw := f32(rl.MeasureText(label, 12))
+	rl.DrawText(label, i32(rect.x + (rect.width - tw) / 2), i32(rect.y + 4), 12, text_col)
+}
+
 draw_autobuild_radio_buttons :: proc(panel_x: f32) {
 	off_rect, miner_rect, combat_rect := autobuild_radio_rects(panel_x)
 	total_rect := rl.Rectangle{off_rect.x, off_rect.y, (combat_rect.x + combat_rect.width) - off_rect.x, off_rect.height}
@@ -654,86 +558,21 @@ draw_autobuild_radio_buttons :: proc(panel_x: f32) {
 
 	draw_chamfered_panel(total_rect, 3, SCIFI_PANEL_SOLID, SCIFI_DIM)
 
-	{
-		selected := auto_build_mode == .OFF
-		hovered := rl.CheckCollisionPointRec(mouse, off_rect)
-		fill := SCIFI_PANEL_SOLID
-		border := rl.Color{0, 0, 0, 0}
-		text_col := SCIFI_MUTED
-
-		if selected {
-			fill = rl.Color{0, 60, 75, 255}
-			border = SCIFI_GREEN
-			text_col = SCIFI_MINT
-		} else if hovered {
-			fill = rl.Color{10, 36, 46, 255}
-			border = SCIFI_STEEL
-			text_col = SCIFI_TEXT
-		}
-
-		if selected || hovered {
-			draw_chamfered_panel(off_rect, 2, fill, border)
-		}
-		if selected {
-			rl.DrawLineV({off_rect.x + 2, off_rect.y + 1}, {off_rect.x + off_rect.width - 2, off_rect.y + 1}, SCIFI_MINT)
-		}
-		tw := f32(rl.MeasureText("Off", 12))
-		rl.DrawText("Off", i32(off_rect.x + (off_rect.width - tw) / 2), i32(off_rect.y + 4), 12, text_col)
+	off_style := Radio_Style{
+		selected_fill = {0, 60, 75, 255}, selected_border = SCIFI_GREEN, selected_text = SCIFI_MINT,
+		hover_fill = {10, 36, 46, 255}, hover_border = SCIFI_STEEL,
 	}
-
-	{
-		selected := auto_build_mode == .MINERS
-		hovered := rl.CheckCollisionPointRec(mouse, miner_rect)
-		fill := SCIFI_PANEL_SOLID
-		border := rl.Color{0, 0, 0, 0}
-		text_col := SCIFI_MUTED
-
-		if selected {
-			fill = rl.Color{60, 40, 10, 255}
-			border = SCIFI_AMBER
-			text_col = SCIFI_AMBER
-		} else if hovered {
-			fill = rl.Color{32, 22, 8, 255}
-			border = SCIFI_AMBER_DIM
-			text_col = SCIFI_TEXT
-		}
-
-		if selected || hovered {
-			draw_chamfered_panel(miner_rect, 2, fill, border)
-		}
-		if selected {
-			rl.DrawLineV({miner_rect.x + 2, miner_rect.y + 1}, {miner_rect.x + miner_rect.width - 2, miner_rect.y + 1}, SCIFI_AMBER)
-		}
-		tw := f32(rl.MeasureText("M", 12))
-		rl.DrawText("M", i32(miner_rect.x + (miner_rect.width - tw) / 2), i32(miner_rect.y + 4), 12, text_col)
+	miner_style := Radio_Style{
+		selected_fill = {60, 40, 10, 255}, selected_border = SCIFI_AMBER, selected_text = SCIFI_AMBER,
+		hover_fill = {32, 22, 8, 255}, hover_border = SCIFI_AMBER_DIM,
 	}
-
-	{
-		selected := auto_build_mode == .COMBAT
-		hovered := rl.CheckCollisionPointRec(mouse, combat_rect)
-		fill := SCIFI_PANEL_SOLID
-		border := rl.Color{0, 0, 0, 0}
-		text_col := SCIFI_MUTED
-
-		if selected {
-			fill = rl.Color{10, 45, 80, 255}
-			border = SCIFI_BLUE
-			text_col = SCIFI_BLUE
-		} else if hovered {
-			fill = rl.Color{8, 28, 48, 255}
-			border = SCIFI_STEEL
-			text_col = SCIFI_TEXT
-		}
-
-		if selected || hovered {
-			draw_chamfered_panel(combat_rect, 2, fill, border)
-		}
-		if selected {
-			rl.DrawLineV({combat_rect.x + 2, combat_rect.y + 1}, {combat_rect.x + combat_rect.width - 2, combat_rect.y + 1}, SCIFI_BLUE)
-		}
-		tw := f32(rl.MeasureText("C", 12))
-		rl.DrawText("C", i32(combat_rect.x + (combat_rect.width - tw) / 2), i32(combat_rect.y + 4), 12, text_col)
+	combat_style := Radio_Style{
+		selected_fill = {10, 45, 80, 255}, selected_border = SCIFI_BLUE, selected_text = SCIFI_BLUE,
+		hover_fill = {8, 28, 48, 255}, hover_border = SCIFI_STEEL,
 	}
+	draw_radio_segment(off_rect, "Off", auto_build_mode == .OFF, rl.CheckCollisionPointRec(mouse, off_rect), off_style)
+	draw_radio_segment(miner_rect, "M", auto_build_mode == .MINERS, rl.CheckCollisionPointRec(mouse, miner_rect), miner_style)
+	draw_radio_segment(combat_rect, "C", auto_build_mode == .COMBAT, rl.CheckCollisionPointRec(mouse, combat_rect), combat_style)
 
 	rl.DrawLineV({off_rect.x + off_rect.width, total_rect.y + 2}, {off_rect.x + off_rect.width, total_rect.y + total_rect.height - 2}, SCIFI_DIM)
 	rl.DrawLineV({miner_rect.x + miner_rect.width, total_rect.y + 2}, {miner_rect.x + miner_rect.width, total_rect.y + total_rect.height - 2}, SCIFI_DIM)
@@ -752,8 +591,6 @@ state_color :: proc(state: Unit_State) -> rl.Color {
 	case .IDLE: return rl.GRAY
 	case .TRANSIT: return SCIFI_BLUE
 	case .MINING: return rl.GREEN
-	case .RETURNING: return rl.ORANGE
-	case .DEPOSITING: return SCIFI_GREEN
 	case .GUARDING: return rl.RED
 	case .CONSTRUCTING: return SCIFI_GREEN
 	}

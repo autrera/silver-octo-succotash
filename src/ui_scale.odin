@@ -9,12 +9,15 @@ UI_SCALE_MAX :: 3.0
 UI_SCALE_STEP :: 0.25
 
 ui_scale: f32 = 1
+window_dpi_scale: f32 = 1
 
 update_ui_scale :: proc() {
 	h := f32(rl.GetScreenHeight())
 	s := clamp(h / UI_REFERENCE_HEIGHT, 1, UI_SCALE_MAX)
 	ui_scale = math.round(s / UI_SCALE_STEP) * UI_SCALE_STEP
 	if ui_scale < 1 { ui_scale = 1 }
+	dpi := rl.GetWindowScaleDPI().x
+	window_dpi_scale = dpi > 0 ? dpi : 1
 }
 
 apply_ui_scale :: proc() {
