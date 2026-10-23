@@ -130,6 +130,9 @@ ORBIT_SPACING_CATCHUP     :: 1.25
 ORBIT_SPACING_SLOWDOWN    :: 0.85
 ORBIT_SPACING_GAIN       :: 3.0
 ORBIT_SPACING_SNAP        :: 0.003
+ORBIT_EXIT_SPEED          :: 3.0
+RALLY_SPAWN_SLOTS         :: 5
+RALLY_SPAWN_SPACING       :: 0.2
 
 MINER_BUILD_TIME          :: 4.0
 COMBAT_BUILD_TIME         :: 8.0
@@ -264,6 +267,8 @@ Unit :: struct {
 	progress:      f32,
 	orbit_angle:   f32,
 	orbit_placed:  bool,
+	exiting:       bool,
+	exit_angle:    f32,
 	squad:        int,
 	build_target:  Build_Target,
 	mining_active: bool,

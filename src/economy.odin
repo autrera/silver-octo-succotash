@@ -591,6 +591,11 @@ spawn_unit :: proc(kind: Unit_Type, planet: int) {
 	if planet == EARTH && earth_rally != NO_RALLY {
 		target_planet = earth_rally
 		state = .TRANSIT
+		to := sector_pos(earth_rally) - planets[planet].position
+		slot := rally_spawn_counter % RALLY_SPAWN_SLOTS
+		rally_spawn_counter += 1
+		angle = math.atan2(to.z, to.x) + (f32(slot) - f32(RALLY_SPAWN_SLOTS - 1) * 0.5) * RALLY_SPAWN_SPACING
+		pos = orbit_pos(planets[planet].position, planets[planet].radius, angle)
 	}
 	build_target := Build_Target.NONE
 	mining_active := false

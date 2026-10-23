@@ -553,6 +553,23 @@ issue_group_order :: proc(planet: int) {
 	for i := 0; i < unit_count; i += 1 {
 		if !selected_units[i] { continue }
 		if units[i].kind == .MINING && planet == ENEMY_HOME { continue }
+		if units[i].kind == .COMBAT && units[i].state == .GUARDING && !units[i].enemy {
+			if planet == units[i].affiliation {
+				units[i].exiting = false
+				units[i].target_planet = planet
+				continue
+			}
+			from := sector_pos(units[i].affiliation)
+			to := sector_pos(planet)
+			units[i].exiting = true
+			units[i].exit_angle = math.atan2(to.z - from.z, to.x - from.x)
+			units[i].target_planet = planet
+			units[i].progress = 0
+			units[i].build_target = .NONE
+			units[i].mining_active = false
+			continue
+		}
+		units[i].exiting = false
 		units[i].target_planet = planet
 		units[i].affiliation = planet
 		units[i].progress = 0
@@ -578,7 +595,7 @@ update_units :: proc(dt: f32) {
 	orbit_group_rank = {}
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
-		if u.kind == .COMBAT && u.state == .GUARDING && u.affiliation >= 0 && u.affiliation < SECTOR_COUNT {
+		if u.kind == .COMBAT && u.state == .GUARDING && !u.exiting && u.affiliation >= 0 && u.affiliation < SECTOR_COUNT {
 			orbit_group_count[u.affiliation][u.enemy ? 1 : 0] += 1
 		}
 	}

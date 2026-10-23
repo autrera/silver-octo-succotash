@@ -1012,6 +1012,21 @@ update_combat :: proc(u: ^Unit, dt: f32) {
 			u.orbit_placed = false
 			u.position = orbit_pos(sector_pos(u.affiliation), sector_radius(u.affiliation), u.orbit_angle)
 		}
+	} else if u.state == .GUARDING && u.exiting {
+		diff := math.mod(u.exit_angle - u.orbit_angle, 2 * math.PI)
+		if diff > math.PI { diff -= 2 * math.PI }
+		if diff < -math.PI { diff += 2 * math.PI }
+		step := ORBIT_SPEED * ORBIT_EXIT_SPEED * dt
+		if step >= abs(diff) {
+			u.orbit_angle = u.exit_angle
+			u.exiting = false
+			u.state = .TRANSIT
+			u.position = orbit_pos(sector_pos(u.affiliation), sector_radius(u.affiliation), u.orbit_angle)
+			u.affiliation = u.target_planet
+		} else {
+			u.orbit_angle += diff > 0 ? step : -step
+			u.position = orbit_pos(sector_pos(u.affiliation), sector_radius(u.affiliation), u.orbit_angle)
+		}
 	} else if u.state == .GUARDING {
 		side := u.enemy ? 1 : 0
 		s := u.affiliation

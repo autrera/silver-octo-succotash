@@ -207,7 +207,7 @@ serialize_game_state :: proc(allocator := context.temp_allocator) -> string {
 	fmt.sbprintf(&b, "UNITS %d\n", unit_count)
 	for i in 0..<unit_count {
 		u := units[i]
-		fmt.sbprintf(&b, "UNIT %s %s %.4f %.4f %.4f %d %d %d %d %.4f %.4f %d %s %d\n",
+		fmt.sbprintf(&b, "UNIT %s %s %.4f %.4f %.4f %d %d %d %d %.4f %.4f %d %s %d %d %.4f\n",
 			unit_type_to_string(u.kind),
 			unit_state_to_string(u.state),
 			u.position.x, u.position.y, u.position.z,
@@ -215,7 +215,8 @@ serialize_game_state :: proc(allocator := context.temp_allocator) -> string {
 			u.enemy ? 1 : 0,
 			u.progress, u.orbit_angle, u.squad,
 			build_target_to_string(u.build_target),
-			u.mining_active ? 1 : 0)
+			u.mining_active ? 1 : 0,
+			u.exiting ? 1 : 0, u.exit_angle)
 	}
 
 	return strings.to_string(b)
@@ -461,6 +462,9 @@ deserialize_game_state :: proc(content: string) -> bool {
 				} else if kind == .MINING && !enemy && state == .MINING {
 					mining_active = true
 				}
+				exiting := len(fields) >= 17 && fields[15] == "1"
+				exit_angle: f32
+				if len(fields) >= 17 { exit_angle, _ = strconv.parse_f32(fields[16]) }
 				if unit_count < MAX_UNITS {
 					units[unit_count] = Unit{
 						kind = kind,
@@ -475,6 +479,8 @@ deserialize_game_state :: proc(content: string) -> bool {
 						squad = squad,
 						build_target = bt,
 						mining_active = mining_active,
+						exiting = exiting,
+						exit_angle = exit_angle,
 					}
 					unit_count += 1
 				}

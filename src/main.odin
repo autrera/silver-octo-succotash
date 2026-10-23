@@ -106,6 +106,7 @@ quit_requested := false
 victory := false
 defeated := false
 earth_rally := NO_RALLY
+rally_spawn_counter: int
 last_known_intel: [PLANET_COUNT]Intel
 intel_recorded: [PLANET_COUNT]bool
 laser_anim_time: f32
