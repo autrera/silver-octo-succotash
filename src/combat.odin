@@ -284,7 +284,7 @@ earth_orbital_defense_y :: proc() -> f32 {
 	if !base_button_visible() {
 		return SECTION_TOP
 	}
-	y: f32 = SECTION_TOP + BASE_BTN_H + 8
+	y: f32 = SECTION_TOP + BASE_BTN_H + 16
 	return y
 }
 
