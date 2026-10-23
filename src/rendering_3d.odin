@@ -18,7 +18,7 @@ draw_world :: proc() {
 	if hq_on_screen(f32(viewport_w)) {
 		draw_hq_fortress(ENEMY_HQ_POSITION)
 	}
-	draw_rally_flag()
+	draw_rally_marker()
 	draw_selection_rings()
 
 	sector_vis: [SECTOR_COUNT]bool
@@ -513,6 +513,105 @@ draw_selection_rings :: proc() {
 		}
 		rlgl.End()
 	}
+}
+
+RALLY_RING_SEGMENTS  :: 56
+RALLY_RING_RADIUS    :: 1.25
+RALLY_RING_WIDTH     :: 0.14
+RALLY_RING_LIFT      :: 0.3
+RALLY_RING_HEIGHT    :: 1.2
+RALLY_PULSE_PERIOD   :: 1.8
+RALLY_PULSE_REACH    :: 1.3
+RALLY_CHEVRON_HALF_W :: 1.0
+RALLY_CHEVRON_H      :: 1.7
+RALLY_CHEVRON_DEPTH  :: 0.42
+RALLY_HOVER          :: 0.55
+RALLY_BOB            :: 0.3
+RALLY_BOB_PERIOD     :: 2.5
+RALLY_SWAY_DEG       :: 25.0
+RALLY_SWAY_PERIOD    :: 5.0
+
+draw_rally_marker :: proc() {
+	if earth_rally == NO_RALLY { return }
+	p := planets[earth_rally]
+	ring := rl.Vector3{p.position.x, p.position.y + p.radius * RALLY_RING_HEIGHT + RALLY_RING_LIFT, p.position.z}
+	bob := RALLY_BOB * 0.5 * (1 - math.cos(2 * math.PI * laser_anim_time / RALLY_BOB_PERIOD))
+	tip := ring + {0, RALLY_HOVER + bob, 0}
+	sway := RALLY_SWAY_DEG * rl.DEG2RAD * math.sin(2 * math.PI * laser_anim_time / RALLY_SWAY_PERIOD)
+	draw_rally_chevron(tip, sway)
+
+	phase := math.mod(laser_anim_time, RALLY_PULSE_PERIOD) / RALLY_PULSE_PERIOD
+	pulse_r := RALLY_RING_RADIUS + phase * RALLY_PULSE_REACH
+	rlgl.DrawRenderBatchActive()
+	rlgl.DisableBackfaceCulling()
+	rlgl.DisableDepthMask()
+	draw_flat_annulus(ring, 0, RALLY_RING_RADIUS - RALLY_RING_WIDTH, rl.Fade(SCIFI_GREEN, 0.14))
+	draw_flat_annulus(ring, RALLY_RING_RADIUS - RALLY_RING_WIDTH, RALLY_RING_RADIUS, rl.Fade(SCIFI_GREEN, 0.95))
+	draw_flat_annulus(ring, pulse_r - RALLY_RING_WIDTH * 0.5, pulse_r, rl.Fade(SCIFI_GREEN, 0.75 * (1 - phase)))
+	rlgl.DrawRenderBatchActive()
+	rlgl.EnableDepthMask()
+	rlgl.EnableBackfaceCulling()
+}
+
+draw_rally_chevron :: proc(tip: rl.Vector3, yaw: f32) {
+	c, s := math.cos(yaw), math.sin(yaw)
+	corner :: proc(tip: rl.Vector3, c, s, x, y, z: f32) -> rl.Vector3 {
+		return {tip.x + x * c + z * s, tip.y + y, tip.z - x * s + z * c}
+	}
+	w, h, d := f32(RALLY_CHEVRON_HALF_W), f32(RALLY_CHEVRON_H), f32(RALLY_CHEVRON_DEPTH * 0.5)
+	fl, fr, ft := corner(tip, c, s, -w, h, d), corner(tip, c, s, w, h, d), corner(tip, c, s, 0, 0, d)
+	bl, br, bt := corner(tip, c, s, -w, h, -d), corner(tip, c, s, w, h, -d), corner(tip, c, s, 0, 0, -d)
+	center := tip + {0, h * 2.0 / 3.0, 0}
+
+	rlgl.DrawRenderBatchActive()
+	rlgl.DisableBackfaceCulling()
+	rally_face(center, fl, fr, ft)
+	rally_face(center, bl, br, bt)
+	rally_face(center, fl, fr, br, bl)
+	rally_face(center, fl, ft, bt, bl)
+	rally_face(center, fr, ft, bt, br)
+	rlgl.DrawRenderBatchActive()
+	rlgl.EnableBackfaceCulling()
+
+	edges := [?][2]rl.Vector3{{fl, fr}, {fr, ft}, {ft, fl}, {bl, br}, {br, bt}, {bt, bl}, {fl, bl}, {fr, br}, {ft, bt}}
+	for e in edges {
+		a := center + (e[0] - center) * 1.015
+		b := center + (e[1] - center) * 1.015
+		rl.DrawLine3D(a, b, SCIFI_MINT)
+	}
+}
+
+rally_face :: proc(center: rl.Vector3, verts: ..rl.Vector3) {
+	n := rl.Vector3Normalize(rl.Vector3CrossProduct(verts[1] - verts[0], verts[2] - verts[0]))
+	if rl.Vector3DotProduct(n, verts[0] - center) < 0 { n = -n }
+	light := 0.38 + 0.8 * max(rl.Vector3DotProduct(n, rl.Vector3Normalize(PLANET_LIGHT_DIR)), 0) + 0.12 * max(n.y, 0)
+	col := rl.Color{
+		u8(min(f32(SCIFI_GREEN.r) * light, 255)),
+		u8(min(f32(SCIFI_GREEN.g) * light, 255)),
+		u8(min(f32(SCIFI_GREEN.b) * light, 255)),
+		255,
+	}
+	for i in 1..<len(verts) - 1 {
+		rl.DrawTriangle3D(verts[0], verts[i], verts[i + 1], col)
+	}
+}
+
+draw_flat_annulus :: proc(center: rl.Vector3, inner, outer: f32, col: rl.Color) {
+	rlgl.CheckRenderBatchLimit(6 * RALLY_RING_SEGMENTS)
+	rlgl.Begin(rlgl.TRIANGLES)
+	rlgl.Color4ub(col.r, col.g, col.b, col.a)
+	for i in 0..<RALLY_RING_SEGMENTS {
+		a0 := 2 * math.PI * f32(i) / RALLY_RING_SEGMENTS
+		a1 := 2 * math.PI * f32(i + 1) / RALLY_RING_SEGMENTS
+		c0, s0, c1, s1 := math.cos(a0), math.sin(a0), math.cos(a1), math.sin(a1)
+		rlgl.Vertex3f(center.x + c0 * inner, center.y, center.z + s0 * inner)
+		rlgl.Vertex3f(center.x + c0 * outer, center.y, center.z + s0 * outer)
+		rlgl.Vertex3f(center.x + c1 * outer, center.y, center.z + s1 * outer)
+		rlgl.Vertex3f(center.x + c0 * inner, center.y, center.z + s0 * inner)
+		rlgl.Vertex3f(center.x + c1 * outer, center.y, center.z + s1 * outer)
+		rlgl.Vertex3f(center.x + c1 * inner, center.y, center.z + s1 * inner)
+	}
+	rlgl.End()
 }
 
 planet_spin_speed :: proc(p: int) -> f32 {

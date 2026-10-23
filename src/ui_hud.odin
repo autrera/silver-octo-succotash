@@ -344,7 +344,7 @@ draw_controls_overlay :: proc() {
 	cy1 += 20
 	draw_control_row(col1_x, cy1, "RIGHT CLICK", "Dispatch units to planet / HQ")
 	cy1 += 18
-	draw_control_row(col1_x, cy1, "R-CLICK EARTH", "Set or clear Earth rally flag")
+	draw_control_row(col1_x, cy1, "R-CLICK EARTH", "Set or clear Earth rally point")
 	cy1 += 18
 	draw_control_row(col1_x, cy1, "B / CLICK", "Build Refinery on outpost")
 	cy1 += 18
