@@ -46,6 +46,8 @@ draw_inspector :: proc() {
 		draw_outpost_inspector(x)
 	}
 
+	roster_bottom := h > 700 ? f32(ui_screen_h() - 36) - 6 : container_y + container_h - 8
+	begin_ui_scissor({x, 0, f32(SCREEN_PANEL_WIDTH), roster_bottom})
 	if ghost_view() {
 		draw_ghost_rosters(x)
 	} else if selected_planet == EARTH || has_vision(selected_planet) {
@@ -73,6 +75,7 @@ draw_inspector :: proc() {
 			}
 		}
 	}
+	rl.EndScissorMode()
 	if h > 700 {
 		sel_y := f32(ui_screen_h() - 36)
 		sel_rect := rl.Rectangle{x + PANEL_PAD_X, sel_y, PANEL_CONTENT_W, 22}
@@ -374,7 +377,8 @@ view_count :: proc(kind: Unit_Type, enemy: bool) -> int {
 unit_tile_rect :: proc(x: f32, y: int, ordinal: int) -> rl.Rectangle {
 	column := ordinal % TILES_PER_ROW
 	row := ordinal / TILES_PER_ROW
-	return rl.Rectangle{x + PANEL_PAD_X + f32(column * (TILE_SIZE + TILE_GAP)), f32(y + row * (TILE_SIZE + TILE_GAP)), TILE_SIZE, TILE_SIZE}
+	row_w := f32(TILES_PER_ROW * (TILE_SIZE + TILE_GAP) - TILE_GAP)
+	return rl.Rectangle{x + (f32(SCREEN_PANEL_WIDTH) - row_w) / 2 + f32(column * (TILE_SIZE + TILE_GAP)), f32(y + row * (TILE_SIZE + TILE_GAP)), TILE_SIZE, TILE_SIZE}
 }
 
 draw_unit_tile :: proc(index: int, x: f32, y: int, ordinal: int, enemy: bool) {
