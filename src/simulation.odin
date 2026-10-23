@@ -246,6 +246,11 @@ update_input :: proc() {
 			open_manual()
 			return
 		}
+		if group := pick_squad_badge(mouse); group > 0 {
+			last_unit_clicked_index = -1
+			recall_squad(group)
+			return
+		}
 		if mouse.x >= panel_x {
 			inspector_drag_start = mouse
 			inspector_drag_active = true

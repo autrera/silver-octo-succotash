@@ -1,6 +1,5 @@
 package main
 
-import "core:c"
 import "core:math"
 import rl "vendor:raylib"
 
@@ -25,25 +24,66 @@ recall_squad :: proc(group: int) -> int {
 	return count
 }
 
-draw_squad_hud :: proc() {
-	counts: [SQUAD_COUNT + 1]int
+Squad_Badges :: struct {
+	rects:  [SQUAD_COUNT + 1]rl.Rectangle,
+	counts: [SQUAD_COUNT + 1]int,
+	active: [SQUAD_COUNT + 1]bool,
+}
+
+SQUAD_KEYCAP_W :: 18
+SQUAD_COUNT_SIZE :: 13
+
+squad_badges :: proc() -> (b: Squad_Badges) {
+	selected: [SQUAD_COUNT + 1]int
+	total_selected := 0
 	for i := 0; i < unit_count; i += 1 {
+		if selected_units[i] { total_selected += 1 }
 		sq := units[i].squad
 		if sq >= 1 && sq <= SQUAD_COUNT && !units[i].enemy {
-			counts[sq] += 1
+			b.counts[sq] += 1
+			if selected_units[i] { selected[sq] += 1 }
 		}
 	}
 	x := f32(HUD_PAD)
 	for g in 1..=SQUAD_COUNT {
-		count := counts[g]
+		count := b.counts[g]
 		if count == 0 { continue }
-		label := rl.TextFormat("[%d:%d]", g, count)
-		w := f32(rl.MeasureText(label, 13))
-		badge := rl.Rectangle{x, BADGE_Y, w + 2 * BADGE_PAD, BADGE_H}
-		draw_chamfered_panel(badge, 4, SCIFI_PANEL_SOLID, SCIFI_STEEL)
-		draw_corner_brackets(badge, 1, 3, SCIFI_GREEN)
-		rl.DrawText(label, c.int(x + BADGE_PAD), BADGE_Y + 4, 13, SCIFI_GREEN)
-		x += badge.width + BADGE_GAP
+		b.active[g] = selected[g] == count && total_selected == count
+		w := BADGE_PAD + SQUAD_KEYCAP_W + 8 + measure_display_text(rl.TextFormat("%d", count), SQUAD_COUNT_SIZE) + BADGE_PAD + 4
+		b.rects[g] = rl.Rectangle{x, BADGE_Y, w, BADGE_H}
+		x += b.rects[g].width + BADGE_GAP
+	}
+	return
+}
+
+pick_squad_badge :: proc(mouse: rl.Vector2) -> int {
+	b := squad_badges()
+	for g in 1..=SQUAD_COUNT {
+		if b.counts[g] > 0 && rl.CheckCollisionPointRec(mouse, b.rects[g]) { return g }
+	}
+	return 0
+}
+
+draw_squad_hud :: proc() {
+	b := squad_badges()
+	mouse := ui_mouse()
+	for g in 1..=SQUAD_COUNT {
+		if b.counts[g] == 0 { continue }
+		r := b.rects[g]
+		hovered := hud_interactive() && rl.CheckCollisionPointRec(mouse, r)
+		lit := hovered || b.active[g]
+		draw_menu_shell(r, lit, true, SCIFI_GREEN, BADGE_H / 2)
+		cy := r.y + r.height / 2
+		cap := rl.Rectangle{r.x + BADGE_PAD, cy - 8, SQUAD_KEYCAP_W, 16}
+		cap_fill := lit ? SCIFI_INK : SCIFI_FILL
+		cap_text := lit ? SCIFI_GREEN : SCIFI_INK
+		rl.DrawRectangleRounded(cap, 0.6, 8, cap_fill)
+		key := rl.TextFormat("%d", g)
+		key_size: f32 = 10
+		kw := measure_display_text(key, key_size)
+		draw_display_text(key, {cap.x + (cap.width - kw) / 2, cy - key_size * 0.5}, key_size, cap_text)
+		count := rl.TextFormat("%d", b.counts[g])
+		draw_display_text(count, {cap.x + cap.width + 8, cy - SQUAD_COUNT_SIZE * 0.5}, SQUAD_COUNT_SIZE, lit ? SCIFI_INK : SCIFI_MINT)
 	}
 }
 

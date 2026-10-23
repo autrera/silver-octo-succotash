@@ -123,10 +123,10 @@ draw_hud :: proc(viewport_w: i32) {
 
 	if hud_save_notification_timer > 0 {
 		saved_lbl: cstring = "GAME SAVED"
-		saved_w := f32(rl.MeasureText(saved_lbl, 11))
-		saved_x := f32(viewport_w) - f32(HUD_PAD) - saved_w - 8
-		draw_chamfered_panel({saved_x - 8, HUD_PAD + 12, saved_w + 16, 26}, 4, rl.Color{30, 20, 10, 240}, SCIFI_AMBER_DIM)
-		rl.DrawText(saved_lbl, i32(saved_x), i32(HUD_PAD + 18), 11, SCIFI_AMBER)
+		saved_w := measure_display_text(saved_lbl, BUTTON_LABEL_SIZE)
+		saved_rect := rl.Rectangle{f32(viewport_w) - f32(HUD_PAD) - saved_w - 2 * BUTTON_PAD_X, HUD_PAD + 12, saved_w + 2 * BUTTON_PAD_X, 28}
+		draw_menu_shell(saved_rect, false, true, SCIFI_AMBER, BUTTON_RADIUS)
+		draw_display_text(saved_lbl, {saved_rect.x + BUTTON_PAD_X, saved_rect.y + (saved_rect.height - BUTTON_LABEL_SIZE) / 2}, BUTTON_LABEL_SIZE, SCIFI_AMBER)
 	}
 
 	ctrl_rect := manual_button_rect()

@@ -77,23 +77,45 @@ draw_inspector :: proc() {
 	}
 	rl.EndScissorMode()
 	if h > 700 {
-		sel_y := f32(ui_screen_h() - 36)
-		sel_rect := rl.Rectangle{x + PANEL_PAD_X, sel_y, PANEL_CONTENT_W, 22}
-		sel_count := selection_count()
-		if sel_count > 0 {
-			draw_chamfered_panel(sel_rect, 4, rl.Color{10, 30, 40, 240}, SCIFI_GREEN)
-			draw_corner_brackets(sel_rect, 1, 4, SCIFI_MINT)
-			rl.DrawText(rl.TextFormat("ACTIVE SQUAD: %d UNITS SELECTED", sel_count), i32(sel_rect.x + 10), i32(sel_rect.y + 5), 11, SCIFI_MINT)
-		} else {
-			draw_chamfered_panel(sel_rect, 4, SCIFI_PANEL_SOLID, SCIFI_DIM)
-			rl.DrawText("NO UNITS SELECTED", i32(sel_rect.x + 10), i32(sel_rect.y + 5), 11, SCIFI_MUTED)
-		}
+		draw_selection_strip({x + PANEL_PAD_X, h - 38, PANEL_CONTENT_W, 24})
 	}
 	if inspector_drag_active {
 		rect := rect_between(inspector_drag_start, ui_mouse())
 		rl.DrawRectangleRec(rect, rl.Fade(SCIFI_GREEN, 0.18))
 		rl.DrawRectangleLinesEx(rect, 1, SCIFI_GREEN)
 		draw_corner_brackets(rect, 0, 6, SCIFI_MINT)
+	}
+}
+
+draw_selection_strip :: proc(rect: rl.Rectangle) {
+	miners, fighters := 0, 0
+	for i := 0; i < unit_count; i += 1 {
+		if !selected_units[i] { continue }
+		if units[i].kind == .COMBAT { fighters += 1 } else { miners += 1 }
+	}
+	total := miners + fighters
+	if total == 0 { return }
+
+	draw_menu_shell(rect, false, true, SCIFI_GREEN, BUTTON_RADIUS)
+	cy := rect.y + rect.height / 2
+	label_size: f32 = BUTTON_DETAIL_SIZE
+	value_size: f32 = BUTTON_LABEL_SIZE
+	lx := rect.x + BUTTON_PAD_X
+	draw_display_text("SELECTED", {lx, cy - label_size * 0.5}, label_size, SCIFI_LABEL)
+	lx += measure_display_text("SELECTED", label_size) + 8
+	draw_display_text(fmt.ctprintf("%d %s", total, total == 1 ? "UNIT" : "UNITS"), {lx, cy - value_size * 0.5}, value_size, SCIFI_MINT)
+
+	rx := rect.x + rect.width - BUTTON_PAD_X
+	if fighters > 0 {
+		t := fmt.ctprintf("%d %s", fighters, fighters == 1 ? "FIGHTER" : "FIGHTERS")
+		rx -= measure_display_text(t, label_size)
+		draw_display_text(t, {rx, cy - label_size * 0.5}, label_size, SCIFI_BLUE)
+		rx -= 12
+	}
+	if miners > 0 {
+		t := fmt.ctprintf("%d %s", miners, miners == 1 ? "MINER" : "MINERS")
+		rx -= measure_display_text(t, label_size)
+		draw_display_text(t, {rx, cy - label_size * 0.5}, label_size, SCIFI_AMBER)
 	}
 }
 

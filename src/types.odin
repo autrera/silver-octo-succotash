@@ -35,8 +35,8 @@ HUD_PAD            :: 16
 BADGE_PAD          :: 8
 BADGE_GAP          :: 8
 RESOURCE_HUD_H     :: 100
-BADGE_Y            :: HUD_PAD + RESOURCE_HUD_H + 4
-BADGE_H            :: 20
+BADGE_Y            :: HUD_PAD + RESOURCE_HUD_H + 2
+BADGE_H            :: 24
 BOTTOM_DOCK_H      :: 36
 BUTTON_RADIUS      :: 10
 BUTTON_PAD_X       :: 14
