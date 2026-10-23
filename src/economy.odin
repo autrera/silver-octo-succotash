@@ -791,27 +791,9 @@ draw_refinery_mineral_beams :: proc() {
 		if beam_len < 0.1 { continue }
 
 		pulse := 0.85 + 0.15 * math.sin(laser_anim_time * 6.0 + f32(p) * 1.5)
-		outer_alpha := u8(clamp(150.0 * pulse, 110, 180))
-		mid_alpha := u8(clamp(190.0 * pulse, 150, 220))
-		inner_alpha := u8(clamp(220.0 * pulse, 180, 255))
-		core_alpha := u8(clamp(255.0 * pulse, 240, 255))
-
-		rl.DrawCylinderEx(start_pos, end_pos, 0.23, 0.23, 8, rl.Color{0, 65, 255, outer_alpha})
-
-		rl.DrawCylinderEx(start_pos, end_pos, 0.14, 0.14, 6, rl.Color{0, 150, 255, mid_alpha})
-
-		rl.DrawCylinderEx(start_pos, end_pos, 0.07, 0.07, 6, rl.Color{70, 210, 255, inner_alpha})
-
-		rl.DrawCylinderEx(start_pos, end_pos, 0.035, 0.035, 4, rl.Color{255, 255, 255, core_alpha})
-
-		rl.DrawLine3D(start_pos, end_pos, rl.Color{255, 255, 255, 255})
-
-		glow_rad: f32 = 0.30 * pulse
-		rl.DrawSphereEx(start_pos, glow_rad, 6, 8, rl.Color{0, 90, 255, 160})
-		rl.DrawSphereEx(start_pos, glow_rad * 0.45, 4, 6, rl.Color{255, 255, 255, 255})
-
-		rl.DrawSphereEx(end_pos, glow_rad, 6, 8, rl.Color{0, 90, 255, 160})
-		rl.DrawSphereEx(end_pos, glow_rad * 0.45, 4, 6, rl.Color{255, 255, 255, 255})
+		draw_energy_beam(start_pos, end_pos, 1, clamp(pulse, 0.8, 1), MINERAL_BEAM_PALETTE)
+		draw_beam_node(start_pos, 0.30 * pulse, 1, MINERAL_BEAM_PALETTE)
+		draw_beam_node(end_pos, 0.30 * pulse, 1, MINERAL_BEAM_PALETTE)
 
 		if planet_can_mine(p) && planet_miner_drone_count(p) > 0 {
 			num_packets := clamp(int(beam_len / 25.0), 3, 6)

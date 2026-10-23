@@ -26,9 +26,11 @@ draw_world :: proc() {
 	collect_sector_spots(sector_vis)
 	draw_stationed_units(sector_vis)
 	draw_transit_units(sector_vis)
+	queue_drone_wrecks()
 	flush_drones()
 	draw_refinery_mineral_beams()
 	draw_orbital_defense_blasts()
+	draw_drone_wreck_flashes()
 	rl.EndMode3D()
 	apply_ui_scale()
 	if in_start_menu {
@@ -612,6 +614,72 @@ draw_flat_annulus :: proc(center: rl.Vector3, inner, outer: f32, col: rl.Color) 
 		rlgl.Vertex3f(center.x + c1 * inner, center.y, center.z + s1 * inner)
 	}
 	rlgl.End()
+}
+
+Beam_Palette :: struct {
+	outer, mid, inner, core, glow: rl.Color,
+}
+
+MINERAL_BEAM_PALETTE :: Beam_Palette{{0, 65, 255, 150}, {0, 150, 255, 190}, {70, 210, 255, 220}, {255, 255, 255, 255}, {0, 90, 255, 160}}
+HQ_BEAM_PALETTE      :: Beam_Palette{{255, 20, 40, 150}, {255, 70, 60, 190}, {255, 170, 140, 220}, {255, 255, 255, 255}, {255, 40, 50, 160}}
+
+scale_alpha :: proc(col: rl.Color, k: f32) -> rl.Color {
+	return {col.r, col.g, col.b, u8(clamp(f32(col.a) * k, 0, 255))}
+}
+
+draw_energy_beam :: proc(from, to: rl.Vector3, width, intensity: f32, palette: Beam_Palette) {
+	if rl.Vector3Length(to - from) < 0.05 { return }
+	rl.DrawCylinderEx(from, to, 0.23 * width, 0.23 * width, 8, scale_alpha(palette.outer, intensity))
+	rl.DrawCylinderEx(from, to, 0.14 * width, 0.14 * width, 6, scale_alpha(palette.mid, intensity))
+	rl.DrawCylinderEx(from, to, 0.07 * width, 0.07 * width, 6, scale_alpha(palette.inner, intensity))
+	rl.DrawCylinderEx(from, to, 0.035 * width, 0.035 * width, 4, scale_alpha(palette.core, intensity))
+	rl.DrawLine3D(from, to, scale_alpha(palette.core, intensity))
+}
+
+draw_beam_node :: proc(pos: rl.Vector3, radius, intensity: f32, palette: Beam_Palette) {
+	rl.DrawSphereEx(pos, radius, 6, 8, scale_alpha(palette.glow, intensity))
+	rl.DrawSphereEx(pos, radius * 0.45, 4, 6, scale_alpha(palette.core, intensity))
+}
+
+queue_drone_wrecks :: proc() {
+	if !drone_visuals_ready { return }
+	for i in 0..<MAX_DRONE_WRECKS {
+		w := &drone_wrecks[i]
+		if !w.active || !has_vision(w.sector) { continue }
+		kind: Drone_Model_Kind = w.kind == .COMBAT ? .ENEMY_FIGHTER : .ENEMY_MINER
+		if w.elapsed < w.delay {
+			queue_drone(kind, w.position, w.heading)
+			continue
+		}
+		t := w.elapsed - w.delay
+		gray := clamp(t / DRONE_WRECK_GRAY, 0, 1)
+		fade := clamp((DRONE_WRECK_LIFETIME - t) / DRONE_WRECK_FADE, 0, 1)
+		size := fade * fade * (3 - 2 * fade)
+		angle := t * w.spin_rate
+		f, up, side := drone_basis(w.heading)
+		f = rl.Vector3RotateByAxisAngle(f, w.spin_axis, angle) * size
+		up = rl.Vector3RotateByAxisAngle(up, w.spin_axis, angle) * size
+		side = rl.Vector3RotateByAxisAngle(side, w.spin_axis, angle) * size
+		queue_drone_instance(kind, w.position, instance_transform(w.position, f, up, side, 1, gray))
+	}
+}
+
+draw_drone_wreck_flashes :: proc() {
+	rlgl.DisableDepthMask()
+	rl.BeginBlendMode(.ADDITIVE)
+	defer {
+		rl.EndBlendMode()
+		rlgl.EnableDepthMask()
+	}
+	for i in 0..<MAX_DRONE_WRECKS {
+		w := &drone_wrecks[i]
+		if !w.active || w.elapsed < w.delay || !has_vision(w.sector) { continue }
+		t := (w.elapsed - w.delay) / DRONE_WRECK_FLASH
+		if t >= 1 { continue }
+		k := 1 - t
+		rl.DrawSphereEx(w.position, 0.35 + 0.55 * t, 6, 8, rl.Color{255, 120, 40, u8(170 * k)})
+		rl.DrawSphereEx(w.position, 0.18 * k + 0.05, 4, 6, rl.Color{255, 235, 200, u8(255 * k)})
+	}
 }
 
 planet_spin_speed :: proc(p: int) -> f32 {

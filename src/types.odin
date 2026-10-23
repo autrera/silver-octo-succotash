@@ -157,7 +157,22 @@ ORBITAL_DEFENSE_AMMO_BUILD_TIME       :: 20.0
 ORBITAL_DEFENSE_AMMO_CONSTRUCT_MINERS :: 1
 ORBITAL_DEFENSE_KILLS_PER_SHOT        :: 10
 
-MAX_ORBITAL_BLASTS :: 32
+MAX_ORBITAL_BLASTS    :: 64
+ORBITAL_BEAM_DURATION :: 0.24
+ORBITAL_BEAM_STAGGER  :: 0.07
+ORBITAL_BEAM_EXTEND   :: 0.2
+
+MAX_DRONE_WRECKS     :: 256
+DRONE_WRECK_LIFETIME :: 2.4
+DRONE_WRECK_FADE     :: 0.5
+DRONE_WRECK_GRAY     :: 0.35
+DRONE_WRECK_GRAVITY  :: 0.55
+DRONE_WRECK_DRAG     :: 0.7
+DRONE_WRECK_DRIFT    :: 0.35
+DRONE_WRECK_SCATTER  :: 1.5
+DRONE_WRECK_POP      :: 0.25
+DRONE_WRECK_SPIN     :: 1.3
+DRONE_WRECK_FLASH    :: 0.3
 
 Unit_Type :: enum {
 	MINING,
@@ -244,7 +259,23 @@ Orbital_Defense_Blast :: struct {
 	from:     rl.Vector3,
 	to:       rl.Vector3,
 	elapsed:  f32,
+	delay:    f32,
 	duration: f32,
+}
+
+Drone_Wreck :: struct {
+	active:    bool,
+	kind:      Unit_Type,
+	sector:    int,
+	position:  rl.Vector3,
+	velocity:  rl.Vector3,
+	heading:   rl.Vector3,
+	kick:      rl.Vector3,
+	spin_axis: rl.Vector3,
+	spin_rate: f32,
+	delay:     f32,
+	elapsed:   f32,
+	struck:    bool,
 }
 
 World_Sector_Spots :: struct {

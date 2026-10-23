@@ -2,6 +2,7 @@ package main
 
 import "core:math"
 import rl "vendor:raylib"
+import "vendor:raylib/rlgl"
 
 
 orbital_defense_key_pressed :: proc() -> bool {
@@ -148,7 +149,7 @@ orbital_defense_aim :: proc(planet_idx: int) -> (azimuth: f32, elev: f32) {
 	return orbital_defense_angle[planet_idx], orbital_defense_elevation[planet_idx]
 }
 
-spawn_orbital_defense_blast :: proc(planet: int, from, to: rl.Vector3, duration: f32 = 0.35) {
+spawn_orbital_defense_blast :: proc(planet: int, from, to: rl.Vector3, delay: f32 = 0) {
 	oldest_idx := 0
 	oldest_elapsed: f32 = -1.0
 	for i in 0..<MAX_ORBITAL_BLASTS {
@@ -166,79 +167,47 @@ spawn_orbital_defense_blast :: proc(planet: int, from, to: rl.Vector3, duration:
 		planet = planet,
 		from = from,
 		to = to,
-		elapsed = 0,
-		duration = duration,
+		delay = delay,
+		duration = ORBITAL_BEAM_DURATION,
 	}
 }
 
 update_orbital_defense_blasts :: proc(dt: f32) {
 	for i in 0..<MAX_ORBITAL_BLASTS {
-		if !orbital_defense_blasts[i].active { continue }
-		orbital_defense_blasts[i].elapsed += dt
-		if orbital_defense_blasts[i].elapsed >= orbital_defense_blasts[i].duration {
-			orbital_defense_blasts[i].active = false
-		}
+		b := &orbital_defense_blasts[i]
+		if !b.active { continue }
+		b.elapsed += dt
+		if b.elapsed >= b.delay + b.duration { b.active = false }
 	}
 }
 
 draw_orbital_defense_blasts :: proc() {
+	rlgl.DisableDepthMask()
+	rl.BeginBlendMode(.ADDITIVE)
+	defer {
+		rl.EndBlendMode()
+		rlgl.EnableDepthMask()
+	}
 	for i in 0..<MAX_ORBITAL_BLASTS {
 		b := &orbital_defense_blasts[i]
-		if !b.active { continue }
+		if !b.active || b.elapsed < b.delay { continue }
 		if distance(b.from, b.to) < 0.05 { continue }
 		if !has_vision(b.planet) && b.planet != ENEMY_HOME { continue }
 
-		t := clamp(b.elapsed / b.duration, 0.0, 1.0)
-		fade := 1.0 - t
-		alpha := u8(clamp(255.0 * fade, 0, 255))
-		glow_alpha := u8(clamp(180.0 * fade, 0, 255))
-		shock_alpha := u8(clamp(200.0 * fade, 0, 255))
+		t := clamp((b.elapsed - b.delay) / b.duration, 0, 1)
+		reach := clamp(t / ORBITAL_BEAM_EXTEND, 0, 1)
+		fade := t < ORBITAL_BEAM_EXTEND ? 1 : 1 - (t - ORBITAL_BEAM_EXTEND) / (1 - ORBITAL_BEAM_EXTEND)
+		palette := b.planet == ENEMY_HOME ? HQ_BEAM_PALETTE : MINERAL_BEAM_PALETTE
+		head := b.from + (b.to - b.from) * reach
 
-		beam_color := rl.Color{0, 240, 255, glow_alpha}
-		core_color := rl.Color{255, 255, 255, alpha}
-		line_color := rl.Color{210, 255, 255, alpha}
-		shock_color := rl.Color{130, 255, 245, shock_alpha}
-		spark_color := rl.Color{255, 240, 180, alpha}
-
-		if b.planet == ENEMY_HOME {
-			beam_color = rl.Color{255, 30, 45, glow_alpha}
-			core_color = rl.Color{255, 240, 220, alpha}
-			line_color = rl.Color{255, 120, 100, alpha}
-			shock_color = rl.Color{255, 60, 75, shock_alpha}
-			spark_color = rl.Color{255, 160, 80, alpha}
+		draw_energy_beam(b.from, head, 0.45 + 0.75 * fade, fade, palette)
+		draw_beam_node(b.from, 0.34 * (0.6 + 0.4 * fade), fade, palette)
+		if reach < 1 {
+			draw_beam_node(head, 0.26, 1, palette)
+			continue
 		}
-
-		core_r := 0.22 * fade + 0.04
-		rl.DrawCylinderEx(b.from, b.to, core_r, core_r * 0.75, 8, core_color)
-
-		glow_r := 0.65 * fade + 0.12
-		rl.DrawCylinderEx(b.from, b.to, glow_r, glow_r * 0.75, 8, beam_color)
-
-		rl.DrawLine3D(b.from, b.to, line_color)
-
-		flash_r := 0.55 * fade + 0.08
-		draw_low_poly_sphere(b.from, flash_r * 0.6, core_color)
-		rl.DrawSphereEx(b.from, flash_r, 8, 12, beam_color)
-		rl.DrawCircle3D(b.from, 0.5 + t * 1.0, {0, 1, 0}, 90, beam_color)
-
-		burst_r := 0.40 + 1.5 * math.sqrt(t)
-		draw_low_poly_sphere(b.to, 0.30 * fade, core_color)
-		rl.DrawSphereEx(b.to, burst_r * 0.75, 8, 12, beam_color)
-
-		shock_r := 0.45 + 2.4 * t
-		rl.DrawSphereWires(b.to, shock_r, 6, 8, shock_color)
-		rl.DrawCircle3D(b.to, shock_r * 1.2, {0, 1, 0}, 90, beam_color)
-
-		spark_dist := t * 3.4
-		for k in 0..<8 {
-			ang := f32(k) * (math.PI / 4.0)
-			elev := (f32(k % 3) - 1.0) * 0.55
-			spark_dir := rl.Vector3Normalize(rl.Vector3{math.cos(ang), elev, math.sin(ang)})
-			spark_pos := b.to + spark_dir * spark_dist
-			trail_pos := b.to + spark_dir * (spark_dist * 0.65)
-			rl.DrawLine3D(trail_pos, spark_pos, beam_color)
-			draw_low_poly_sphere(spark_pos, 0.08 * fade, spark_color)
-		}
+		hit := (t - ORBITAL_BEAM_EXTEND) / (1 - ORBITAL_BEAM_EXTEND)
+		draw_beam_node(b.to, 0.3 + 0.55 * math.sqrt(hit), fade, palette)
 	}
 }
 
@@ -300,7 +269,7 @@ destroy_orbital_defense :: proc(planet: int) {
 	for i := unit_count - 1; i >= 0; i -= 1 {
 		u := &units[i]
 		if u.kind == .MINING && !u.enemy && u.target_planet == planet && u.state != .TRANSIT {
-			remove_unit_at(i)
+			kill_unit_at(i)
 		}
 	}
 	if planet != EARTH && planet < PLANET_COUNT {
@@ -440,6 +409,7 @@ draw_orbital_defense_inspector_section :: proc(x: f32, btn: rl.Rectangle, p: int
 
 update_orbital_defenses :: proc(dt: f32) {
 	update_orbital_defense_blasts(dt)
+	update_drone_wrecks(dt)
 	for p in 0..<SECTOR_COUNT {
 		if orbital_defense_level[p] > 0 {
 			advance_orbital_defense_aim(p, dt)
@@ -482,8 +452,8 @@ update_orbital_defenses :: proc(dt: f32) {
 								orbital_defense_reset_timer[p] = ORBITAL_DEFENSE_WAVE_RESET_DELAY
 								orbital_defense_fire_timer[p] = 0.06
 								muzzle_pos := orbital_defense_muzzle_pos_toward(p, u.position)
-								spawn_orbital_defense_blast(p, muzzle_pos, u.position, 0.35)
-								remove_unit_at(i)
+								spawn_orbital_defense_blast(p, muzzle_pos, u.position)
+								kill_unit_at(i)
 								if orbital_defense_wave_kills[p] >= max_kills { break }
 							}
 						}
@@ -506,14 +476,16 @@ update_orbital_defenses :: proc(dt: f32) {
 				if in_range < volley { break }
 				kills := 0
 				shot_fired := false
+				shot_delay: f32 = 0
 				for i := unit_count - 1; i >= 0; i -= 1 {
 					u := &units[i]
 					if !u.enemy || u.kind != .COMBAT || u.state != .TRANSIT || u.target_planet != p { continue }
 					d := distance(u.position, target_pos)
 					if d <= engage_dist {
-						muzzle_pos := orbital_defense_muzzle_pos_toward(p, u.position)
-						spawn_orbital_defense_blast(p, muzzle_pos, u.position, 0.35)
-						remove_unit_at(i)
+						hit_pos := u.position + rl.Vector3Normalize(target_pos - u.position) * (COMBAT_TRANSIT_SPEED * shot_delay)
+						spawn_orbital_defense_blast(p, orbital_defense_muzzle_pos_toward(p, hit_pos), hit_pos, shot_delay)
+						kill_unit_at(i, shot_delay)
+						shot_delay += ORBITAL_BEAM_STAGGER
 						kills += 1
 						orbital_defense_wave_kills[p] += 1
 						orbital_defense_ammo_pending_kills[p] += 1
@@ -896,11 +868,73 @@ planet_combatants :: proc(p: int) -> (players, enemies: int) {
 	return
 }
 
+kill_unit_at :: proc(index: int, delay: f32 = 0) {
+	if units[index].enemy { spawn_drone_wreck(units[index], delay) }
+	remove_unit_at(index)
+}
+
+spawn_drone_wreck :: proc(u: Unit, delay: f32) {
+	sector := u.affiliation
+	heading, velocity: rl.Vector3
+	if u.state == .TRANSIT {
+		sector = u.target_planet
+		if sector < 0 || sector >= SECTOR_COUNT { return }
+		heading = sector_pos(sector) - u.position
+		speed: f32 = u.kind == .COMBAT ? COMBAT_TRANSIT_SPEED : MINING_TRANSIT_SPEED
+		velocity = rl.Vector3Normalize(heading) * speed
+	} else {
+		if sector < 0 || sector >= SECTOR_COUNT { return }
+		heading = drone_heading(u.position, sector_pos(sector))
+		velocity = heading * ORBIT_SPEED
+	}
+	seed := u.position.x * 12.9898 + u.position.y * 78.233 + u.position.z * 37.719
+	a := seed * 3.7
+	slot := 0
+	oldest: f32 = -1
+	for i in 0..<MAX_DRONE_WRECKS {
+		if !drone_wrecks[i].active { slot = i; break }
+		age := drone_wrecks[i].elapsed - drone_wrecks[i].delay
+		if age > oldest { oldest = age; slot = i }
+	}
+	drone_wrecks[slot] = Drone_Wreck{
+		active = true,
+		kind = u.kind,
+		sector = sector,
+		position = u.position,
+		velocity = velocity,
+		heading = heading,
+		kick = {math.cos(seed * 2.1), 0, math.sin(seed * 2.1)} * (DRONE_WRECK_SCATTER * (0.6 + 0.4 * abs(math.sin(seed * 0.7)))) + {0, DRONE_WRECK_POP, 0},
+		spin_axis = rl.Vector3Normalize({math.cos(a), 0.8 * math.sin(seed), math.sin(a)}),
+		spin_rate = DRONE_WRECK_SPIN * (math.sin(seed * 1.3) < 0 ? -1 : 1) * (0.75 + 0.25 * abs(math.cos(seed))),
+		delay = delay,
+	}
+}
+
+update_drone_wrecks :: proc(dt: f32) {
+	for i in 0..<MAX_DRONE_WRECKS {
+		w := &drone_wrecks[i]
+		if !w.active { continue }
+		w.elapsed += dt
+		if w.elapsed >= w.delay {
+			if !w.struck {
+				w.struck = true
+				w.velocity = w.velocity * DRONE_WRECK_DRIFT + w.kick
+			}
+			if w.elapsed - w.delay >= DRONE_WRECK_LIFETIME { w.active = false; continue }
+			drag := math.exp(-DRONE_WRECK_DRAG * dt)
+			w.velocity.x *= drag
+			w.velocity.z *= drag
+			w.velocity.y -= DRONE_WRECK_GRAVITY * dt
+		}
+		w.position += w.velocity * dt
+	}
+}
+
 kill_fighter :: proc(p: int, enemy_side: bool) -> bool {
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.kind == .COMBAT && u.enemy == enemy_side && u.state == .GUARDING && u.affiliation == p {
-			remove_unit_at(i)
+			kill_unit_at(i)
 			return true
 		}
 	}
@@ -912,7 +946,7 @@ kill_player_miner :: proc(p: int) -> bool {
 		u := &units[i]
 		if u.kind != .MINING || u.enemy || u.target_planet != p || u.state == .TRANSIT { continue }
 		if u.state == .IDLE && !planet_liberated(p) && u.progress < SCOUT_SURVIVAL { continue }
-		remove_unit_at(i)
+		kill_unit_at(i)
 		return true
 	}
 	return false
@@ -946,7 +980,7 @@ kill_enemy_miner :: proc(p: int) -> bool {
 	for i := 0; i < unit_count; i += 1 {
 		u := &units[i]
 		if u.kind == .MINING && u.enemy && u.affiliation == p {
-			remove_unit_at(i)
+			kill_unit_at(i)
 			return true
 		}
 	}

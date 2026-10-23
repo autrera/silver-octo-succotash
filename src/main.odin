@@ -80,6 +80,7 @@ orbital_defense_build_order: [SECTOR_COUNT]int
 base_build_order: [PLANET_COUNT]int
 
 orbital_defense_blasts: [MAX_ORBITAL_BLASTS]Orbital_Defense_Blast
+drone_wrecks: [MAX_DRONE_WRECKS]Drone_Wreck
 camera: rl.Camera3D
 camera_target := rl.Vector3{10, 0, 2}
 inspector_drag_start: rl.Vector2

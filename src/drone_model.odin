@@ -55,6 +55,7 @@ out vec4 fragColor;
 out vec2 fragMaterial;
 flat out float fragPhase;
 flat out float fragDim;
+flat out float fragWreck;
 void main() {
 	vec3 world = (instanceTransform * vec4(vertexPosition, 1.0)).xyz;
 	vec3 origin = instanceTransform[3].xyz;
@@ -65,6 +66,7 @@ void main() {
 	fragMaterial = vertexTexCoord;
 	fragPhase = fract(sin(dot(origin, vec3(12.9898, 78.233, 37.719))) * 43758.5453) * 6.2831;
 	fragDim = instanceTransform[0].w;
+	fragWreck = instanceTransform[1].w;
 	gl_Position = mvp * vec4(world, 1.0);
 }
 `
@@ -77,6 +79,7 @@ in vec4 fragColor;
 in vec2 fragMaterial;
 flat in float fragPhase;
 flat in float fragDim;
+flat in float fragWreck;
 uniform vec3 lightDir;
 uniform vec3 viewPos;
 uniform vec3 rimColor;
@@ -145,6 +148,9 @@ void main() {
 		shine = 0.3;
 	}
 
+	float ash = dot(base, vec3(0.3, 0.59, 0.11));
+	base = mix(base, vec3(0.05) + vec3(0.55, 0.54, 0.52) * ash, fragWreck);
+
 	vec3 v = normalize(viewPos - fragWorldPos);
 	float diff = max(dot(n, lightDir), 0.0);
 	float fill = max(dot(n, normalize(vec3(0.55, -0.25, -0.65))), 0.0);
@@ -154,7 +160,7 @@ void main() {
 	float occlusion = 0.72 + 0.28 * smoothstep(-0.32, 0.22, fragObjPos.y);
 	vec3 lit = base * (0.2 + 0.85 * diff + 0.22 * fill * vec3(0.7, 0.85, 1.2) + 0.16 * sky) * occlusion;
 	lit += vec3(1.0, 0.95, 0.9) * spec * shine;
-	lit += rimColor * rim * 0.5;
+	lit += rimColor * rim * 0.5 * (1.0 - fragWreck);
 
 	float pulse = 1.0;
 	if (surf == 4.0) {
@@ -696,23 +702,29 @@ unload_drone_model :: proc(model: rl.Model) {
 	rl.UnloadModel(m)
 }
 
-instance_transform :: proc(origin, x, y, z: rl.Vector3, dim: f32 = 0) -> rl.Matrix {
+instance_transform :: proc(origin, x, y, z: rl.Vector3, dim: f32 = 0, wreck: f32 = 0) -> rl.Matrix {
 	return rl.Matrix{
 		x.x, y.x, z.x, origin.x,
 		x.y, y.y, z.y, origin.y,
 		x.z, y.z, z.z, origin.z,
-		dim, 0, 0, 1,
+		dim, wreck, 0, 1,
 	}
 }
 
+drone_basis :: proc(heading: rl.Vector3) -> (forward, up, side: rl.Vector3) {
+	forward = heading
+	if rl.Vector3Length(forward) < 0.001 { forward = {1, 0, 0} }
+	forward = rl.Vector3Normalize(forward)
+	side = rl.Vector3CrossProduct(forward, {0, 1, 0})
+	if rl.Vector3Length(side) < 0.001 { side = {0, 0, 1} }
+	side = rl.Vector3Normalize(side)
+	up = rl.Vector3CrossProduct(side, forward)
+	return
+}
+
 drone_transform :: proc(position, heading: rl.Vector3) -> rl.Matrix {
-	f := heading
-	if rl.Vector3Length(f) < 0.001 { f = {1, 0, 0} }
-	f = rl.Vector3Normalize(f)
-	z := rl.Vector3CrossProduct(f, {0, 1, 0})
-	if rl.Vector3Length(z) < 0.001 { z = {0, 0, 1} }
-	z = rl.Vector3Normalize(z)
-	return instance_transform(position, f, rl.Vector3CrossProduct(z, f), z)
+	f, up, side := drone_basis(heading)
+	return instance_transform(position, f, up, side)
 }
 
 init_drone_visuals :: proc() {
@@ -747,11 +759,15 @@ unload_drone_visuals :: proc() {
 }
 
 queue_drone :: proc(kind: Drone_Model_Kind, position, heading: rl.Vector3) {
+	queue_drone_instance(kind, position, drone_transform(position, heading))
+}
+
+queue_drone_instance :: proc(kind: Drone_Model_Kind, position: rl.Vector3, transform: rl.Matrix) {
 	d := position - camera.position
 	lod := rl.Vector3DotProduct(d, d) > DRONE_LOD_DISTANCE * DRONE_LOD_DISTANCE ? 1 : 0
 	n := drone_instance_count[kind][lod]
 	if n >= MAX_UNITS { return }
-	drone_instances[kind][lod][n] = drone_transform(position, heading)
+	drone_instances[kind][lod][n] = transform
 	drone_instance_count[kind][lod] = n + 1
 }
 

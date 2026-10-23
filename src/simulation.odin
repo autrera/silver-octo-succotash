@@ -89,6 +89,7 @@ reset_world :: proc() {
 	orbital_defense_ammo_pending_count = {}
 	orbital_defense_ammo_pending_kills = {}
 	orbital_defense_blasts = {}
+	drone_wrecks = {}
 	construction_seq_counter = 0
 	refinery_build_order = {}
 	orbital_defense_build_order = {}
