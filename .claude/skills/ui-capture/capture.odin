@@ -35,6 +35,7 @@ capture_countdown := CAPTURE_WARMUP_FRAMES
 capture_frame := 0
 capture_finished := false
 capture_dir := ""
+capture_wait_loading := true
 
 capture_tick :: proc() {
 	if capture_frame == 0 {
@@ -46,6 +47,9 @@ capture_tick :: proc() {
 	if capture_frame > CAPTURE_TIMEOUT_FRAMES {
 		fmt.println("CAPTURE_TIMEOUT")
 		quit_requested = true
+		return
+	}
+	if capture_wait_loading && loading_overlay_alpha() > 0 {
 		return
 	}
 	if capture_countdown > 0 {

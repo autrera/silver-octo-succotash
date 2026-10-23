@@ -36,6 +36,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - `ui_font.odin` owns the display font (`display_font`, `draw_display_text`, `measure_display_text`, plus `_shadowed` and `_glow` variants). `ui_menu.odin` owns the shared menu kit (`menu_box`, `menu_item_rect`, `menu_hover_index`, `draw_menu_backdrop`, `draw_menu_frame`, `draw_menu_shell`, `draw_menu_item`, `glow_line`).
 - `ui_hud.odin` owns the tick and intel plumbing (`step_simulation`, `update_intel`, `update_combat_nebula_intensity`, `enemy_hq_destroyed`), the squad HUD, the menus, and the victory / defeat overlays. Its name understates it: `step_simulation` lives here.
 - `ui_manual.odin` owns the tutorial modal (field manual): `manual_open`, `open_manual` / `close_manual`, `update_manual` / `draw_manual`, the `MANUAL_SECTIONS` table, and the rich-text, key-table, and figure helpers it draws with.
+- `ui_loading.odin` owns the boot splash: `LOADING_STEPS` (the `init_*_visuals` calls, one per frame after `LOADING_WARMUP_FRAMES` presented frames), `update_loading` / `draw_loading_screen`, and the fade into the start menu. `main` skips `update_scene` / `draw_scene` while `loading_screen_active()`. Any new GPU init or bake belongs in `LOADING_STEPS`, not before the main loop, so the window never sits unpainted.
 - `ui_inspector.odin` owns `draw_inspector` and the Earth / outpost / HQ inspector variants, the rosters, ghost view, and the tile geometry (`unit_tile_rect`).
 - `ui_primitives.odin` owns the drawing primitives, the conquered-planet overlay badges, the queue and ammo slot rendering, `state_color`, and `selection_count`.
 - `save_system.odin` owns persistence: `save_game`, `load_game`, `serialize_game_state`, `deserialize_game_state`, `save_game_exists`.
@@ -166,7 +167,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 ## Window and frame pacing
 
-- `main` sets `.VSYNC_HINT`, `.MSAA_4X_HINT`, `.WINDOW_HIGHDPI`, and `.WINDOW_RESIZABLE`, opens borderless at 1280x760, and binds `F11` and Alt+Enter to `ToggleBorderlessWindowed`. `SetExitKey(.KEY_NULL)` frees ESC for gameplay.
+- Startup cost is mostly the GPU driver compiling `PLANET_FS`, `NEBULA_BAKE_FS`, `DRONE_FS`, and `HQ_FS` (about 2s cold, ~30ms once the driver's shader cache is warm, so it returns whenever a shader's source changes) plus the nebula atlas bake landing on the first scene frame. The loading screen hides both; a single long step still freezes its animation for that step.
+- `main` sets `.VSYNC_HINT`, `.MSAA_4X_HINT`, `.WINDOW_HIGHDPI`, `.WINDOW_RESIZABLE`, and `.WINDOW_HIDDEN`, opens at 1280x760, goes borderless, then shows the window, so the first visible frame is already full-screen, and binds `F11` and Alt+Enter to `ToggleBorderlessWindowed`. `SetExitKey(.KEY_NULL)` frees ESC for gameplay.
 - SHARP EDGE: with `.VSYNC_HINT` enabled, never call `rl.SetTargetFPS(60)`. Raylib's `EndDrawing` limiter calls `WaitTime` (nanosleep) after `glfwSwapBuffers`, and on macOS and Windows kernel timer granularity oversleeps by 1-2ms, missing the 16.67ms VBLANK swap deadline and halving presentation to exactly 30 FPS. The code instead derives the cap from `GetMonitorRefreshRate` and calls `SetTargetFPS(max(refresh, 60) * 2)`, a safety ceiling that keeps `WaitTime` from sleeping during VSYNC-locked presentation.
 
 ## Maintaining this file

@@ -126,10 +126,11 @@ hud_save_notification_timer: f32
 save_feedback_timer: f32
 
 main :: proc() {
-	rl.SetConfigFlags({.VSYNC_HINT, .MSAA_4X_HINT, .WINDOW_HIGHDPI, .WINDOW_RESIZABLE})
+	rl.SetConfigFlags({.VSYNC_HINT, .MSAA_4X_HINT, .WINDOW_HIGHDPI, .WINDOW_RESIZABLE, .WINDOW_HIDDEN})
 	rl.InitWindow(1280, 760, "STARFALL COMMAND: Planetary RTS Prototype")
 	defer rl.CloseWindow()
 	rl.ToggleBorderlessWindowed()
+	rl.ClearWindowState({.WINDOW_HIDDEN})
 
 	refresh := rl.GetMonitorRefreshRate(rl.GetCurrentMonitor())
 	target_fps := refresh > 0 ? max(refresh, 60) : 60
@@ -137,15 +138,12 @@ main :: proc() {
 
 	rl.SetExitKey(.KEY_NULL)
 
+	init_loading_screen()
 	reset_world()
 	initialize_game()
-	init_planet_visuals()
 	defer unload_planet_visuals()
-	init_drone_visuals()
 	defer unload_drone_visuals()
-	init_orbital_defense_visuals()
 	defer unload_orbital_defense_visuals()
-	init_hq_visuals()
 	defer unload_hq_visuals()
 	defer unload_display_fonts()
 	camera = rl.Camera3D{
@@ -164,41 +162,55 @@ main :: proc() {
 		}
 		update_ui_scale()
 		dt := rl.GetFrameTime()
-		if in_start_menu {
-			update_start_menu(dt)
-		} else if victory {
-			update_victory_overlay()
-		} else if defeated {
-			update_game_over_overlay()
-		} else if manual_open {
-			update_manual(dt)
-		} else {
-			if pause_key_pressed() { toggle_pause() }
-			if game_paused {
-				update_pause_menu(dt)
-			} else {
-				step_simulation(dt)
-			}
+		update_loading(dt)
+		if !loading_screen_active() {
+			update_scene(dt)
 		}
 
 		rl.BeginDrawing()
 		rl.ClearBackground(rl.Color{8, 12, 24, 255})
 		apply_ui_scale()
-		draw_world()
-		if in_start_menu {
-			draw_start_menu()
-		} else {
-			draw_inspector()
-			if victory {
-				draw_victory_overlay()
-			} else if defeated {
-				draw_game_over_overlay()
-			} else if manual_open {
-				draw_manual()
-			} else if game_paused { draw_pause_menu() }
+		if !loading_screen_active() {
+			draw_scene()
 		}
+		draw_loading_screen()
 		rl.EndDrawing()
 		free_all(context.temp_allocator)
 	}
 }
 
+
+update_scene :: proc(dt: f32) {
+	if in_start_menu {
+		update_start_menu(dt)
+	} else if victory {
+		update_victory_overlay()
+	} else if defeated {
+		update_game_over_overlay()
+	} else if manual_open {
+		update_manual(dt)
+	} else {
+		if pause_key_pressed() { toggle_pause() }
+		if game_paused {
+			update_pause_menu(dt)
+		} else {
+			step_simulation(dt)
+		}
+	}
+}
+
+draw_scene :: proc() {
+	draw_world()
+	if in_start_menu {
+		draw_start_menu()
+	} else {
+		draw_inspector()
+		if victory {
+			draw_victory_overlay()
+		} else if defeated {
+			draw_game_over_overlay()
+		} else if manual_open {
+			draw_manual()
+		} else if game_paused { draw_pause_menu() }
+	}
+}

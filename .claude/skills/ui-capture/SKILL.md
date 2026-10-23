@@ -36,7 +36,7 @@ Anything else is plain game state: assign globals (`minerals`, `selected_planet`
 
 ## Timing model
 
-`capture_tick` runs once per frame after everything is drawn and before `rl.EndDrawing()`. After the warmup it flushes queued shots, then calls the next step, then waits the settle frames. The simulation keeps running (unpaused) during settle frames, so state can drift: combat kills miners, an unpaused clock advances. Keep settle short, clear enemies where combat would interfere, or pause and accept the pause overlay. `CAPTURE_TIMEOUT_FRAMES` (20000) and a 300s `timeout` stop a stuck run.
+`capture_tick` runs once per frame after everything is drawn and before `rl.EndDrawing()`. It first waits for the boot loading screen to finish fading (`loading_overlay_alpha() > 0`), so step 0 sees the start menu. To shoot the loading screen itself, add `@(init) capture_scenario_init :: proc "contextless" () { capture_wait_loading = false }` to the scenario. After the warmup it flushes queued shots, then calls the next step, then waits the settle frames. The simulation keeps running (unpaused) during settle frames, so state can drift: combat kills miners, an unpaused clock advances. Keep settle short, clear enemies where combat would interfere, or pause and accept the pause overlay. `CAPTURE_TIMEOUT_FRAMES` (20000) and a 300s `timeout` stop a stuck run.
 
 ## Limitations
 
