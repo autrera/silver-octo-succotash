@@ -104,30 +104,43 @@ draw_menu_frame :: proc(box: rl.Rectangle, title: cstring, subtitle: cstring = "
 	rl.DrawLineEx({box.x + MENU_PAD_X, sep_y}, {box.x + box.width - MENU_PAD_X, sep_y}, 1, rl.Fade(accent, 0.45))
 }
 
-draw_menu_item :: proc(rect: rl.Rectangle, label: cstring, key: cstring, focused: bool, enabled: bool = true, accent: rl.Color = SCIFI_GREEN) {
-	round := menu_round(rect, 12)
-	fill_col := rl.Color{0, 10, 7, 110}
-	border := rl.Fade(accent, 0.6)
-	text_col := accent
+menu_shell_colors :: proc(focused: bool, enabled: bool, accent: rl.Color) -> (fill: rl.Color, border: rl.Color, text: rl.Color) {
+	fill = rl.Color{0, 10, 7, 110}
+	border = rl.Fade(accent, 0.6)
+	text = accent
 	if !enabled {
 		border = rl.Fade(accent, 0.25)
-		text_col = rl.Fade(accent, 0.38)
+		text = rl.Fade(accent, 0.38)
 	} else if focused {
-		fill_col = accent == SCIFI_GREEN ? SCIFI_FILL : scale_color(accent, 0.78)
-		fill_col.a = 235
+		fill = accent == SCIFI_GREEN ? SCIFI_FILL : scale_color(accent, 0.78)
+		fill.a = 235
 		border = rl.Fade(accent, 0.9)
-		text_col = SCIFI_INK
+		text = SCIFI_INK
 	}
+	return
+}
 
-	rl.DrawRectangleRounded(rect, round, 12, fill_col)
+draw_menu_shell :: proc(rect: rl.Rectangle, focused: bool, enabled: bool = true, accent: rl.Color = SCIFI_GREEN, radius: f32 = 12) -> rl.Color {
+	fill, border, text := menu_shell_colors(focused, enabled, accent)
+	round := menu_round(rect, radius)
+	rl.DrawRectangleRounded(rect, round, 12, fill)
 	rl.DrawRectangleRoundedLinesEx(rect, round, 12, 1.5, border)
+	return text
+}
+
+draw_menu_arrow :: proc(x, cy, size: f32, color: rl.Color) {
+	rl.DrawTriangle({x, cy - size * 0.75}, {x, cy + size * 0.75}, {x + size, cy}, color)
+}
+
+draw_menu_item :: proc(rect: rl.Rectangle, label: cstring, key: cstring, focused: bool, enabled: bool = true, accent: rl.Color = SCIFI_GREEN) {
+	text_col := draw_menu_shell(rect, focused, enabled, accent)
 
 	label_size: f32 = 17
 	cy := rect.y + rect.height / 2
 	draw_display_text(label, {rect.x + 22, cy - label_size * 0.5}, label_size, text_col)
 
 	ax := rect.x + rect.width - 26
-	rl.DrawTriangle({ax, cy - 6}, {ax, cy + 6}, {ax + 8, cy}, text_col)
+	draw_menu_arrow(ax, cy, 8, text_col)
 
 	if len(key) > 0 {
 		key_size: f32 = 11

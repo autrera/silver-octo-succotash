@@ -328,7 +328,7 @@ clear_selection :: proc() {
 
 handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 	if selected_planet == EARTH {
-		if base_button_visible() && rl.CheckCollisionPointRec(mouse, {panel_x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, BASE_BTN_H}) {
+		if base_button_visible() && rl.CheckCollisionPointRec(mouse, base_button_rect(panel_x)) {
 			last_unit_clicked_index = -1
 			start_base_construction()
 			return
@@ -340,13 +340,12 @@ handle_inspector_click :: proc(mouse: rl.Vector2, panel_x: f32) {
 			}
 			return
 		}
-		orders_y := f32(production_orders_y())
-		if rl.CheckCollisionPointRec(mouse, {panel_x + PANEL_PAD_X, orders_y, BUILD_BTN_W, BUILD_BTN_H}) {
+		if rl.CheckCollisionPointRec(mouse, miner_button_rect(panel_x)) {
 			last_unit_clicked_index = -1
 			queue_unit(.MINING)
 			return
 		}
-		if rl.CheckCollisionPointRec(mouse, {panel_x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, orders_y, BUILD_BTN_W, BUILD_BTN_H}) {
+		if rl.CheckCollisionPointRec(mouse, combat_button_rect(panel_x)) {
 			last_unit_clicked_index = -1
 			queue_unit(.COMBAT)
 			return

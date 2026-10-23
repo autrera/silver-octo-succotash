@@ -1,6 +1,7 @@
 package main
 
 import "core:math"
+import "core:fmt"
 import rl "vendor:raylib"
 import "vendor:raylib/rlgl"
 
@@ -307,7 +308,7 @@ outpost_orbital_defense_bottom_y :: proc(planet: int) -> f32 {
 }
 
 outpost_liberated_roster_y :: proc(planet: int) -> int {
-	return int(outpost_orbital_defense_bottom_y(planet) + 10 + 23)
+	return int(outpost_orbital_defense_bottom_y(planet)) + SECTION_BELOW_DY
 }
 
 orbital_defense_button_rect :: proc(panel_x: f32, planet: int) -> rl.Rectangle {
@@ -378,19 +379,10 @@ draw_battery_cell :: proc(rect: rl.Rectangle, level: f32, outline, charge: rl.Co
 draw_orbital_defense_inspector_section :: proc(x: f32, btn: rl.Rectangle, p: int) {
 	if orbital_defense_building[p] {
 		progress := orbital_defense_progress[p] / ORBITAL_DEFENSE_BUILD_TIME
-		draw_chamfered_panel(btn, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
-		fill_rect := rl.Rectangle{btn.x, btn.y, btn.width * progress, btn.height}
-		rl.DrawRectangleRec(fill_rect, rl.Color{0, 200, 120, 120})
-		draw_corner_brackets(btn, 2, 6, SCIFI_GREEN)
-		if crew_short(p, .ORBITAL_DEFENSE) {
-			rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", crew_size(p, .ORBITAL_DEFENSE), ORBITAL_DEFENSE_CONSTRUCT_MINERS), i32(btn.x + CARD_INSET), i32(btn.y + 12), 11, rl.WHITE)
-		} else {
-			remaining := ORBITAL_DEFENSE_BUILD_TIME - orbital_defense_progress[p]
-			rl.DrawText(rl.TextFormat("BUILDING DEFENSE  %3.1fs", remaining), i32(btn.x + CARD_INSET), i32(btn.y + 11), 12, rl.WHITE)
-		}
+		detail := crew_short(p, .ORBITAL_DEFENSE) ? fmt.ctprintf("CREW %d/%d - MINERS AUTO-JOIN", crew_size(p, .ORBITAL_DEFENSE), ORBITAL_DEFENSE_CONSTRUCT_MINERS) : fmt.ctprintf("ONLINE IN %.1fs", ORBITAL_DEFENSE_BUILD_TIME - orbital_defense_progress[p])
+		draw_status_button(btn, "BUILDING ORBITAL DEFENSE", detail, fmt.ctprintf("%d%%", int(progress * 100)), progress)
 	} else if orbital_defense_level[p] == 0 {
-		can_build := can_build_orbital_defense(p)
-		draw_button(btn, rl.TextFormat("[O] BUILD ORBITAL DEFENSE (%d)", ORBITAL_DEFENSE_COST), SCIFI_PANEL_SOLID, can_build)
+		draw_button(btn, "BUILD ORBITAL DEFENSE", fmt.ctprintf("COST %d - CREW %d", ORBITAL_DEFENSE_COST, ORBITAL_DEFENSE_CONSTRUCT_MINERS), "O", can_build_orbital_defense(p))
 	} else {
 		for slot in 0..<ORBITAL_DEFENSE_AMMO_MAX {
 			completed := slot < orbital_defense_ammo[p]

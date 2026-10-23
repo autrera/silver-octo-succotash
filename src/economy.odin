@@ -399,6 +399,18 @@ drone_speed_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
 	return rl.Rectangle{panel_x + PANEL_PAD_X, f32(production_orders_y() + dy), PANEL_CONTENT_W, UPGRADE_H}
 }
 
+base_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
+	return rl.Rectangle{panel_x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, BASE_BTN_H}
+}
+
+miner_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
+	return rl.Rectangle{panel_x + PANEL_PAD_X, f32(production_orders_y()), BUILD_BTN_W, BUILD_BTN_H}
+}
+
+combat_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
+	return rl.Rectangle{panel_x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, f32(production_orders_y()), BUILD_BTN_W, BUILD_BTN_H}
+}
+
 queue_5_miner_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
 	return rl.Rectangle{panel_x + PANEL_PAD_X, f32(production_orders_y() + UPGRADE_DY), BUILD_BTN_W, UPGRADE_H}
 }

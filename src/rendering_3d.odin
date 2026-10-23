@@ -130,7 +130,7 @@ draw_hud :: proc(viewport_w: i32) {
 	}
 
 	ctrl_rect := manual_button_rect()
-	draw_button(ctrl_rect, "Tutorial", SCIFI_PANEL_SOLID, true)
+	draw_button(ctrl_rect, "TUTORIAL")
 
 	telemetry_cam := rl.TextFormat("ALT %.0f   ZOOM %d%%   %d FPS", camera.position.y, zoom_percent(), rl.GetFPS())
 	tel_font_size: i32 = 12

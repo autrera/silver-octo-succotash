@@ -1,6 +1,7 @@
 package main
 
 import "core:c"
+import "core:fmt"
 import rl "vendor:raylib"
 
 draw_inspector :: proc() {
@@ -95,22 +96,14 @@ draw_inspector :: proc() {
 
 draw_earth_inspector :: proc(x: f32) {
 	if base_button_visible() {
-		base_button := rl.Rectangle{x + PANEL_PAD_X, SECTION_TOP, PANEL_CONTENT_W, BASE_BTN_H}
+		base_button := base_button_rect(x)
 		if base_build_planet == EARTH {
 			progress := base_build_progress / BASE_CONSTRUCT_TIME
-			draw_chamfered_panel(base_button, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
-			fill_w := base_button.width * progress
-			fill_rect := rl.Rectangle{base_button.x, base_button.y, fill_w, base_button.height}
-			rl.DrawRectangleRec(fill_rect, rl.Color{0, 200, 120, 120})
-			draw_corner_brackets(base_button, 2, 6, SCIFI_GREEN)
-			if crew_short(EARTH, .BASE) {
-				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", crew_size(EARTH, .BASE), BASE_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 12, 11, rl.WHITE)
-			} else {
-				rl.DrawText(rl.TextFormat("COMMAND BASE  %3.1fs", BASE_CONSTRUCT_TIME - base_build_progress), i32(x + PANEL_PAD_X + CARD_INSET), SECTION_TOP + 11, 13, rl.WHITE)
-			}
+			detail := crew_short(EARTH, .BASE) ? fmt.ctprintf("CREW %d/%d - MINERS AUTO-JOIN", crew_size(EARTH, .BASE), BASE_CONSTRUCT_MINERS) : fmt.ctprintf("ONLINE IN %.1fs", BASE_CONSTRUCT_TIME - base_build_progress)
+			draw_status_button(base_button, "BUILDING COMMAND BASE", detail, fmt.ctprintf("%d%%", int(progress * 100)), progress)
 		} else {
 			can_build_base := minerals >= BASE_COST && base_counts[EARTH] < MAX_BASES && base_build_planet < 0 && planet_liberated(EARTH)
-			draw_button(base_button, "Command Base (+1 parallel build) (500)", SCIFI_PANEL_SOLID, can_build_base)
+			draw_button(base_button, "COMMAND BASE", fmt.ctprintf("COST %d - +1 PARALLEL BUILD", BASE_COST), "", can_build_base)
 		}
 	}
 
@@ -121,17 +114,17 @@ draw_earth_inspector :: proc(x: f32) {
 	queue_not_full := queued_count(EARTH) < base_counts[EARTH] * 5
 	can_build_miner := minerals >= unit_cost(.MINING) && queue_not_full
 	can_build_combat := minerals >= unit_cost(.COMBAT) && queue_not_full
-	draw_button({x + PANEL_PAD_X, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, rl.TextFormat("[M] MINER  (%d)", MINER_COST), SCIFI_PANEL_SOLID, can_build_miner)
-	draw_button({x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, f32(orders_y), BUILD_BTN_W, BUILD_BTN_H}, rl.TextFormat("[C] COMBAT (%d)", COMBAT_COST), SCIFI_PANEL_SOLID, can_build_combat)
+	draw_button(miner_button_rect(x), "MINER", fmt.ctprintf("COST %d", MINER_COST), "M", can_build_miner)
+	draw_button(combat_button_rect(x), "COMBAT", fmt.ctprintf("COST %d", COMBAT_COST), "C", can_build_combat)
 
 	if base_counts[EARTH] >= MAX_BASES {
-		draw_button(queue_5_miner_button_rect(x), rl.TextFormat("[N] +5 MINERS (%d)", BATCH_MINER_COST), SCIFI_PANEL_SOLID, can_build_5_miners())
-		draw_button(queue_5_combat_button_rect(x), rl.TextFormat("[X] +5 COMBAT (%d)", BATCH_COMBAT_COST), SCIFI_PANEL_SOLID, can_build_5_combat())
+		draw_button(queue_5_miner_button_rect(x), "+5 MINERS", fmt.ctprintf("COST %d", BATCH_MINER_COST), "N", can_build_5_miners())
+		draw_button(queue_5_combat_button_rect(x), "+5 COMBAT", fmt.ctprintf("COST %d", BATCH_COMBAT_COST), "X", can_build_5_combat())
 	}
 
 	if !drone_speed_maxed() {
 		can_upgrade_speed := minerals >= DRONE_SPEED_UPGRADE_COST
-		draw_button(drone_speed_button_rect(x), rl.TextFormat("[U] DRONE BUILD SPEED (%d)", DRONE_SPEED_UPGRADE_COST), SCIFI_PANEL_SOLID, can_upgrade_speed)
+		draw_button(drone_speed_button_rect(x), "DRONE BUILD SPEED", fmt.ctprintf("COST %d - LVL %d/%d", DRONE_SPEED_UPGRADE_COST, drone_speed_level, DRONE_SPEED_UPGRADE_MAX), "U", can_upgrade_speed)
 	}
 
 	queue_y := earth_queue_y()
@@ -204,24 +197,13 @@ draw_outpost_inspector :: proc(x: f32) {
 	if planet_liberated(selected_planet) {
 		btn := refinery_button_rect(x)
 		if refinery_building[selected_planet] {
-			draw_chamfered_panel(btn, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
-			fill_rect := rl.Rectangle{btn.x, btn.y, btn.width * (refinery_progress[selected_planet] / REFINERY_BUILD_TIME), btn.height}
-			rl.DrawRectangleRec(fill_rect, rl.Color{0, 200, 120, 120})
-			draw_corner_brackets(btn, 2, 6, SCIFI_GREEN)
-			if crew_short(selected_planet, .REFINERY) {
-				rl.DrawText(rl.TextFormat("CREW %d/%d - MINERS AUTO-JOIN", crew_size(selected_planet, .REFINERY), REFINERY_CONSTRUCT_MINERS), i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 12), 11, SCIFI_GREEN)
-			} else {
-				remaining := REFINERY_BUILD_TIME - refinery_progress[selected_planet]
-				rl.DrawText(rl.TextFormat("REFINERY  %3.1fs", remaining), i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 11), 13, SCIFI_GREEN)
-			}
+			progress := refinery_progress[selected_planet] / REFINERY_BUILD_TIME
+			detail := crew_short(selected_planet, .REFINERY) ? fmt.ctprintf("CREW %d/%d - MINERS AUTO-JOIN", crew_size(selected_planet, .REFINERY), REFINERY_CONSTRUCT_MINERS) : fmt.ctprintf("ONLINE IN %.1fs", REFINERY_BUILD_TIME - refinery_progress[selected_planet])
+			draw_status_button(btn, "BUILDING REFINERY", detail, fmt.ctprintf("%d%%", int(progress * 100)), progress)
 		} else if !refinery_built[selected_planet] {
-			cost := refinery_cost(selected_planet)
-			can_build := can_build_refinery(selected_planet)
-			draw_button(btn, rl.TextFormat("Build Refinery (%d)", cost), SCIFI_PANEL_SOLID, can_build)
+			draw_button(btn, "BUILD REFINERY", fmt.ctprintf("COST %d - CREW %d", refinery_cost(selected_planet), REFINERY_CONSTRUCT_MINERS), "B", can_build_refinery(selected_planet))
 		} else {
-			draw_chamfered_panel(btn, 6, SCIFI_PANEL_SOLID, SCIFI_STEEL)
-			draw_corner_brackets(btn, 2, 6, SCIFI_MINT)
-			rl.DrawText("REFINERY OPERATIONAL", i32(x + PANEL_PAD_X + CARD_INSET), i32(btn.y + 11), 13, SCIFI_MINT)
+			draw_status_button(btn, "REFINERY", "OPERATIONAL", "ONLINE", -1, SCIFI_MINT)
 		}
 		def_btn := orbital_defense_button_rect(x, selected_planet)
 		draw_orbital_defense_inspector_section(x, def_btn, selected_planet)
@@ -277,7 +259,7 @@ draw_ghost_rosters :: proc(x: f32) {
 production_orders_y :: proc() -> int {
 	base_y := ORDERS_BASE_Y
 	if selected_planet == EARTH {
-		return int(earth_orbital_defense_bottom_y()) + 44
+		return int(earth_orbital_defense_bottom_y()) + SECTION_BELOW_DY
 	}
 	return base_y + max(base_counts[selected_planet] - 1, 0) * PROD_PITCH
 }

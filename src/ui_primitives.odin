@@ -453,40 +453,62 @@ draw_segmented_meter :: proc(rect: rl.Rectangle, value: f32, segments: int, fill
 	}
 }
 
-draw_button :: proc(rect: rl.Rectangle, label: cstring, color: rl.Color = SCIFI_PANEL_SOLID, enabled: bool = true) {
-	hovered := enabled && rl.CheckCollisionPointRec(ui_mouse(), rect)
-	pressed := enabled && hovered && rl.IsMouseButtonDown(.LEFT)
+hud_interactive :: proc() -> bool {
+	return !(in_start_menu || game_paused || manual_open || victory || defeated)
+}
 
-	chamfer: f32 = 6.0
-	fill := SCIFI_PANEL_SOLID
-	border := SCIFI_STEEL
-	text_col := SCIFI_TEXT
-
-	if !enabled {
-		fill = rl.Color{6, 14, 20, 240}
-		border = SCIFI_DIM
-		text_col = SCIFI_MUTED
-	} else if pressed {
-		fill = rl.Color{0, 60, 75, 255}
-		border = SCIFI_MINT
-		text_col = SCIFI_MINT
-	} else if hovered {
-		fill = rl.Color{10, 36, 46, 255}
-		border = SCIFI_GREEN
-		text_col = SCIFI_GREEN
+draw_button_text :: proc(rect: rl.Rectangle, label: cstring, detail: cstring, text_col: rl.Color, dy: f32 = 0) {
+	label_size: f32 = BUTTON_LABEL_SIZE
+	detail_size: f32 = BUTTON_DETAIL_SIZE
+	cy := rect.y + rect.height / 2 + dy
+	if len(detail) > 0 {
+		draw_display_text(label, {rect.x + BUTTON_PAD_X, cy - label_size - 1}, label_size, text_col)
+		detail_col := text_col.a == 255 ? rl.Fade(text_col, 0.62) : text_col
+		draw_display_text(detail, {rect.x + BUTTON_PAD_X, cy + 3}, detail_size, detail_col)
+	} else {
+		draw_display_text(label, {rect.x + BUTTON_PAD_X, cy - label_size * 0.5}, label_size, text_col)
 	}
+}
 
-	draw_chamfered_panel(rect, chamfer, fill, border)
+draw_button :: proc(rect: rl.Rectangle, label: cstring, detail: cstring = "", key: cstring = "", enabled: bool = true) {
+	hovered := enabled && hud_interactive() && rl.CheckCollisionPointRec(ui_mouse(), rect)
+	pressed := hovered && rl.IsMouseButtonDown(.LEFT)
 
-	if hovered && enabled {
-		draw_corner_brackets(rect, 2, 6, SCIFI_GREEN)
+	text_col := draw_menu_shell(rect, hovered, enabled, SCIFI_GREEN, BUTTON_RADIUS)
+	if pressed {
+		rl.DrawRectangleRounded(rect, menu_round(rect, BUTTON_RADIUS), 12, rl.Fade(SCIFI_INK, 0.22))
 	}
+	dy: f32 = pressed ? 1 : 0
+	draw_button_text(rect, label, detail, text_col, dy)
 
-	tw := f32(rl.MeasureText(label, 12))
-	text_x := rect.x + (rect.width - tw) / 2
-	if text_x < rect.x + 8 { text_x = rect.x + 8 }
-	text_y := rect.y + (rect.height - 12) / 2 + (pressed ? 1.0 : 0.0)
-	rl.DrawText(label, c.int(text_x), c.int(text_y), 12, text_col)
+	cy := rect.y + rect.height / 2 + dy
+	ax := rect.x + rect.width - BUTTON_PAD_X - 4
+	draw_menu_arrow(ax, cy, 6, text_col)
+	if len(key) > 0 {
+		key_size: f32 = BUTTON_KEY_SIZE
+		kw := measure_display_text(key, key_size)
+		draw_display_text(key, {ax - 12 - kw, cy - key_size * 0.5}, key_size, rl.Fade(text_col, 0.65))
+	}
+}
+
+draw_status_button :: proc(rect: rl.Rectangle, label: cstring, detail: cstring, status: cstring, progress: f32 = -1, accent: rl.Color = SCIFI_GREEN) {
+	fill, border, text_col := menu_shell_colors(false, true, accent)
+	round := menu_round(rect, BUTTON_RADIUS)
+	rl.DrawRectangleRounded(rect, round, 12, fill)
+	if progress > 0 {
+		fill_w := rect.width * clamp(progress, 0, 1)
+		begin_ui_scissor({rect.x, rect.y, fill_w, rect.height})
+		rl.DrawRectangleRounded(rect, round, 12, rl.Fade(accent, 0.24))
+		rl.EndScissorMode()
+	}
+	rl.DrawRectangleRoundedLinesEx(rect, round, 12, 1.5, border)
+	draw_button_text(rect, label, detail, text_col)
+
+	if len(status) > 0 {
+		status_size: f32 = BUTTON_KEY_SIZE
+		sw := measure_display_text(status, status_size)
+		draw_display_text(status, {rect.x + rect.width - BUTTON_PAD_X - sw, rect.y + rect.height / 2 - status_size * 0.5}, status_size, text_col)
+	}
 }
 
 
@@ -517,67 +539,43 @@ draw_queue_slot :: proc(rect: rl.Rectangle, queued: bool, kind: Unit_Type, progr
 	}
 }
 
-Radio_Style :: struct {
-	selected_fill, selected_border, selected_text: rl.Color,
-	hover_fill, hover_border:                      rl.Color,
-}
-
-draw_radio_segment :: proc(rect: rl.Rectangle, label: cstring, selected, hovered: bool, style: Radio_Style) {
-	fill := SCIFI_PANEL_SOLID
-	border := rl.Color{0, 0, 0, 0}
-	text_col := SCIFI_MUTED
+draw_radio_segment :: proc(rect: rl.Rectangle, label: cstring, selected, hovered: bool, accent: rl.Color) {
+	seg := rl.Rectangle{rect.x + 2, rect.y + 2, rect.width - 4, rect.height - 4}
+	round := menu_round(seg, seg.height / 2)
+	text_col := rl.Fade(accent, 0.55)
 	if selected {
-		fill = style.selected_fill
-		border = style.selected_border
-		text_col = style.selected_text
+		fill := accent == SCIFI_GREEN ? SCIFI_FILL : scale_color(accent, 0.78)
+		rl.DrawRectangleRounded(seg, round, 8, fill)
+		text_col = SCIFI_INK
 	} else if hovered {
-		fill = style.hover_fill
-		border = style.hover_border
-		text_col = SCIFI_TEXT
+		rl.DrawRectangleRounded(seg, round, 8, rl.Fade(accent, 0.16))
+		text_col = accent
 	}
-	if selected || hovered {
-		draw_chamfered_panel(rect, 2, fill, border)
-	}
-	if selected {
-		rl.DrawLineV({rect.x + 2, rect.y + 1}, {rect.x + rect.width - 2, rect.y + 1}, style.selected_text)
-	}
-	tw := f32(rl.MeasureText(label, 12))
-	rl.DrawText(label, i32(rect.x + (rect.width - tw) / 2), i32(rect.y + 4), 12, text_col)
+	size: f32 = BUTTON_DETAIL_SIZE
+	tw := measure_display_text(label, size)
+	draw_display_text(label, {rect.x + (rect.width - tw) / 2, rect.y + (rect.height - size) / 2}, size, text_col)
 }
 
 draw_autobuild_radio_buttons :: proc(panel_x: f32) {
 	off_rect, miner_rect, combat_rect := autobuild_radio_rects(panel_x)
 	total_rect := rl.Rectangle{off_rect.x, off_rect.y, (combat_rect.x + combat_rect.width) - off_rect.x, off_rect.height}
 	mouse := ui_mouse()
+	interactive := hud_interactive()
 
-	lbl: cstring = "AUTO:"
-	lbl_w := f32(rl.MeasureText(lbl, 11))
-	lbl_x := off_rect.x - lbl_w - 6
-	rl.DrawRectangleRec({lbl_x - 4, total_rect.y - 1, lbl_w + 8, total_rect.height + 2}, SCIFI_PANEL_SOLID)
-	rl.DrawText(lbl, i32(lbl_x), i32(total_rect.y + 4), 11, SCIFI_MUTED)
+	lbl: cstring = "AUTO"
+	lbl_size: f32 = BUTTON_DETAIL_SIZE
+	lbl_w := measure_display_text(lbl, lbl_size)
+	lbl_x := off_rect.x - lbl_w - 8
+	rl.DrawRectangleRec({lbl_x - 6, total_rect.y - 1, lbl_w + 14, total_rect.height + 2}, SCIFI_PANEL_SOLID)
+	draw_display_text(lbl, {lbl_x, total_rect.y + (total_rect.height - lbl_size) / 2}, lbl_size, SCIFI_LABEL)
 
-	draw_chamfered_panel(total_rect, 3, SCIFI_PANEL_SOLID, SCIFI_DIM)
+	round := menu_round(total_rect, total_rect.height / 2)
+	rl.DrawRectangleRounded(total_rect, round, 12, SCIFI_PANEL_SOLID)
+	rl.DrawRectangleRoundedLinesEx(total_rect, round, 12, 1.5, rl.Fade(SCIFI_GREEN, 0.6))
 
-	off_style := Radio_Style{
-		selected_fill = {0, 60, 75, 255}, selected_border = SCIFI_GREEN, selected_text = SCIFI_MINT,
-		hover_fill = {10, 36, 46, 255}, hover_border = SCIFI_STEEL,
-	}
-	miner_style := Radio_Style{
-		selected_fill = {60, 40, 10, 255}, selected_border = SCIFI_AMBER, selected_text = SCIFI_AMBER,
-		hover_fill = {32, 22, 8, 255}, hover_border = SCIFI_AMBER_DIM,
-	}
-	combat_style := Radio_Style{
-		selected_fill = {10, 45, 80, 255}, selected_border = SCIFI_BLUE, selected_text = SCIFI_BLUE,
-		hover_fill = {8, 28, 48, 255}, hover_border = SCIFI_STEEL,
-	}
-	draw_radio_segment(off_rect, "Off", auto_build_mode == .OFF, rl.CheckCollisionPointRec(mouse, off_rect), off_style)
-	draw_radio_segment(miner_rect, "M", auto_build_mode == .MINERS, rl.CheckCollisionPointRec(mouse, miner_rect), miner_style)
-	draw_radio_segment(combat_rect, "C", auto_build_mode == .COMBAT, rl.CheckCollisionPointRec(mouse, combat_rect), combat_style)
-
-	rl.DrawLineV({off_rect.x + off_rect.width, total_rect.y + 2}, {off_rect.x + off_rect.width, total_rect.y + total_rect.height - 2}, SCIFI_DIM)
-	rl.DrawLineV({miner_rect.x + miner_rect.width, total_rect.y + 2}, {miner_rect.x + miner_rect.width, total_rect.y + total_rect.height - 2}, SCIFI_DIM)
-
-	rl.DrawRectangleLinesEx(total_rect, 1, SCIFI_DIM)
+	draw_radio_segment(off_rect, "OFF", auto_build_mode == .OFF, interactive && rl.CheckCollisionPointRec(mouse, off_rect), SCIFI_GREEN)
+	draw_radio_segment(miner_rect, "M", auto_build_mode == .MINERS, interactive && rl.CheckCollisionPointRec(mouse, miner_rect), SCIFI_AMBER)
+	draw_radio_segment(combat_rect, "C", auto_build_mode == .COMBAT, interactive && rl.CheckCollisionPointRec(mouse, combat_rect), SCIFI_BLUE)
 }
 
 draw_progress :: proc(rect: rl.Rectangle, value: f32, color: rl.Color) {

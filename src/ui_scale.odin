@@ -24,6 +24,12 @@ apply_ui_scale :: proc() {
 	rlgl.Scalef(ui_scale, ui_scale, 1)
 }
 
+begin_ui_scissor :: proc(r: rl.Rectangle) {
+	x := math.floor(r.x * ui_scale)
+	y := math.floor(r.y * ui_scale)
+	rl.BeginScissorMode(i32(x), i32(y), i32(math.ceil((r.x + r.width) * ui_scale) - x), i32(math.ceil((r.y + r.height) * ui_scale) - y))
+}
+
 ui_screen_w :: proc() -> i32 {
 	return i32(math.ceil(f32(rl.GetScreenWidth()) / ui_scale))
 }
