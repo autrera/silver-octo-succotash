@@ -407,7 +407,7 @@ queue_5_combat_button_rect :: proc(panel_x: f32) -> rl.Rectangle {
 	return rl.Rectangle{panel_x + PANEL_PAD_X + BUILD_BTN_W + BTN_GAP, f32(production_orders_y() + UPGRADE_DY), BUILD_BTN_W, UPGRADE_H}
 }
 
-controls_button_rect :: proc() -> rl.Rectangle {
+manual_button_rect :: proc() -> rl.Rectangle {
 	dock_y := f32(ui_screen_h() - BOTTOM_DOCK_H - 12)
 	return rl.Rectangle{HUD_PAD, dock_y, 110, BOTTOM_DOCK_H}
 }

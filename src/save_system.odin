@@ -499,7 +499,7 @@ deserialize_game_state :: proc(content: string) -> bool {
 	camera.projection = .PERSPECTIVE
 	in_start_menu = false
 	game_paused = false
-	controls_overlay_open = false
+	manual_open = false
 	units_changed()
 	return true
 }

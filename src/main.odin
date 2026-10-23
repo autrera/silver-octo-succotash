@@ -102,7 +102,6 @@ base_timer: [SECTOR_COUNT]f32
 combat_vision_timer: [SECTOR_COUNT]f32
 
 game_paused := false
-controls_overlay_open := false
 quit_requested := false
 victory := false
 defeated := false
@@ -171,8 +170,8 @@ main :: proc() {
 			update_victory_overlay()
 		} else if defeated {
 			update_game_over_overlay()
-		} else if controls_overlay_open {
-			update_controls_overlay()
+		} else if manual_open {
+			update_manual(dt)
 		} else {
 			if pause_key_pressed() { toggle_pause() }
 			if game_paused {
@@ -194,11 +193,12 @@ main :: proc() {
 				draw_victory_overlay()
 			} else if defeated {
 				draw_game_over_overlay()
-			} else if controls_overlay_open {
-				draw_controls_overlay()
+			} else if manual_open {
+				draw_manual()
 			} else if game_paused { draw_pause_menu() }
 		}
 		rl.EndDrawing()
+		free_all(context.temp_allocator)
 	}
 }
 

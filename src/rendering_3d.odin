@@ -129,8 +129,8 @@ draw_hud :: proc(viewport_w: i32) {
 		rl.DrawText(saved_lbl, i32(saved_x), i32(HUD_PAD + 18), 11, SCIFI_AMBER)
 	}
 
-	ctrl_rect := controls_button_rect()
-	draw_button(ctrl_rect, "Controls", SCIFI_PANEL_SOLID, true)
+	ctrl_rect := manual_button_rect()
+	draw_button(ctrl_rect, "Tutorial", SCIFI_PANEL_SOLID, true)
 
 	telemetry_cam := rl.TextFormat("ALT %.0f   ZOOM %d%%   %d FPS", camera.position.y, zoom_percent(), rl.GetFPS())
 	tel_font_size: i32 = 12

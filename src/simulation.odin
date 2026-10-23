@@ -118,7 +118,7 @@ reset_world :: proc() {
 	victory = false
 	defeated = false
 	game_paused = false
-	controls_overlay_open = false
+	manual_open = false
 	in_start_menu = false
 	hud_save_notification_timer = 0
 	save_feedback_timer = 0
@@ -241,9 +241,9 @@ update_input :: proc() {
 	mouse := ui_mouse()
 	panel_x := f32(ui_screen_w() - SCREEN_PANEL_WIDTH)
 	if rl.IsMouseButtonPressed(.LEFT) {
-		if rl.CheckCollisionPointRec(mouse, controls_button_rect()) {
+		if rl.CheckCollisionPointRec(mouse, manual_button_rect()) {
 			last_unit_clicked_index = -1
-			open_controls_overlay()
+			open_manual()
 			return
 		}
 		if mouse.x >= panel_x {
