@@ -125,7 +125,7 @@ draw_earth_inspector :: proc(x: f32) {
 		if base_build_planet == EARTH {
 			progress := base_build_progress / BASE_CONSTRUCT_TIME
 			detail := crew_short(EARTH, .BASE) ? fmt.ctprintf("CREW %d/%d - MINERS AUTO-JOIN", crew_size(EARTH, .BASE), BASE_CONSTRUCT_MINERS) : fmt.ctprintf("ONLINE IN %.1fs", BASE_CONSTRUCT_TIME - base_build_progress)
-			draw_status_button(base_button, "BUILDING COMMAND BASE", detail, fmt.ctprintf("%d%%", int(progress * 100)), progress)
+			draw_status_button(base_button, "BUILDING COMMAND BASE", detail, fmt.ctprintf("%d%%", int(progress * 100)), progress, SCIFI_GREEN, crew_short(EARTH, .BASE))
 		} else {
 			can_build_base := minerals >= BASE_COST && base_counts[EARTH] < MAX_BASES && base_build_planet < 0 && planet_liberated(EARTH)
 			draw_button(base_button, "COMMAND BASE", fmt.ctprintf("COST %d - +1 PARALLEL BUILD", BASE_COST), "", can_build_base)
@@ -224,7 +224,7 @@ draw_outpost_inspector :: proc(x: f32) {
 		if refinery_building[selected_planet] {
 			progress := refinery_progress[selected_planet] / REFINERY_BUILD_TIME
 			detail := crew_short(selected_planet, .REFINERY) ? fmt.ctprintf("CREW %d/%d - MINERS AUTO-JOIN", crew_size(selected_planet, .REFINERY), REFINERY_CONSTRUCT_MINERS) : fmt.ctprintf("ONLINE IN %.1fs", REFINERY_BUILD_TIME - refinery_progress[selected_planet])
-			draw_status_button(btn, "BUILDING REFINERY", detail, fmt.ctprintf("%d%%", int(progress * 100)), progress)
+			draw_status_button(btn, "BUILDING REFINERY", detail, fmt.ctprintf("%d%%", int(progress * 100)), progress, SCIFI_GREEN, crew_short(selected_planet, .REFINERY))
 		} else if !refinery_built[selected_planet] {
 			draw_button(btn, "BUILD REFINERY", fmt.ctprintf("COST %d - CREW %d", refinery_cost(selected_planet), REFINERY_CONSTRUCT_MINERS), "B", can_build_refinery(selected_planet))
 		} else {

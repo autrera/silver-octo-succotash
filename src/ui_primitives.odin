@@ -491,10 +491,15 @@ draw_button :: proc(rect: rl.Rectangle, label: cstring, detail: cstring = "", ke
 	}
 }
 
-draw_status_button :: proc(rect: rl.Rectangle, label: cstring, detail: cstring, status: cstring, progress: f32 = -1, accent: rl.Color = SCIFI_GREEN) {
+draw_status_button :: proc(rect: rl.Rectangle, label: cstring, detail: cstring, status: cstring, progress: f32 = -1, accent: rl.Color = SCIFI_GREEN, waiting: bool = false) {
 	fill, border, text_col := menu_shell_colors(false, true, accent)
 	round := menu_round(rect, BUTTON_RADIUS)
 	rl.DrawRectangleRounded(rect, round, 12, fill)
+	if waiting {
+		pulse := 0.5 + 0.5 * math.sin(laser_anim_time * math.TAU / WAITING_BLINK_PERIOD)
+		rl.DrawRectangleRounded(rect, round, 12, rl.Fade(accent, 0.05 + 0.22 * pulse))
+		border = rl.Fade(accent, 0.45 + 0.55 * pulse)
+	}
 	if progress > 0 {
 		fill_w := rect.width * clamp(progress, 0, 1)
 		begin_ui_scissor({rect.x, rect.y, fill_w, rect.height})

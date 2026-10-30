@@ -380,7 +380,7 @@ draw_orbital_defense_inspector_section :: proc(x: f32, btn: rl.Rectangle, p: int
 	if orbital_defense_building[p] {
 		progress := orbital_defense_progress[p] / ORBITAL_DEFENSE_BUILD_TIME
 		detail := crew_short(p, .ORBITAL_DEFENSE) ? fmt.ctprintf("CREW %d/%d - MINERS AUTO-JOIN", crew_size(p, .ORBITAL_DEFENSE), ORBITAL_DEFENSE_CONSTRUCT_MINERS) : fmt.ctprintf("ONLINE IN %.1fs", ORBITAL_DEFENSE_BUILD_TIME - orbital_defense_progress[p])
-		draw_status_button(btn, "BUILDING ORBITAL DEFENSE", detail, fmt.ctprintf("%d%%", int(progress * 100)), progress)
+		draw_status_button(btn, "BUILDING ORBITAL DEFENSE", detail, fmt.ctprintf("%d%%", int(progress * 100)), progress, SCIFI_GREEN, crew_short(p, .ORBITAL_DEFENSE))
 	} else if orbital_defense_level[p] == 0 {
 		draw_button(btn, "BUILD ORBITAL DEFENSE", fmt.ctprintf("COST %d - CREW %d", ORBITAL_DEFENSE_COST, ORBITAL_DEFENSE_CONSTRUCT_MINERS), "O", can_build_orbital_defense(p))
 	} else {
