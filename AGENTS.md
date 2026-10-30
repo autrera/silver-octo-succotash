@@ -169,6 +169,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - Startup cost is mostly the GPU driver compiling `PLANET_FS`, `NEBULA_BAKE_FS`, `DRONE_FS`, and `HQ_FS` (about 2s cold, ~30ms once the driver's shader cache is warm, so it returns whenever a shader's source changes) plus the nebula atlas bake landing on the first scene frame. The loading screen hides both; a single long step still freezes its animation for that step.
 - `main` sets `.VSYNC_HINT`, `.MSAA_4X_HINT`, `.WINDOW_HIGHDPI`, `.WINDOW_RESIZABLE`, and `.WINDOW_HIDDEN`, opens at 1280x760, goes borderless, then shows the window, so the first visible frame is already full-screen, and binds `F11` and Alt+Enter to `ToggleBorderlessWindowed`. `SetExitKey(.KEY_NULL)` frees ESC for gameplay.
+- SHARP EDGE: on Linux the raylib GLFW backend runs through XWayland (Hyprland), where a window with no explicit cursor shows none. `main` calls `rl.SetMouseCursor(.ARROW)` after the window is shown so GLFW installs a themed arrow; do not remove it.
 - SHARP EDGE: with `.VSYNC_HINT` enabled, never call `rl.SetTargetFPS(60)`. Raylib's `EndDrawing` limiter calls `WaitTime` (nanosleep) after `glfwSwapBuffers`, and on macOS and Windows kernel timer granularity oversleeps by 1-2ms, missing the 16.67ms VBLANK swap deadline and halving presentation to exactly 30 FPS. The code instead derives the cap from `GetMonitorRefreshRate` and calls `SetTargetFPS(max(refresh, 60) * 2)`, a safety ceiling that keeps `WaitTime` from sleeping during VSYNC-locked presentation.
 
 ## Maintaining this file

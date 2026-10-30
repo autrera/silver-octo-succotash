@@ -132,6 +132,7 @@ main :: proc() {
 	defer rl.CloseWindow()
 	rl.ToggleBorderlessWindowed()
 	rl.ClearWindowState({.WINDOW_HIDDEN})
+	rl.SetMouseCursor(.ARROW)
 
 	refresh := rl.GetMonitorRefreshRate(rl.GetCurrentMonitor())
 	target_fps := refresh > 0 ? max(refresh, 60) : 60
