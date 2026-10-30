@@ -653,7 +653,7 @@ active_mining_drones_count :: proc(planet: int) -> int {
 
 planet_cycle_time :: proc(planet: int) -> f32 {
 	round_trip := 2.0 * distance(planets[planet].position, planets[EARTH].position)
-	travel_time := round_trip / MINING_TRANSIT_SPEED
+	travel_time := round_trip / MINING_INCOME_TRAVEL_SPEED
 	return MINING_DURATION + DEPOSIT_DURATION + travel_time
 }
 
